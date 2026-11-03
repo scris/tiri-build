@@ -63,3 +63,4 @@ fastlane/test_output
 
 # Assembled app bundle
 build/
+screenshots/

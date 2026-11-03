@@ -1285,6 +1285,8 @@ final class AppModel {
         settingsStore.writeTheme(mode)
         settings.theme = mode
         applyTheme()
+        // Writing the file won't reach them: by the time it reloads, nothing looks changed.
+        for controller in controllers.values { controller.applySettings() }
     }
 
     /// An explicit theme is known immediately. Following the system asks the system, which is
@@ -1311,21 +1313,31 @@ final class AppModel {
         }
     }
 
-    func setWebDark(_ on: Bool, item: ItemID?) {
+    /// What can be forced dark: web pages, PDFs and Office files. Everything else already follows the theme.
+    func forceDarkController(for id: ItemID) -> ForceDarkCapable? {
+        guard let controller = existingController(for: id) as? ForceDarkCapable, controller.supportsForceDark else { return nil }
+        return controller
+    }
+
+    func setForceDark(_ on: Bool, item: ItemID?) {
         if let item {
-            (existingController(for: item) as? WebController)?.setForceDark(on)
+            forceDarkController(for: item)?.setForceDark(on)
             updateWorkspace(containing: item) { workspace in
                 workspace.updateItem(item) { item in
-                    if case .web(var spec) = item.content {
+                    switch item.content {
+                    case .web(var spec):
                         spec.forceDark = on
                         item.content = .web(spec)
+                    case .file(var spec):
+                        spec.forceDark = on
+                        item.content = .file(spec)
+                    case .terminal:
+                        break
                     }
                 }
             }
         } else {
-            for controller in controllers.values {
-                (controller as? WebController)?.setForceDark(on)
-            }
+            for id in controllers.keys { forceDarkController(for: id)?.setForceDark(on) }
         }
         controllerRevision += 1
     }

@@ -433,6 +433,16 @@ struct FileActions: View {
 
     var body: some View {
         let _ = model.controllerRevision
+        if model.accessReady, let document = model.controller(for: item.id) as? ForceDarkCapable, document.supportsForceDark {
+            Button {
+                model.setForceDark(!document.forceDarkActive, item: item.id)
+            } label: {
+                Image(systemName: document.forceDarkActive ? "moon.fill" : "moon")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(document.forceDarkActive ? Color.accentColor : .secondary)
+            .help(document.forceDarkActive ? "Showing dark. Click for true colors" : "Show this document dark")
+        }
         if model.accessReady, let markdown = model.controller(for: item.id) as? MarkdownController {
             Button {
                 model.toggleMarkdownSource(item.id)

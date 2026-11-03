@@ -72,19 +72,21 @@ enum ViewerFactory {
         case .text:
             return TextController(itemID: itemID, spec: spec, model: model)
         case .image:
-            return ImageController(itemID: itemID, path: spec.path)
+            return ImageController(itemID: itemID, path: spec.path, model: model)
         case .svg:
-            return SVGController(itemID: itemID, path: spec.path)
+            return SVGController(itemID: itemID, path: spec.path, model: model)
         case .pdf:
-            return PDFController(itemID: itemID, path: spec.path)
+            return PDFController(itemID: itemID, spec: spec, model: model)
         case .media:
             return MediaController(itemID: itemID, path: spec.path)
         case .html:
-            return WebController(itemID: itemID, url: URL(fileURLWithPath: spec.path), forceDark: nil, isFile: true, model: model)
+            return WebController(itemID: itemID, url: URL(fileURLWithPath: spec.path), forceDark: spec.forceDark, isFile: true, model: model)
         case .csv:
             return CSVController(itemID: itemID, path: spec.path)
-        case .office, .quickLook:
-            return QuickLookController(itemID: itemID, path: spec.path)
+        case .office:
+            return QuickLookController(itemID: itemID, spec: spec, isPaper: true, model: model)
+        case .quickLook:
+            return QuickLookController(itemID: itemID, spec: spec, isPaper: false, model: model)
         }
     }
 }
@@ -759,12 +761,15 @@ final class ImageController: ItemController {
     private let imageView = NSImageView()
     private var token: FileWatchHub.Token?
     private var generation = 0
+    private var darkOnClear = false
+    private unowned let model: AppModel
 
     var view: NSView { scrollView }
 
-    init(itemID: ItemID, path: String) {
+    init(itemID: ItemID, path: String, model: AppModel) {
         self.itemID = itemID
         self.path = path
+        self.model = model
         scrollView.contentView = CenteringClipView()
         scrollView.allowsMagnification = true
         scrollView.minMagnification = 0.05
@@ -811,13 +816,50 @@ final class ImageController: ItemController {
         image.size = decoded.size
         imageView.image = image
         imageView.frame = CGRect(origin: .zero, size: decoded.size)
+        darkOnClear = decoded.darkOnClear
+        applySettings()
         scrollView.fitOnNextLayout = true
         scrollView.needsLayout = true
         AppModel.shared.viewerReady(itemID)
     }
 
+    func applySettings() {
+        imageView.wantsLayer = true
+        imageView.layer?.backgroundColor = darkOnClear && model.effectiveDark ? ClearArt.plate.cgColor : nil
+    }
+
     func focus() { scrollView.window?.makeFirstResponder(scrollView) }
     func teardown() { token = nil }
+}
+
+/// Black line art on a transparent background disappears on a dark surface. Such images get a
+/// light plate behind them in dark mode. Anything else keeps showing through to the app.
+nonisolated enum ClearArt {
+    @MainActor static var plate: NSColor { NSColor(white: 0.93, alpha: 1) }
+
+    static func isDarkOnClear(_ image: CGImage) -> Bool {
+        let side = 64
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        let drew = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        guard drew else { return false }
+        var clear = 0
+        var alpha = 0.0
+        var light = 0.0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            if pixels[index + 3] < 26 { clear += 1 }
+            alpha += Double(pixels[index + 3])
+            // Premultiplied, so this already counts each pixel by how much of it there is.
+            light += 0.2126 * Double(pixels[index]) + 0.7152 * Double(pixels[index + 1]) + 0.0722 * Double(pixels[index + 2])
+        }
+        guard alpha > 0, clear > side * side / 50 else { return false }
+        return light / alpha < 0.35
+    }
 }
 
 nonisolated enum ImageDecoding {
@@ -825,6 +867,7 @@ nonisolated enum ImageDecoding {
         var cgImage: CGImage?
         var animatedData: Data?
         var size: NSSize
+        var darkOnClear = false
     }
 
     /// Longest side kept in memory. Previews don't need a 48-megapixel bitmap.
@@ -840,7 +883,8 @@ nonisolated enum ImageDecoding {
         if let orientation = properties[kCGImagePropertyOrientation] as? Int, orientation >= 5 { swap(&width, &height) }
         let size = NSSize(width: CGFloat(width) / scale, height: CGFloat(height) / scale)
         if CGImageSourceGetCount(source) > 1, let data = FileManager.default.contents(atPath: path) {
-            return Decoded(cgImage: nil, animatedData: data, size: size)
+            let first = CGImageSourceCreateImageAtIndex(source, 0, nil)
+            return Decoded(cgImage: nil, animatedData: data, size: size, darkOnClear: first.map(ClearArt.isDarkOnClear) ?? false)
         }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -849,7 +893,7 @@ nonisolated enum ImageDecoding {
             kCGImageSourceThumbnailMaxPixelSize: maximumPixels,
         ]
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        return Decoded(cgImage: image, animatedData: nil, size: size)
+        return Decoded(cgImage: image, animatedData: nil, size: size, darkOnClear: ClearArt.isDarkOnClear(image))
     }
 }
 
@@ -873,29 +917,62 @@ final class SVGController: NSObject, ItemController {
     let path: String
     private let webView: WKWebView
     private var token: FileWatchHub.Token?
+    private var darkOnClear = false
+    private var showingPlate = false
+    private var generation = 0
+    private unowned let model: AppModel
 
     var view: NSView { webView }
 
-    init(itemID: ItemID, path: String) {
+    init(itemID: ItemID, path: String, model: AppModel) {
         self.itemID = itemID
         self.path = path
+        self.model = model
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.setURLSchemeHandler(LocalFileSchemeHandler(), forURLScheme: LocalFileSchemeHandler.scheme)
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.setValue(false, forKey: "drawsBackground")
         super.init()
-        token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
+        token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.reload() }
+        reload()
+    }
+
+    /// Renders it once natively to see what it draws, away from the main thread.
+    private func reload() {
+        generation += 1
+        let current = generation
+        let path = path
         load()
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let source = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+            // One that has its own dark mode already knows what to do.
+            var darkOnClear = false
+            if !source.contains("prefers-color-scheme"), let image = NSImage(contentsOfFile: path) {
+                var rect = CGRect(x: 0, y: 0, width: 128, height: 128)
+                darkOnClear = image.cgImage(forProposedRect: &rect, context: nil, hints: nil).map(ClearArt.isDarkOnClear) ?? false
+            }
+            await MainActor.run { [darkOnClear] in
+                guard let self, self.generation == current else { return }
+                self.darkOnClear = darkOnClear
+                self.applySettings()
+            }
+        }
+    }
+
+    func applySettings() {
+        if darkOnClear && model.effectiveDark != showingPlate { load() }
     }
 
     private func load() {
+        showingPlate = darkOnClear && model.effectiveDark
+        let plate = showingPlate ? "background:#eee;border-radius:4px;" : ""
         let name = (path as NSString).lastPathComponent
         let directory = (path as NSString).deletingLastPathComponent
         let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
         let page = """
         <!DOCTYPE html><style>html,body{height:100%;margin:0;background:transparent;color-scheme:light dark}
-        body{display:flex;align-items:center;justify-content:center}img{max-width:94%;max-height:94%;min-width:40%}</style>
+        body{display:flex;align-items:center;justify-content:center}img{max-width:94%;max-height:94%;min-width:40%;\(plate)}</style>
         <img src="\(encoded)?\(Int(Date().timeIntervalSince1970 * 1000))">
         """
         webView.loadHTMLString(page, baseURL: LocalFileSchemeHandler.baseURL(forDirectory: directory))
@@ -905,24 +982,122 @@ final class SVGController: NSObject, ItemController {
     func teardown() { token = nil }
 }
 
+// MARK: - Dark documents
+
+/// An item that can be shown dark, or in its true colors, regardless of the setting.
+protocol ForceDarkCapable: ItemController {
+    var supportsForceDark: Bool { get }
+    var forceDarkActive: Bool { get }
+    func setForceDark(_ on: Bool?)
+}
+
+extension ForceDarkCapable {
+    var supportsForceDark: Bool { true }
+}
+
+/// PDF and Office pages are white paper drawn by system viewers that have no dark mode. In dark
+/// mode this draws them light, then inverts the result on its way to the screen: white paper
+/// becomes Tiri's dark surface and black text becomes off-white. Rotating the hue back keeps a
+/// blue link blue. Photos in a document can't be told apart from the page, so the moon button
+/// shows true colors.
+final class DarkPaperHost: NSView {
+    let content: NSView
+    /// nil follows the `documents.forceDark` setting.
+    var forceDarkOverride: Bool?
+    var onChange: (() -> Void)?
+    private unowned let model: AppModel
+    private(set) var isDark = false
+
+    init(content: NSView, forceDark: Bool?, model: AppModel) {
+        self.content = content
+        self.forceDarkOverride = forceDark
+        self.model = model
+        super.init(frame: .zero)
+        wantsLayer = true
+        layerUsesCoreImageFilters = true
+        addSubview(content)
+        refresh()
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    var wantsDark: Bool {
+        forceDarkOverride ?? (model.settings.documentsForceDark && model.effectiveDark)
+    }
+
+    func refresh() {
+        let dark = wantsDark
+        guard dark != isDark else { return }
+        isDark = dark
+        content.appearance = dark ? NSAppearance(named: .aqua) : nil
+        contentFilters = dark ? Self.filters() : []
+        onChange?()
+    }
+
+    override func layout() {
+        super.layout()
+        content.frame = bounds
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refresh()
+    }
+
+    /// Worked out in sRGB, so a mid gray stays a mid gray.
+    private static func filters() -> [CIFilter] {
+        // CSS hue-rotate(180deg). Each row sums to 1.
+        let hue: [[CGFloat]] = [[-0.574, 1.430, 0.144], [0.426, 0.430, 0.144], [0.426, 1.430, -0.856]]
+        // White paper lands on Tiri's dark surface, and black text stops short of pure white.
+        let lift: CGFloat = 0.11
+        let span: CGFloat = 0.82
+        func row(_ values: [CGFloat]) -> CIVector {
+            CIVector(x: -span * values[0], y: -span * values[1], z: -span * values[2], w: 0)
+        }
+        let matrix = CIFilter(name: "CIColorMatrix")!
+        matrix.setValue(row(hue[0]), forKey: "inputRVector")
+        matrix.setValue(row(hue[1]), forKey: "inputGVector")
+        matrix.setValue(row(hue[2]), forKey: "inputBVector")
+        matrix.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
+        matrix.setValue(CIVector(x: lift + span, y: lift + span, z: lift + span, w: 0), forKey: "inputBiasVector")
+        return [CIFilter(name: "CILinearToSRGBToneCurve")!, matrix, CIFilter(name: "CISRGBToneCurveToLinear")!]
+    }
+}
+
 // MARK: - PDF
 
-final class PDFController: ItemController {
+final class PDFController: ForceDarkCapable {
     let itemID: ItemID
     let path: String
     private let pdfView = PDFView()
+    private let host: DarkPaperHost
     private var token: FileWatchHub.Token?
 
-    var view: NSView { pdfView }
+    var view: NSView { host }
 
-    init(itemID: ItemID, path: String) {
+    init(itemID: ItemID, spec: FileSpec, model: AppModel) {
         self.itemID = itemID
-        self.path = path
+        self.path = spec.path
+        host = DarkPaperHost(content: pdfView, forceDark: spec.forceDark, model: model)
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
-        pdfView.backgroundColor = .textBackgroundColor
+        host.onChange = { [weak self] in self?.applyBackground() }
+        applyBackground()
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
         load()
+    }
+
+    /// Inverted along with the page, so it has to be light to end up dark.
+    private func applyBackground() {
+        pdfView.backgroundColor = host.isDark ? NSColor(white: 0.9, alpha: 1) : .textBackgroundColor
+    }
+
+    func applySettings() { host.refresh() }
+    var forceDarkActive: Bool { host.wantsDark }
+
+    func setForceDark(_ on: Bool?) {
+        host.forceDarkOverride = on
+        host.refresh()
     }
 
     private func load() {
@@ -963,21 +1138,126 @@ final class MediaController: ItemController {
     let itemID: ItemID
     private let playerView = AVPlayerView()
     private let player: AVPlayer
+    private let audioView: AudioPlayerView?
 
-    var view: NSView { playerView }
+    var view: NSView { audioView ?? playerView }
 
     init(itemID: ItemID, path: String) {
         self.itemID = itemID
         player = AVPlayer(url: URL(fileURLWithPath: path))
-        playerView.player = player
-        playerView.controlsStyle = .inline
+        if FileClassifier.isAudioOnly(path: path) {
+            audioView = AudioPlayerView(player: player, name: (path as NSString).lastPathComponent)
+        } else {
+            audioView = nil
+            playerView.player = player
+            playerView.controlsStyle = .inline
+        }
     }
 
-    func focus() { playerView.window?.makeFirstResponder(playerView) }
+    func focus() { view.window?.makeFirstResponder(audioView?.playButton ?? playerView) }
 
     func teardown() {
         player.pause()
         playerView.player = nil
+        audioView?.stop()
+    }
+}
+
+/// AVPlayerView fills an audio file's missing picture with a gray panel, in any theme. Audio
+/// gets plain native controls on the same surface as every other viewer.
+final class AudioPlayerView: NSView {
+    let playButton = NSButton()
+    private let player: AVPlayer
+    private let icon = NSImageView()
+    private let label: NSTextField
+    private let slider = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let time = NSTextField(labelWithString: "0:00")
+    private var observer: Any?
+
+    init(player: AVPlayer, name: String) {
+        self.player = player
+        label = NSTextField(labelWithString: name)
+        super.init(frame: .zero)
+        icon.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: nil)
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 44, weight: .regular)
+        icon.contentTintColor = .tertiaryLabelColor
+        label.font = .systemFont(ofSize: 13)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .center
+        label.lineBreakMode = .byTruncatingMiddle
+        playButton.isBordered = false
+        playButton.target = self
+        playButton.action = #selector(togglePlay)
+        playButton.contentTintColor = .labelColor
+        slider.target = self
+        slider.action = #selector(seek)
+        time.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        time.textColor = .secondaryLabelColor
+        time.alignment = .right
+        for view in [icon, label, playButton, slider, time] { addSubview(view) }
+        updatePlayButton()
+        observer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    func stop() {
+        if let observer { player.removeTimeObserver(observer) }
+        observer = nil
+    }
+
+    private var duration: Double {
+        let seconds = player.currentItem?.duration.seconds ?? 0
+        return seconds.isFinite ? seconds : 0
+    }
+
+    private func tick() {
+        let current = player.currentTime().seconds
+        if duration > 0 { slider.doubleValue = current / duration }
+        let total = Int(max(duration - current, 0).rounded())
+        time.stringValue = "\(total / 60):" + String(format: "%02d", total % 60)
+        if duration > 0, current >= duration { player.pause() }
+        updatePlayButton()
+    }
+
+    private func updatePlayButton() {
+        let symbol = player.timeControlStatus == .paused ? "play.fill" : "pause.fill"
+        playButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol == "play.fill" ? "Play" : "Pause")
+    }
+
+    @objc private func togglePlay() {
+        if player.timeControlStatus == .paused {
+            if duration > 0, player.currentTime().seconds >= duration { player.seek(to: .zero) }
+            player.play()
+        } else {
+            player.pause()
+        }
+        updatePlayButton()
+    }
+
+    @objc private func seek() {
+        player.seek(to: CMTime(seconds: slider.doubleValue * duration, preferredTimescale: 600))
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+
+    override func layout() {
+        super.layout()
+        let width = min(max(bounds.width - 48, 200), 480)
+        let x = (bounds.width - width) / 2
+        let top = max((bounds.height - 140) / 2, 8)
+        icon.frame = CGRect(x: x, y: top, width: width, height: 64)
+        label.frame = CGRect(x: x, y: top + 72, width: width, height: 20)
+        playButton.frame = CGRect(x: x, y: top + 106, width: 28, height: 28)
+        time.frame = CGRect(x: x + width - 44, y: top + 112, width: 44, height: 16)
+        slider.frame = CGRect(x: x + 36, y: top + 108, width: width - 88, height: 24)
     }
 }
 
@@ -1093,24 +1373,37 @@ final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTa
 
 // MARK: - Office, iWork and everything else
 
-final class QuickLookController: ItemController {
+final class QuickLookController: ForceDarkCapable {
     let itemID: ItemID
     private let preview: QLPreviewView
+    private let host: DarkPaperHost
     private let url: URL
     private var token: FileWatchHub.Token?
+    /// Office pages are paper. Anything else Quick Look shows, like a file's icon, isn't.
+    let supportsForceDark: Bool
 
-    var view: NSView { preview }
+    var view: NSView { host }
 
-    init(itemID: ItemID, path: String) {
+    init(itemID: ItemID, spec: FileSpec, isPaper: Bool, model: AppModel) {
         self.itemID = itemID
-        self.url = URL(fileURLWithPath: path)
+        self.url = URL(fileURLWithPath: spec.path)
+        self.supportsForceDark = isPaper
         preview = QLPreviewView(frame: CGRect(x: 0, y: 0, width: 400, height: 300), style: .normal)
+        host = DarkPaperHost(content: preview, forceDark: isPaper ? spec.forceDark : false, model: model)
         // Tabs move this view around, and it must survive leaving the window.
         preview.shouldCloseWithWindow = false
         preview.previewItem = url as NSURL
-        token = FileWatchHub.shared.watch(path: path) { [weak self] in
+        token = FileWatchHub.shared.watch(path: spec.path) { [weak self] in
             self?.preview.refreshPreviewItem()
         }
+    }
+
+    func applySettings() { host.refresh() }
+    var forceDarkActive: Bool { host.wantsDark }
+
+    func setForceDark(_ on: Bool?) {
+        host.forceDarkOverride = on
+        host.refresh()
     }
 
     func focus() { preview.window?.makeFirstResponder(preview) }

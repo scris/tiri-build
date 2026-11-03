@@ -67,11 +67,11 @@ extension AppModel {
             AppCommand(id: "promotePeek", title: "Peek: Open as Tab", category: "View") { $0.promotePeek() },
             AppCommand(id: "promotePeekToSide", title: "Peek: Open to the Side", category: "View") { $0.promotePeek(split: .right) },
             AppCommand(id: "dismissPeek", title: "Peek: Close", category: "View") { $0.dismissPeek() },
-            AppCommand(id: "webDarkOn", title: "Web: Force Dark On", category: "Web") { model in
-                model.setWebDark(true, item: model.active.focused.active)
+            AppCommand(id: "webDarkOn", title: "View: Force Dark On", category: "View") { model in
+                model.setForceDark(true, item: model.active.focused.active)
             },
-            AppCommand(id: "webDarkOff", title: "Web: Force Dark Off", category: "Web") { model in
-                model.setWebDark(false, item: model.active.focused.active)
+            AppCommand(id: "webDarkOff", title: "View: Force Dark Off", category: "View") { model in
+                model.setForceDark(false, item: model.active.focused.active)
             },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 if let id = model.active.focused.active { (model.existingController(for: id) as? WebController)?.reload() }
@@ -399,13 +399,13 @@ enum ControlHandler {
         case "web-dark":
             guard let on = request.args["on"]?.boolValue else { throw ControlFailure("Missing argument \"on\"") }
             var target = request.args["item"]?.stringValue
-            if let target, !(model.existingController(for: target) is WebController) {
-                throw ControlFailure("\(target) isn't an open web item")
+            if let target, model.forceDarkController(for: target) == nil {
+                throw ControlFailure("\(target) isn't an open web page or document")
             }
-            if target == nil, let active = model.active.focused.active, model.existingController(for: active) is WebController {
+            if target == nil, let active = model.active.focused.active, model.forceDarkController(for: active) != nil {
                 target = active
             }
-            model.setWebDark(on, item: target)
+            model.setForceDark(on, item: target)
             return .object(["on": .bool(on)])
 
         case "commands":

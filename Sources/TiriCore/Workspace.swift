@@ -41,11 +41,13 @@ public struct FileSpec: Codable, Hashable, Sendable {
     public var line: Int?
     public var col: Int?
     public var showSource: Bool?
-    public init(path: String, line: Int? = nil, col: Int? = nil, showSource: Bool? = nil) {
+    public var forceDark: Bool?
+    public init(path: String, line: Int? = nil, col: Int? = nil, showSource: Bool? = nil, forceDark: Bool? = nil) {
         self.path = path
         self.line = line
         self.col = col
         self.showSource = showSource
+        self.forceDark = forceDark
     }
 }
 

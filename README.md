@@ -101,6 +101,14 @@ Outside Tiri these hooks do nothing and print nothing, so they're safe to leave 
 
 **Codex:** `tiri hooks codex` prints the config for `~/.codex/config.toml`. Codex asks you to trust hooks once, in `/hooks`.
 
+## Dark mode
+
+Set `"theme"` to `"dark"`, or leave it on `"system"` while your Mac is dark, and everything follows, live: the app, terminals, code, markdown, web pages and media.
+
+PDF, Office, iWork, RTF, font and web archive previews have no dark mode of their own, so Tiri shows their pages inverted, with colors kept. A photo in a document inverts too, so the moon button above the file shows its true colors, and Tiri remembers that for the item. `tiri web-dark on|off <item-id>` does the same. To keep all documents in true colors, set `"documents.forceDark": false`.
+
+Black artwork on a transparent background, in a PNG or SVG, gets a light plate behind it so it stays visible.
+
 ## Settings
 
 `~/.config/tiri/settings.json` and `keybindings.json` are plain files that reload as soon as they're saved, so an agent can edit them too. ⌘, opens the settings. If a file has invalid JSON, Tiri keeps the last good version and shows a banner. Keybindings use the same shape as Cursor's.

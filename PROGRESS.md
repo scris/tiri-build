@@ -10,14 +10,15 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - `scripts/e2e.sh`: drives a real app through every CLI command, with isolated state.
 - Real launches, driven with real mouse and keyboard events and checked with window screenshots.
 - Real Claude Code sessions in Tiri terminals, in a scratch project: prompts, status, ⌘-clicking its output, relaunch and resume. Codex was launched to confirm its TUI renders, but no session was run.
-- Real folders, read-only, at their true paths: `~/ai-hotpoints-2026`, `~/nvcm-agent`, `~/mgx-dev`.
+- Real folders, read-only, at their true paths: `~/ai-hotpoints-2026`, `~/nvcm-agent`, `~/mgx-dev`, `~/Documents/tiri`, and the real `seenot-web.code-workspace` in `~/Documents`, after you allowed access. No prompt appeared.
+- Dark mode on every viewer, on a virtual display, with real PDF, PowerPoint, Excel (51 MB) and Word files as temporary copies. Measured brightness in the content area confirms dark, light, and switching live both ways.
 - Real project contents, as copies with the same relative layout: `seenot-web.code-workspace` and its three folders, plus Office, PDF, HEIC, video and other files.
 
 ### Not verified yet
 
 | What | Why | How to check |
 |---|---|---|
-| Folders at their real paths in `~/Documents` | macOS asks for permission first and ignores automated clicks on that prompt, so a person has to answer it | Open a folder from Documents and click Allow |
+| The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
 | Real Claude Code hooks, end to end | A safety hook on the machine blocked writing Claude settings. Payload handling is tested with real-format JSON | Add the output of `tiri hooks claude`, run a prompt, and watch the status |
 | Resume by session ID on a real session | Depends on the hooks above. `claude --continue` is verified on a real session | Same as above, then relaunch |
 | Clicking a native notification | Needs the system permission prompt answered. In-app toasts and badges are verified | Allow notifications, then run `tiri notify done --item <id>` in a terminal in another workspace |
@@ -35,6 +36,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Tree → terminal:** drag inserts a shell-quoted path.
 - **Agent attention:** status on the tab, item list and workspace switcher, toasts, dock badge, jump to next (⌘⇧U), hooks, fallback estimate when there are no hooks.
 - **Session restore:** layout, cwd and terminals. Agents resume. Other commands wait typed at the prompt, so nothing like `./deploy.sh` re-runs by itself.
+- **Dark mode:** every viewer. PDF, Office, iWork, RTF, font and web archive pages are inverted with their colors kept, with a moon button for true colors. Black artwork on transparency gets a light plate.
 - **Viewers:** markdown (rendered and source), code with light highlighting, images (HEIC, GIF), SVG, PDF, audio, video, HTML, CSV and TSV, Office and iWork through Quick Look, Quick Look for everything else. All reload when the file changes.
 - **Web:** address bar, back, forward, reload, auto-reload for local files, forced dark.
 - **Control API and CLI:** everything in spec §5, plus `send`, `read`, `layout`, `tree`, `commands`, `run`, `perf`, `hook`, `hooks`.
@@ -65,6 +67,8 @@ Open times run from the request until the content is showing, except for Office 
 
 ## Known bugs
 
+- In dark mode, photos inside a PDF or Office file invert with the page, because the viewer can't tell them apart. The moon button shows true colors.
+- Large Office files show Quick Look's spinner for a few seconds before they appear.
 - A nested `claude -p` inside a hooked terminal can overwrite the stored session ID, so a relaunch resumes the wrong conversation.
 - Status without hooks is an estimate. A long silent pause can read as done.
 - Multi-line link context isn't handled, such as a `16:5` under a path line from ripgrep.

@@ -293,6 +293,11 @@ import Testing
         #expect(FileClassifier.classify(path: "a.xyz") { Data("hello".utf8) } == .text)
         #expect(FileClassifier.classify(path: "a.xyz") { Data([0, 1, 2, 0xFF]) } == .quickLook)
         #expect(FileClassifier.classify(path: "a.xyz") { nil } == .quickLook)
+        // Quick Look draws these on white, so they're dark-capable like Office files.
+        #expect(FileClassifier.classify(path: "a.ttf") { nil } == .office)
+        #expect(FileClassifier.classify(path: "a.webarchive") { nil } == .office)
+        #expect(FileClassifier.isAudioOnly(path: "a.WAV"))
+        #expect(!FileClassifier.isAudioOnly(path: "a.mp4"))
     }
 
     @Test func truncatedMultibyteIsStillText() {

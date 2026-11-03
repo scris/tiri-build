@@ -5,7 +5,7 @@ import WebKit
 
 /// A web view item: local or remote pages, with auto-reload and forced dark.
 @Observable
-final class WebController: NSObject, ItemController, WKNavigationDelegate, WKUIDelegate {
+final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKUIDelegate {
     let itemID: ItemID
     let isFile: Bool
     @ObservationIgnored unowned let model: AppModel
@@ -135,8 +135,7 @@ final class WebController: NSObject, ItemController, WKNavigationDelegate, WKUID
     }
 
     func toggleForceDark() {
-        setForceDark(!forceDarkActive)
-        model.setWebDark(forceDarkActive, item: itemID)
+        model.setForceDark(!forceDarkActive, item: itemID)
     }
 
     private func applyDark() {

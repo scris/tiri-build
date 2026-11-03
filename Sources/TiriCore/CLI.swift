@@ -457,7 +457,7 @@ public enum AgentGuide {
 
     ```sh
     tiri theme dark                       # light, dark or system
-    tiri web-dark on [<item-id>]          # force dark on web previews
+    tiri web-dark on [<item-id>]          # force dark on a web preview, PDF or Office file
     ```
 
     Settings are plain files, reloaded live. Edit them directly:

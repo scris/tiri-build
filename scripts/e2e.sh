@@ -4,7 +4,8 @@
 set -u
 cd "$(dirname "$0")/.."
 
-APP="$PWD/build/Tiri.app"
+# TIRI_APP tests another copy, such as one kept apart from the app you're using.
+APP="${TIRI_APP:-$PWD/build/Tiri.app}"
 CLI="$APP/Contents/Resources/bin/tiri"
 WORK="$(mktemp -d)"
 export TIRI_HOME="$WORK/home" TIRI_CONFIG_HOME="$WORK/config" TIRI_SOCKET="/tmp/tiri-e2e-$$.sock"
@@ -53,12 +54,14 @@ refuses() { # name, command...
 }
 
 cleanup() {
-    pkill -f "$APP/Contents/MacOS/Tiri" 2>/dev/null
+    # Only the app this script started. You may have another one open.
+    kill "$APP_PID" 2>/dev/null
     rm -rf "$WORK" "$TIRI_SOCKET"
 }
 trap cleanup EXIT
 
 "$APP/Contents/MacOS/Tiri" >/dev/null 2>&1 &
+APP_PID=$!
 for _ in $(seq 1 100); do "$CLI" ping >/dev/null 2>&1 && break; sleep 0.1; done
 
 expect "ping" "pong" "$CLI" ping
@@ -96,6 +99,13 @@ expect "preview is listed" "web" "$CLI" items
 check "web-dark on" "$CLI" web-dark on "$WEB"
 check "web-dark off" "$CLI" web-dark off "$WEB"
 refuses "web-dark on a missing item" "$CLI" web-dark on i-nope
+printf '%%PDF-1.4\n' > "$PROJECT/paper.pdf"
+check "open a pdf" "$CLI" open "$PROJECT/paper.pdf" --tab
+PDF_ID=$("$CLI" items | grep paper.pdf | cut -f1)
+check "web-dark on a pdf" "$CLI" web-dark on "$PDF_ID"
+check "web-dark off a pdf" "$CLI" web-dark off "$PDF_ID"
+refuses "web-dark on a text file" "$CLI" web-dark on "$("$CLI" items | grep app.py | cut -f1)"
+check "close the pdf" "$CLI" close "$PDF_ID"
 check "close the preview" "$CLI" close "$WEB"
 
 TERM_ID=$("$CLI" term --cwd "$PROJECT" --cmd "sleep 300")

@@ -240,10 +240,18 @@ public enum FileKind: String, Sendable, Equatable {
 }
 
 public enum FileClassifier {
+    /// Has no picture, so it gets a player rather than a big empty video area.
+    public static func isAudioOnly(path: String) -> Bool {
+        audio.contains((path as NSString).pathExtension.lowercased())
+    }
+
+    private static let audio: Set<String> = ["mp3", "m4a", "aac", "wav", "aiff", "aif", "flac", "ogg", "opus"]
     private static let markdown: Set<String> = ["md", "markdown", "mdown", "mkd", "mdx"]
     private static let images: Set<String> = ["png", "jpg", "jpeg", "gif", "heic", "heif", "webp", "tiff", "tif", "bmp", "ico", "icns", "avif"]
     private static let media: Set<String> = ["mp3", "m4a", "aac", "wav", "aiff", "aif", "flac", "ogg", "opus", "mp4", "m4v", "mov", "webm", "avi", "mkv"]
-    private static let office: Set<String> = ["pptx", "ppt", "docx", "doc", "xlsx", "xls", "key", "pages", "numbers", "rtf", "rtfd"]
+    /// Quick Look draws these as pages on white, whatever the theme.
+    private static let office: Set<String> = ["pptx", "ppt", "docx", "doc", "xlsx", "xls", "key", "pages", "numbers", "rtf", "rtfd",
+                                              "ttf", "otf", "ttc", "woff", "woff2", "webarchive"]
     private static let knownText: Set<String> = [
         "txt", "text", "log", "json", "jsonc", "json5", "yaml", "yml", "toml", "ini", "cfg", "conf", "env", "xml", "plist",
         "swift", "m", "mm", "h", "hpp", "c", "cc", "cpp", "cs", "java", "kt", "kts", "go", "rs", "py", "rb", "php", "lua",

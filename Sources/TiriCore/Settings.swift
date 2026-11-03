@@ -43,6 +43,7 @@ public struct TiriSettings: Equatable, Sendable {
     public var filesExclude = [".git", "node_modules", ".build", ".DS_Store"]
     public var explorerAutoReveal = true
     public var webForceDark = true
+    public var documentsForceDark = true
     public var notificationsEnabled = true
 
     public init() {}
@@ -86,6 +87,8 @@ public struct TiriSettings: Equatable, Sendable {
 
       // In dark mode, darken web previews that have no dark mode of their own.
       "web.forceDark": true,
+      // In dark mode, show PDF and Office pages dark too. The moon button shows true colors.
+      "documents.forceDark": true,
 
       "notifications.enabled": true
     }
@@ -188,6 +191,7 @@ public struct TiriSettings: Equatable, Sendable {
         try strings("files.exclude") { settings.filesExclude = $0 }
         try bool("explorer.autoReveal") { settings.explorerAutoReveal = $0 }
         try bool("web.forceDark") { settings.webForceDark = $0 }
+        try bool("documents.forceDark") { settings.documentsForceDark = $0 }
         try bool("notifications.enabled") { settings.notificationsEnabled = $0 }
         return settings
     }
