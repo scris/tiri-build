@@ -104,6 +104,11 @@ final class AppModel {
     @ObservationIgnored let settingsStore = SettingsStore()
     @ObservationIgnored let fileIndex = FileIndexStore()
     @ObservationIgnored let terminalFolderIndex = FileIndexStore()
+    var changes: [ChangedFile] = []
+    @ObservationIgnored private var changesTokens: [FileWatchHub.Token] = []
+    @ObservationIgnored private var changesWork: DispatchWorkItem?
+    @ObservationIgnored private var changesInFlight = false
+    @ObservationIgnored private var changesAgain = false
     var recordingShortcutFor: String?
     var hooksRevision = 0
     var settingsAnchor: String?
@@ -187,6 +192,7 @@ final class AppModel {
             switch item.content {
             case .terminal(let spec): paths.append(spec.cwd)
             case .file(let spec): paths.append(spec.path)
+            case .diff(let spec): paths.append((spec.path as NSString).deletingLastPathComponent)
             case .web, .settings: break
             }
         }
@@ -215,6 +221,7 @@ final class AppModel {
     private func activeWorkspaceReady() {
         fileTree.bind(active)
         refreshFileIndex()
+        watchForChanges()
         startActiveWorkspaceTerminals()
         requestFocus()
     }
@@ -381,6 +388,8 @@ final class AppModel {
             controller = ViewerFactory.make(itemID: id, spec: spec, model: self)
         case .settings:
             controller = SettingsController(itemID: id, model: self)
+        case .diff(let spec):
+            controller = DiffController(itemID: id, path: spec.path, model: self)
         case .web(let spec):
             guard let url = URL(string: spec.url) else { return nil }
             controller = WebController(itemID: id, url: url, forceDark: spec.forceDark, isFile: false, model: self)
@@ -847,6 +856,8 @@ final class AppModel {
                 return (existingController(for: item.id) as? TerminalController)?.currentDirectory ?? spec.cwd
             case .file(let spec):
                 return active.folder(containing: spec.path) ?? (spec.path as NSString).deletingLastPathComponent
+            case .diff(let spec):
+                return active.folder(containing: spec.path) ?? (spec.path as NSString).deletingLastPathComponent
             case .web, .settings:
                 break
             }
@@ -986,7 +997,7 @@ final class AppModel {
         case .web:
             if let title = (existingController(for: item.id) as? WebController)?.title, !title.isEmpty { return title }
             return item.defaultTitle
-        case .file, .settings:
+        case .file, .settings, .diff:
             return item.defaultTitle
         }
     }
@@ -1060,6 +1071,8 @@ final class AppModel {
             // One Settings tab per workspace. Beside it, a new terminal is what's useful.
             startTerminal(split: direction)
             return
+        case .diff(let spec):
+            updateActive { $0.addItem(Item(content: .diff(spec)), split: direction) }
         }
         requestFocus()
     }
@@ -1432,6 +1445,87 @@ final class AppModel {
         return active.focused.active.flatMap { existingController(for: $0) as? WebController }
     }
 
+    // MARK: Changes
+
+    /// Anything changing under a folder can change the list, including a commit, so it's
+    /// looked at again shortly after. One look at a time, and one more if more happened meanwhile.
+    private func watchForChanges() {
+        changesTokens = active.folders.map { folder in
+            FileWatchHub.shared.watch(path: folder, recursive: true) { [weak self] in self?.scheduleChangesRefresh() }
+        }
+        refreshChanges()
+    }
+
+    private func scheduleChangesRefresh() {
+        changesWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.refreshChanges() }
+        changesWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    func refreshChanges() {
+        guard !changesInFlight else {
+            changesAgain = true
+            return
+        }
+        changesInFlight = true
+        let folders = active.folders
+        let workspace = activeID
+        Task.detached(priority: .utility) { [weak self] in
+            let found = Git.changesAcross(folders)
+            await MainActor.run {
+                guard let self else { return }
+                self.changesInFlight = false
+                if self.activeID == workspace, self.changes != found { self.changes = found }
+                // Whatever's on screen compares against the same new state.
+                for item in self.active.items + (self.active.peek.map { [$0] } ?? []) {
+                    if case .diff = item.content { (self.existingController(for: item.id) as? DiffController)?.load() }
+                }
+                if self.changesAgain || self.activeID != workspace {
+                    self.changesAgain = false
+                    self.refreshChanges()
+                }
+            }
+        }
+    }
+
+    func openDiff(path: String, preview: Bool) {
+        updateActive { $0.dismissPeek(); $0.openDiff(path: path, preview: preview) }
+        requestFocus()
+    }
+
+    /// Takes the Peek's place. With `takeFocus`, a person asked. Without it, an agent is showing something.
+    func peekDiff(path: String, takeFocus: Bool) {
+        updateActive { $0.peekDiff(path: path) }
+        peekHasKeyboard = takeFocus
+        requestFocus()
+    }
+
+    /// Switch between a file and what changed in it, wherever it's showing.
+    func toggleChangesForFront() {
+        guard let item = active.peek ?? active.activeItem else { return }
+        let isPeek = active.peek?.id == item.id
+        switch item.content {
+        case .file(let spec):
+            if isPeek { peekDiff(path: spec.path, takeFocus: true) } else { openDiff(path: spec.path, preview: false) }
+        case .diff(let spec):
+            if isPeek {
+                updateActive { $0.peekFile(path: spec.path, revealExisting: false) }
+                peekHasKeyboard = true
+                requestFocus()
+            } else {
+                open(path: spec.path, intent: .pinned)
+                requestFocus()
+            }
+        default:
+            break
+        }
+    }
+
+    func hasChanges(_ path: String) -> Bool {
+        changes.contains { $0.path == path }
+    }
+
     // MARK: Agent hooks
 
     func hooksInstalled(_ tool: AgentHooks.Tool) -> Bool {
@@ -1658,7 +1752,7 @@ final class AppModel {
                     case .file(var spec):
                         spec.forceDark = on
                         item.content = .file(spec)
-                    case .terminal, .settings:
+                    case .terminal, .settings, .diff:
                         break
                     }
                 }

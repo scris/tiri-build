@@ -157,6 +157,21 @@ check "settings open" "$CLI" settings open
 expect "settings is a tab" "settings" "$CLI" items
 SETTINGS_ID=$("$CLI" items | grep -m1 '	settings	' | cut -f1)
 check "close settings" "$CLI" close "$SETTINGS_ID"
+git -C "$PROJECT" init -q
+git -C "$PROJECT" -c user.name=t -c user.email=t@t add report.md
+git -C "$PROJECT" -c user.name=t -c user.email=t@t commit -qm first
+printf 'changed\n' >> "$PROJECT/report.md"
+sleep 1
+expect "changes lists a modified file" "report.md" "$CLI" changes
+check "diff opens" "$CLI" diff "$PROJECT/report.md" --tab
+expect "diff is an item" "changes" "$CLI" items
+DIFF_ID=$("$CLI" items | grep -m1 'changes' | cut -f1)
+check "close the diff" "$CLI" close "$DIFF_ID"
+check "diff floats" "$CLI" diff "$PROJECT/report.md"
+expect "floating diff is a peek" "(peek)" "$CLI" items
+PEEK_DIFF=$("$CLI" items | grep '(peek)' | cut -f1)
+check "close the floating diff" "$CLI" close "$PEEK_DIFF"
+
 expect "keys lists commands" "toggleSidebar" "$CLI" keys
 expect "keys set takes effect" "⌘J" "$CLI" keys set toggleSidebar cmd+j
 expect "commands show the new key" "⌘J" bash -c "'$CLI' keys | grep toggleSidebar"

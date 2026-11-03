@@ -97,6 +97,10 @@ case "commands":
     }
 case "ping":
     print("pong")
+case "changes":
+    for entry in response.result?.arrayValue ?? [] {
+        print([cell(entry["status"]), cell(entry["path"])].joined(separator: "\t"))
+    }
 case "settings.list":
     for entry in response.result?.arrayValue ?? [] {
         print([cell(entry["key"]), cell(entry["display"])].joined(separator: "\t"))
@@ -118,7 +122,7 @@ case "open", "preview", "term":
     if let item = response.result?["item"]?.stringValue { print(item) }
 case "focus", "close", "notify", "theme", "web-dark", "reveal", "run", "send", "workspace.switch",
      "workspace.new", "workspace.add-folder", "workspace.remove-folder", "workspace.import",
-     "workspace.rename", "workspace.delete", "quit", "settings.open", "follow":
+     "workspace.rename", "workspace.delete", "quit", "settings.open", "follow", "diff":
     break
 default:
     print(jsonString(response.result))

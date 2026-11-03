@@ -27,6 +27,16 @@ struct SidebarView: View {
                 FileTreeRepresentable(controller: model.fileTree)
                     .frame(maxHeight: .infinity)
             }
+            if !model.changes.isEmpty {
+                Divider()
+                sectionHeader("Changes") {
+                    Text("\(model.changes.count)")
+                        .foregroundStyle(.tertiary)
+                        .font(.caption)
+                }
+                ChangesList()
+                    .frame(height: min(CGFloat(model.changes.count) * 25 + 6, max(geometry.size.height * 0.28, 60)))
+            }
             resizeHandle
             sectionHeader("Open Items") {
                 Text("\(model.active.items.count)")

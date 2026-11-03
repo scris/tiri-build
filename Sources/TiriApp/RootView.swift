@@ -444,6 +444,8 @@ struct ItemHeader: View {
             if let web = model.controller(for: item.id) as? WebController {
                 WebHeader(controller: web, filePath: nil)
             }
+        case .diff(let spec):
+            FileHeader(item: item, path: spec.path)
         }
     }
 }
@@ -474,6 +476,36 @@ struct FileActions: View {
 
     var body: some View {
         let _ = model.controllerRevision
+        if case .diff = item.content, let diff = model.controller(for: item.id) as? DiffController {
+            if diff.diff.additions + diff.diff.deletions > 0 {
+                HStack(spacing: 4) {
+                    Text("+\(diff.diff.additions)").foregroundStyle(.green)
+                    Text("−\(diff.diff.deletions)").foregroundStyle(.red)
+                }
+                .font(.caption.monospacedDigit())
+            }
+            Button {
+                model.toggleChangesForFront()
+            } label: {
+                Label("Open File", systemImage: "doc.text").labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .font(.caption)
+            .disabled(!FileManager.default.fileExists(atPath: path))
+            .help("Show the file itself")
+        }
+        if case .file = item.content, model.hasChanges(path) {
+            Button {
+                model.toggleChangesForFront()
+            } label: {
+                Label("Changes", systemImage: "plus.forwardslash.minus").labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .font(.caption)
+            .help("Show what changed in this file")
+        }
         if model.accessReady, let document = model.controller(for: item.id) as? ForceDarkCapable, document.supportsForceDark {
             Button {
                 model.setForceDark(!document.forceDarkActive, item: item.id)

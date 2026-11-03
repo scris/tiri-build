@@ -75,6 +75,8 @@ struct PeekView: View {
                 }
                 if let path = item.filePath {
                     FileActions(item: item, path: path)
+                } else if case .diff(let spec) = item.content {
+                    FileActions(item: item, path: spec.path)
                 }
                 Button {
                     model.promotePeek(split: .right)
@@ -122,6 +124,10 @@ struct PeekView: View {
                                      : (directory as NSString).abbreviatingWithTildeInPath
         case .web(let spec):
             return spec.url
+        case .diff(let spec):
+            let relative = model.active.relativePath(spec.path)
+            let directory = (relative as NSString).deletingLastPathComponent
+            return directory.isEmpty ? "changes" : directory + " · changes"
         case .terminal, .settings:
             return nil
         }

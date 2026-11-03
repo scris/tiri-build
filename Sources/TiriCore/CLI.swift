@@ -86,6 +86,19 @@ public enum CLIParser {
             if let item = environment.itemID { payload["source"] = .string(item) }
             return request("open", payload)
 
+        case "changes":
+            guard args.isEmpty else { throw UsageError("usage: tiri changes") }
+            return request("changes")
+
+        case "diff":
+            var options = Options(args)
+            let tab = options.flag("--tab")
+            guard let raw = options.positional() else { throw UsageError("usage: tiri diff <path> [--tab]") }
+            try options.finish()
+            var payload: [String: JSONValue] = ["path": .string(absolute(raw, cwd: environment.cwd))]
+            if tab { payload["mode"] = "tab" }
+            return request("diff", payload)
+
         case "reveal":
             var options = Options(args)
             guard let raw = options.positional() else { throw UsageError("usage: tiri reveal <path>") }
@@ -314,6 +327,8 @@ public enum CLIParser {
       tiri hooks claude|codex   (prints the hooks config)
       tiri theme light|dark|system
       tiri web-dark on|off [<item-id>]
+      tiri changes                 (files changed since the last commit)
+      tiri diff <path> [--tab]     (what changed in one file; floats as a Peek)
       tiri follow <item-id> <row> <col>
       tiri keys [set <command> <key> | unset <command> | reset <command>]
       tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open]
@@ -506,6 +521,14 @@ public enum AgentGuide {
     tiri workspace switch api
     tiri workspace add-folder ~/docs
     tiri workspace import team.code-workspace
+    ```
+
+    ## Show what changed
+
+    ```sh
+    tiri changes                          # files changed since the last commit
+    tiri diff src/app.ts                  # floats what changed over your terminal
+    tiri diff src/app.ts --tab            # or keeps it as a tab
     ```
 
     ## Appearance and settings

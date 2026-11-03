@@ -73,6 +73,7 @@ extension AppModel {
             AppCommand(id: "webDarkOff", title: "View: Force Dark Off", category: "View") { model in
                 model.setForceDark(false, item: model.active.focused.active)
             },
+            AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 model.frontWebController?.reload()
             },
@@ -199,6 +200,8 @@ enum ControlHandler {
             object["path"] = .string(spec.path)
         case .web(let spec):
             object["url"] = .string((model.existingController(for: item.id) as? WebController)?.currentURLString ?? spec.url)
+        case .diff(let spec):
+            object["path"] = .string(spec.path)
         case .settings:
             break
         }
@@ -508,6 +511,20 @@ enum ControlHandler {
             terminal.startIfNeeded(fallbackSize: true)
             terminal.send(text: try string(request, "text"))
             return .object(["item": .string(id)])
+
+        case "changes":
+            return .array(Git.changesAcross(model.active.folders).map { change in
+                .object(["status": .string(change.status.letter), "path": .string(change.path)])
+            })
+
+        case "diff":
+            let path = try string(request, "path")
+            if request.args["mode"]?.stringValue == "tab" {
+                model.openDiff(path: path, preview: false)
+            } else {
+                model.peekDiff(path: path, takeFocus: false)
+            }
+            return .object([:])
 
         case "follow":
             let id = try requireItem(request, model: model)

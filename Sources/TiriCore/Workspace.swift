@@ -51,6 +51,12 @@ public struct FileSpec: Codable, Hashable, Sendable {
     }
 }
 
+/// What changed in a file, compared with the last commit.
+public struct DiffSpec: Codable, Hashable, Sendable {
+    public var path: String
+    public init(path: String) { self.path = path }
+}
+
 public struct WebSpec: Codable, Hashable, Sendable {
     public var url: String
     public var forceDark: Bool?
@@ -67,6 +73,7 @@ public enum ItemContent: Codable, Hashable, Sendable {
     case file(FileSpec)
     case web(WebSpec)
     case settings
+    case diff(DiffSpec)
 
     public var kindName: String {
         switch self {
@@ -74,6 +81,7 @@ public enum ItemContent: Codable, Hashable, Sendable {
         case .file: "file"
         case .web: "web"
         case .settings: "settings"
+        case .diff: "changes"
         }
     }
 }
@@ -108,6 +116,8 @@ public struct Item: Codable, Hashable, Identifiable, Sendable {
             return URL(string: spec.url)?.host ?? spec.url
         case .settings:
             return "Settings"
+        case .diff(let spec):
+            return (spec.path as NSString).lastPathComponent + " (changes)"
         }
     }
 }
@@ -388,6 +398,29 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
 
     public func fileItem(path: String) -> Item? {
         items.first { $0.filePath == path }
+    }
+
+    public func diffItem(path: String) -> Item? {
+        items.first { $0.content == .diff(DiffSpec(path: path)) }
+    }
+
+    @discardableResult
+    public mutating func openDiff(path: String, preview: Bool) -> ItemID {
+        if let existing = diffItem(path: path) {
+            if !preview { pin(existing.id) }
+            activate(existing.id)
+            return existing.id
+        }
+        let item = Item(content: .diff(DiffSpec(path: path)), isPreview: preview)
+        addItem(item, split: nil)
+        return item.id
+    }
+
+    @discardableResult
+    public mutating func peekDiff(path: String) -> ItemID {
+        let item = Item(content: .diff(DiffSpec(path: path)))
+        peek = item
+        return item.id
     }
 
     // MARK: Adding

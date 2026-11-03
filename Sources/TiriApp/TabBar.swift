@@ -19,6 +19,8 @@ struct ItemIcon: View {
             Image(systemName: "globe").foregroundStyle(.secondary)
         case .settings:
             Image(systemName: "gearshape").foregroundStyle(.secondary)
+        case .diff:
+            Image(systemName: "plus.forwardslash.minus").foregroundStyle(.secondary)
         }
     }
 }

@@ -20,6 +20,10 @@ macOS asks for permission the first time Tiri opens something in Documents, Desk
 TIRI_SIGN_IDENTITY="Apple Development: you@example.com (ABCDE12345)" ./build.sh
 ```
 
+## See what changed
+
+When a workspace folder is in a Git repository, the sidebar has a **Changes** section listing every file changed since the last commit, live as your agents work. Click one to see its diff as a tab, or double-click to keep it. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. They work the same in a Peek. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.
+
 ## Start with a folder
 
 Nothing runs until you've said where. A new workspace asks for its folder first, and so does the first terminal or agent in a workspace without one. In a workspace with several folders, the **+** menu asks which folder a new terminal or agent should use, and ⌃\` uses the folder of what you're looking at.

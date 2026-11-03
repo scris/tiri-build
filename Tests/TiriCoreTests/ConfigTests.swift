@@ -2,6 +2,98 @@ import Foundation
 import Testing
 @testable import TiriCore
 
+@Suite struct GitChangesTests {
+    @Test func statusCoversEveryKind() {
+        let output = " M a.swift\0A  new.swift\0 D gone.swift\0?? fresh/x.md\0R  to.swift\0from.swift\0UU clash.swift\0"
+        let found = GitStatusParser.parse(output, root: "/r")
+        #expect(found.map(\.status) == [.modified, .added, .deleted, .untracked, .renamed, .conflicted])
+        #expect(found[3].path == "/r/fresh/x.md")
+        #expect(found[4].relative == "to.swift")
+        #expect(found[4].oldRelative == "from.swift")
+    }
+
+    @Test func aPathWithSpacesIsKept() {
+        #expect(GitStatusParser.parse(" M my file.txt\0", root: "/r").first?.relative == "my file.txt")
+    }
+
+    @Test func diffNumbersBothSides() {
+        let diff = DiffParser.parse("""
+        diff --git a/a b/a
+        index 1..2 100644
+        --- a/a
+        +++ b/a
+        @@ -10,3 +10,4 @@ func main
+         same
+        -old
+        +new
+        +extra
+         end
+        """.replacingOccurrences(of: "\n        ", with: "\n"))
+        #expect(diff.lines.map(\.kind) == [.hunk, .context, .removed, .added, .added, .context])
+        #expect(diff.lines[1].oldLine == 10 && diff.lines[1].newLine == 10)
+        #expect(diff.lines[2].oldLine == 11 && diff.lines[2].newLine == nil)
+        #expect(diff.lines[4].newLine == 12)
+        #expect(diff.lines[5].oldLine == 12 && diff.lines[5].newLine == 13)
+        #expect(diff.additions == 2 && diff.deletions == 1)
+    }
+
+    @Test func headerLinesThatLookLikeChangesAreNot() {
+        let diff = DiffParser.parse("--- a/x\n+++ b/x\n")
+        #expect(diff.isEmpty)
+    }
+
+    @Test func noNewlineMarkerIsNotALine() {
+        let diff = DiffParser.parse("@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+b\n")
+        #expect(diff.lines.map(\.kind) == [.hunk, .removed, .added])
+    }
+
+    @Test func binaryIsSaid() {
+        #expect(DiffParser.parse("Binary files a/x.png and b/x.png differ\n").isBinary)
+    }
+
+    @Test func aNewFileIsAllAdded() {
+        let diff = FileDiff.allAdded("one\ntwo\n")
+        #expect(diff.lines.map(\.newLine) == [1, 2])
+        #expect(diff.additions == 2)
+    }
+
+    @Test func aRealRepository() throws {
+        let manager = FileManager.default
+        let root = manager.temporaryDirectory.appendingPathComponent("tiri-git-\(UUID().uuidString)").path
+        try manager.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(atPath: root) }
+        func git(_ args: String...) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-c", "user.name=t", "-c", "user.email=t@t"] + args
+            process.currentDirectoryURL = URL(fileURLWithPath: root)
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+        }
+        try git("init", "-q")
+        try "one\ntwo\n".write(toFile: root + "/kept.txt", atomically: true, encoding: .utf8)
+        try git("add", ".")
+        try git("commit", "-qm", "first")
+        try "one\nTWO\n".write(toFile: root + "/kept.txt", atomically: true, encoding: .utf8)
+        try "new\n".write(toFile: root + "/fresh.txt", atomically: true, encoding: .utf8)
+        let changes = Git.changes(in: root)
+        #expect(Set(changes.map(\.status)) == [.modified, .untracked])
+        let modified = Git.diff(path: root + "/kept.txt")
+        #expect(modified.additions == 1 && modified.deletions == 1)
+        #expect(Git.diff(path: root + "/fresh.txt").additions == 1)
+        #expect(Git.changes(in: manager.temporaryDirectory.path).isEmpty)
+        // A deleted file whose folder went with it still has something to show.
+        try manager.createDirectory(atPath: root + "/docs", withIntermediateDirectories: true)
+        try "gone\n".write(toFile: root + "/docs/gone.md", atomically: true, encoding: .utf8)
+        try git("add", ".")
+        try git("commit", "-qm", "second")
+        try manager.removeItem(atPath: root + "/docs")
+        #expect(Git.diff(path: root + "/docs/gone.md").deletions == 1)
+    }
+}
+
 @Suite struct AgentHooksTests {
     @Test func claudeInstallKeepsWhatWasThere() throws {
         // A hook someone relies on, like a gate in front of production credentials, must survive.

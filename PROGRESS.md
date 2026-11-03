@@ -35,6 +35,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Terminal:** login shell with your aliases, truecolor, full-screen TUIs, cwd tracking, presets, exit bar with Restart.
 - **Peek:** ⌘-click or `tiri open` from a terminal floats a viewer, with Open as Tab, Open to the Side, replace on next click, Esc and click-outside to close.
 - **Path links:** existing paths underline on ⌘-hover, VS Code's location formats, soft and hard wrapped paths, directories reveal, web URLs float too.
+- **Changes:** a sidebar section and diff items in the main window, live, in tabs and Peeks, with `tiri changes` and `tiri diff`. Read-only: no staging or committing.
 - **Path search:** a path that doesn't exist as written is searched for across the workspace's folders, its terminals' folders and its open files. One match opens, several offer a choice, none shows a toast. Never an alert.
 - **Tree → terminal:** drag inserts a shell-quoted path.
 - **Agent attention:** status on the tab, item list and workspace switcher, toasts, dock badge, jump to next (⌘⇧U), hooks, fallback estimate when there are no hooks.
