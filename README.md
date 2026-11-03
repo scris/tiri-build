@@ -33,7 +33,7 @@ When you ⌘-click a file in a Claude Code or Codex session, it opens as a float
 - Esc, or clicking outside it, closes it and returns you to the terminal.
 - ⌘⇧-click skips the Peek and opens a tab.
 
-When an agent runs `tiri open report.md` in a Tiri terminal, the file floats the same way, and the keyboard stays in the session. Set `"terminal.linkOpens"` to `"tab"` or `"external"` to change what ⌘-click does.
+When an agent runs `tiri open report.md` in a Tiri terminal, the file floats the same way, and the keyboard stays in the session. Settings can change what ⌘-click does.
 
 ## Everyday use
 
@@ -83,35 +83,15 @@ Hooks tell Tiri exactly when an agent is working, waiting for you or done, and l
 
 Without hooks, Tiri estimates status from terminal activity, which is less precise.
 
-**Claude Code:** print the config and add it to `~/.claude/settings.json`:
+**Turning them on:** Settings has an Agent Status section with an Install button for Claude Code and Codex, and Tiri offers the first time it sees one run. Your agent can start it too, with `tiri hooks install claude`. Either way Tiri shows what it will add and waits for your yes. It keeps your other hooks and settings, leaves a copy of the file next to it, and can remove its entries again.
 
-```sh
-tiri hooks claude
-```
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
-    "PermissionRequest": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
-    "Notification": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
-    "StopFailure": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }]
-  }
-}
-```
-
-Outside Tiri these hooks do nothing and print nothing, so they're safe to leave on.
-
-**Codex:** `tiri hooks codex` prints the config for `~/.codex/config.toml`. Codex asks you to trust hooks once, in `/hooks`.
+Outside Tiri these hooks do nothing and print nothing, so they're safe to leave on. Codex asks you to trust hooks once, in `/hooks`.
 
 ## Dark mode
 
-Set `"theme"` to `"dark"`, or leave it on `"system"` while your Mac is dark, and everything follows, live: the app, terminals, code, markdown, web pages and media.
+Choose Dark in Settings, or leave it on System while your Mac is dark, and everything follows, live: the app, terminals, code, markdown, web pages and media.
 
-PDF, Office, iWork, RTF, font and web archive previews have no dark mode of their own, so Tiri shows their pages inverted, with colors kept. A photo in a document inverts too, so the moon button above the file shows its true colors, and Tiri remembers that for the item. `tiri web-dark on|off <item-id>` does the same. To keep all documents in true colors, set `"documents.forceDark": false`.
+PDF, Office, iWork, RTF, font and web archive previews have no dark mode of their own, so Tiri shows their pages inverted, with colors kept. A photo in a document inverts too, so the moon button above the file shows its true colors, and Tiri remembers that for the item. `tiri web-dark on|off <item-id>` does the same. To keep all documents in true colors, turn off Darken documents in Settings.
 
 Black artwork on a transparent background, in a PNG or SVG, gets a light plate behind it so it stays visible.
 

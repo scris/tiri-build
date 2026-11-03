@@ -663,6 +663,10 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             trackedCwd = directory
             model.terminalCwdChanged(item: itemID, cwd: directory)
         }
+        if let name = foregroundProcessName?.lowercased(), !hookActive {
+            if name.contains("claude") { model.offerHooksIfNeeded(.claude) }
+            if name.contains("codex") { model.offerHooksIfNeeded(.codex) }
+        }
         let now = ProcessClock.now()
         let quietFor = now - activity.lastOutput
         let current = model.runtimes[itemID]?.status ?? .idle

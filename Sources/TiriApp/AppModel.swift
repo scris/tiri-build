@@ -105,6 +105,7 @@ final class AppModel {
     @ObservationIgnored let fileIndex = FileIndexStore()
     @ObservationIgnored let terminalFolderIndex = FileIndexStore()
     var recordingShortcutFor: String?
+    var hooksRevision = 0
     var settingsAnchor: String?
     @ObservationIgnored private var recordedStrokes: [KeyStroke] = []
     @ObservationIgnored private var recordingWork: DispatchWorkItem?
@@ -503,6 +504,7 @@ final class AppModel {
     func isCommandEnabledForKey(_ command: String) -> Bool {
         switch command {
         case "promotePeek", "promotePeekToSide": return active.peek != nil
+        case "webReload": return frontWebController != nil
         default: return true
         }
     }
@@ -1422,6 +1424,76 @@ final class AppModel {
     func openKeyboardShortcuts() {
         openSettings()
         settingsAnchor = SettingsView.shortcutsAnchor
+    }
+
+    /// The web page you're looking at: in the Peek if there is one, or else the focused tab.
+    var frontWebController: WebController? {
+        if let peek = active.peek { return existingController(for: peek.id) as? WebController }
+        return active.focused.active.flatMap { existingController(for: $0) as? WebController }
+    }
+
+    // MARK: Agent hooks
+
+    func hooksInstalled(_ tool: AgentHooks.Tool) -> Bool {
+        _ = hooksRevision
+        let text = (try? String(contentsOf: AgentHooks.configURL(for: tool), encoding: .utf8)) ?? ""
+        return AgentHooks.isInstalled(tool, in: text)
+    }
+
+    /// These are the agent's own files, so nothing changes until you say yes here.
+    func confirmHooks(_ tool: AgentHooks.Tool, install: Bool) {
+        guard let window else { return }
+        let url = AgentHooks.configURL(for: tool)
+        let alert = NSAlert()
+        let path = (url.path as NSString).abbreviatingWithTildeInPath
+        if install {
+            alert.messageText = "Tell Tiri exactly what \(tool.title) is doing?"
+            alert.informativeText = "Tiri adds a small hook to \(path), and keeps a copy of the file next to it. The hook does nothing outside Tiri.\n\n" + AgentHooks.summary(of: tool)
+            alert.addButton(withTitle: "Install")
+        } else {
+            alert.messageText = "Remove Tiri's hooks from \(tool.title)?"
+            alert.informativeText = "Tiri takes its entries out of \(path) and leaves the rest. Status goes back to an estimate."
+            alert.addButton(withTitle: "Remove")
+        }
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                if response == .alertFirstButtonReturn { self?.applyHooks(tool, install: install) }
+            }
+        }
+    }
+
+    private func applyHooks(_ tool: AgentHooks.Tool, install: Bool) {
+        let url = AgentHooks.configURL(for: tool)
+        let manager = FileManager.default
+        do {
+            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            let updated = install ? try AgentHooks.installing(tool, in: text) : try AgentHooks.removing(tool, from: text)
+            try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if manager.fileExists(atPath: url.path) {
+                let backup = url.appendingPathExtension("tiri-backup")
+                try? manager.removeItem(at: backup)
+                try manager.copyItem(at: url, to: backup)
+            }
+            try updated.write(to: url, atomically: true, encoding: .utf8)
+            hooksRevision += 1
+            showToast(title: install ? "\(tool.title) hooks are on" : "\(tool.title) hooks are off",
+                      detail: install ? "New \(tool.title) sessions report their status exactly." : nil,
+                      symbol: "checkmark.circle.fill", tint: .green)
+        } catch {
+            showToast(title: "Couldn't change \(tool.title)'s config", detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
+        }
+    }
+
+    /// Once, the first time an agent runs without hooks. Dismissing it is an answer.
+    func offerHooksIfNeeded(_ tool: AgentHooks.Tool) {
+        let key = "offeredHooks.\(tool.rawValue)"
+        guard !UserDefaults.standard.bool(forKey: key), !hooksInstalled(tool) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        showToast(title: "Get exact status from \(tool.title)?", detail: "Right now Tiri is estimating when it's working or done.",
+                  symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up") { [weak self] in
+            self?.confirmHooks(tool, install: true)
+        }
     }
 
     // MARK: Keyboard shortcuts

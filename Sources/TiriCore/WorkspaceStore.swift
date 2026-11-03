@@ -337,7 +337,8 @@ public struct AgentHookEvent: Equatable, Sendable {
         let session = object["session_id"] as? String
         switch object["hook_event_name"] as? String {
         case "SessionStart":
-            return AgentHookEvent(sessionID: session)
+            // A session that's just opened is waiting for you, whatever its startup output looked like.
+            return AgentHookEvent(state: "idle", sessionID: session)
         case "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart":
             return AgentHookEvent(state: "working", sessionID: session)
         case "PermissionRequest":

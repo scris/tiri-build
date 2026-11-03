@@ -198,8 +198,11 @@ public enum CLIParser {
             return request("notify", body)
 
         case "hooks":
+            if args.count == 2, args[0] == "install" || args[0] == "remove", AgentHooks.Tool(rawValue: args[1]) != nil {
+                return request("hooks.\(args[0])", ["tool": .string(args[1])])
+            }
             guard args.first == "claude" || args.first == "codex", args.count == 1 else {
-                throw UsageError("usage: tiri hooks claude|codex   (prints the config to add)")
+                throw UsageError("usage: tiri hooks install|remove claude|codex   (Tiri asks you first)\n       tiri hooks claude|codex   (prints the config)")
             }
             return .printText(args[0] == "claude" ? AgentGuide.claudeHooks : AgentGuide.codexHooks)
 
@@ -307,7 +310,8 @@ public enum CLIParser {
       tiri focus <item-id> | close <item-id>
       tiri notify <working|needs-input|done> [--message TEXT]
       tiri hook claude|codex    (for agent hooks: reads the payload, prints nothing)
-      tiri hooks claude|codex   (prints the hooks config to add)
+      tiri hooks install|remove claude|codex   (Tiri asks you first)
+      tiri hooks claude|codex   (prints the hooks config)
       tiri theme light|dark|system
       tiri web-dark on|off [<item-id>]
       tiri follow <item-id> <row> <col>

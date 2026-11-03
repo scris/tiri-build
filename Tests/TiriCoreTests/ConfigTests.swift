@@ -2,6 +2,64 @@ import Foundation
 import Testing
 @testable import TiriCore
 
+@Suite struct AgentHooksTests {
+    @Test func claudeInstallKeepsWhatWasThere() throws {
+        // A hook someone relies on, like a gate in front of production credentials, must survive.
+        let original = #"{ "model": "opus", "hooks": { "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "gate.sh" }] }], "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }] } }"#
+        let updated = try AgentHooks.installing(.claude, in: original)
+        let object = try JSONSerialization.jsonObject(with: Data(updated.utf8)) as! [String: Any]
+        #expect(object["model"] as? String == "opus")
+        let hooks = object["hooks"] as! [String: [[String: Any]]]
+        #expect(hooks["Stop"]?.count == 2)
+        #expect(Set(hooks.keys) == Set(AgentHooks.claudeEvents + ["PreToolUse"]))
+        #expect(hooks["PreToolUse"]?.first?["matcher"] as? String == "Bash")
+        #expect(updated.contains("gate.sh"))
+        #expect(AgentHooks.isInstalled(.claude, in: updated))
+    }
+
+    @Test func claudeInstallTwiceChangesNothing() throws {
+        let once = try AgentHooks.installing(.claude, in: "")
+        #expect(try AgentHooks.installing(.claude, in: once) == once)
+    }
+
+    @Test func claudeRemoveLeavesOnlyWhatWasThere() throws {
+        let original = #"{ "hooks": { "PreToolUse": [{ "hooks": [{ "type": "command", "command": "gate.sh" }] }], "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }] }, "model": "opus" }"#
+        let removed = try AgentHooks.removing(.claude, from: try AgentHooks.installing(.claude, in: original))
+        #expect(!AgentHooks.isInstalled(.claude, in: removed))
+        let object = try JSONSerialization.jsonObject(with: Data(removed.utf8)) as! [String: Any]
+        let hooks = object["hooks"] as! [String: [[String: Any]]]
+        #expect(Set(hooks.keys) == ["Stop", "PreToolUse"])
+        #expect(removed.contains("gate.sh"))
+        #expect(object["model"] as? String == "opus")
+    }
+
+    @Test func aBrokenClaudeFileIsLeftAlone() {
+        #expect(throws: (any Error).self) { try AgentHooks.installing(.claude, in: "{ nope") }
+    }
+
+    @Test func codexRoundTrips() throws {
+        let original = "model = \"gpt\"\n\n[tui]\nnotifications = true\n"
+        let installed = try AgentHooks.installing(.codex, in: original)
+        #expect(installed.hasPrefix("notify = "))
+        #expect(installed.contains("[tui]"))
+        #expect(try AgentHooks.installing(.codex, in: installed) == installed)
+        #expect(try AgentHooks.removing(.codex, from: installed) == original)
+    }
+
+    @Test func someoneElsesCodexNotifyStays() throws {
+        let installed = try AgentHooks.installing(.codex, in: "notify = [\"mine\"]\n")
+        #expect(installed.hasPrefix("notify = [\"mine\"]"))
+        #expect(installed.components(separatedBy: "notify =").count == 2)
+    }
+
+    @Test func configPathsFollowTheEnvironment() {
+        let home = URL(fileURLWithPath: "/h")
+        #expect(AgentHooks.configURL(for: .claude, environment: [:], home: home).path.hasPrefix("/h/.claude/"))
+        #expect(AgentHooks.configURL(for: .claude, environment: ["CLAUDE_CONFIG_DIR": "/c"], home: home).path.hasPrefix("/c/"))
+        #expect(AgentHooks.configURL(for: .codex, environment: ["CODEX_HOME": "/x"], home: home).path == "/x/config.toml")
+    }
+}
+
 @Suite struct SettingsSchemaTests {
     @Test func everySettingBelongsToASectionAndHasWords() {
         for definition in SettingsSchema.all {

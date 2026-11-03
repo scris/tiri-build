@@ -109,6 +109,8 @@ case "settings.explain":
     }
 case "settings.get", "settings.set", "settings.reset":
     print(cell(response.result?["display"]))
+case "hooks.install", "hooks.remove":
+    print("Tiri is asking for a yes on screen.")
 case "keys.set", "keys.unset", "keys.reset":
     let key = cell(response.result?["key"])
     print(key.isEmpty ? "no shortcut" : key)

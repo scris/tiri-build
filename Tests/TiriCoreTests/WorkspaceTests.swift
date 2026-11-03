@@ -637,7 +637,7 @@ private func file(_ name: String, preview: Bool = false) -> Item {
     private func codex(_ json: String) -> AgentHookEvent? { AgentHookEvent.parseCodex(Data(json.utf8)) }
 
     @Test func claudeLifecycle() {
-        #expect(claude(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#) == AgentHookEvent(sessionID: "s1"))
+        #expect(claude(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#) == AgentHookEvent(state: "idle", sessionID: "s1"))
         #expect(claude(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#)?.state == "working")
         #expect(claude(#"{"hook_event_name":"PostToolUse"}"#)?.state == "working")
         #expect(claude(#"{"hook_event_name":"PermissionRequest","tool_name":"Bash"}"#) == AgentHookEvent(state: "needs-input", message: "Wants to use Bash"))

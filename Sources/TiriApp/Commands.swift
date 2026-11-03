@@ -74,7 +74,7 @@ extension AppModel {
                 model.setForceDark(false, item: model.active.focused.active)
             },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
-                if let id = model.active.focused.active { (model.existingController(for: id) as? WebController)?.reload() }
+                model.frontWebController?.reload()
             },
         ]
         for number in 1...9 {
@@ -438,6 +438,11 @@ enum ControlHandler {
 
         case "settings.open":
             model.openSettings()
+            return .object([:])
+
+        case "hooks.install", "hooks.remove":
+            guard let tool = AgentHooks.Tool(rawValue: try string(request, "tool")) else { throw ControlFailure("Unknown tool") }
+            model.confirmHooks(tool, install: request.cmd == "hooks.install")
             return .object([:])
 
         case "keys.set", "keys.unset", "keys.reset":

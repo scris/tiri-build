@@ -70,6 +70,9 @@ struct PeekView: View {
                     }
                 }
                 Spacer(minLength: 8)
+                if case .web = item.content, let web = model.controller(for: item.id) as? WebController {
+                    PeekWebControls(controller: web)
+                }
                 if let path = item.filePath {
                     FileActions(item: item, path: path)
                 }
@@ -139,5 +142,28 @@ struct PeekView: View {
                     widthFraction = min(max(start - Double(value.translation.width / max(total, 1)), 0.3), 0.97)
                 }
                 .onEnded { _ in dragStartFraction = nil })
+    }
+}
+
+/// A page in a Peek has to be able to go back and reload, the same as one in a tab.
+struct PeekWebControls: View {
+    @Bindable var controller: WebController
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button { controller.goBack() } label: { Image(systemName: "chevron.left") }
+                .disabled(!controller.canGoBack)
+                .help("Back")
+            Button { controller.goForward() } label: { Image(systemName: "chevron.right") }
+                .disabled(!controller.canGoForward)
+                .help("Forward")
+            Button {
+                if controller.isLoading { controller.webView.stopLoading() } else { controller.reload() }
+            } label: {
+                Image(systemName: controller.isLoading ? "xmark" : "arrow.clockwise")
+            }
+            .help(controller.isLoading ? "Stop" : "Reload (⌘R)")
+        }
+        .buttonStyle(.glass)
     }
 }

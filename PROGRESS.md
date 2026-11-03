@@ -19,7 +19,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | What | Why | How to check |
 |---|---|---|
 | The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
-| Real Claude Code hooks, end to end | A safety hook on the machine blocked writing Claude settings. Payload handling is tested with real-format JSON | Add the output of `tiri hooks claude`, run a prompt, and watch the status |
+| Your own Install click for hooks | The installer ran through its real yes against an isolated config, and a real Claude session ran with the hooks passed for that session only. Status and session ID both arrived. Your real config waits for your click, because it's yours and a safety hook rightly stops an agent editing it | Settings, Agent Status, Install |
 | Resume by session ID on a real session | Depends on the hooks above. `claude --continue` is verified on a real session | Same as above, then relaunch |
 | Clicking a native notification | Needs the system permission prompt answered. In-app toasts and badges are verified | Allow notifications, then run `tiri notify done --item <id>` in a terminal in another workspace |
 | Codex session and hooks | Only its first screens were opened. Payload handling is tested with documented-format JSON | Add the output of `tiri hooks codex` and run a session |
@@ -98,7 +98,6 @@ Open times run from the request until the content is showing, except for Office 
 ## Next 5 tasks
 
 1. Finish the "not verified" table above, starting with real `~/Documents` folders and real hooks.
-2. Offer to install the hooks from inside Tiri, with a visible diff and a clear yes, rather than copying config by hand.
 3. Compact folders in the explorer, and multi-line link context.
 4. Real syntax highlighting, then read-only diff view (the start of the later Git changes work).
 5. An MCP wrapper around the control API, now that the CLI is stable.

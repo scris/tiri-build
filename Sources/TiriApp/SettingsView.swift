@@ -72,6 +72,9 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                    AgentHooksSection()
+                }
                 if !commands.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         VStack(alignment: .leading, spacing: 1) {
@@ -230,6 +233,38 @@ struct SettingRow: View {
                         pairs: value.objectValue.sorted { $0.key < $1.key }.map { ($0.key, $0.value.stringValue ?? "") }) { pairs in
                 set(.object(Dictionary(pairs.map { ($0.0, JSONValue.string($0.1)) }, uniquingKeysWith: { _, last in last })))
             }
+        }
+    }
+}
+
+struct AgentHooksSection: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Agent Status").font(.headline)
+            VStack(spacing: 0) {
+                ForEach(Array(AgentHooks.Tool.allCases.enumerated()), id: \.element) { index, tool in
+                    if index > 0 { Divider() }
+                    let installed = model.hooksInstalled(tool)
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(tool.title)
+                            Text(installed
+                                 ? "Reports exactly when it's working, waiting for you or done, and resumes the right conversation."
+                                 : "Tiri is estimating its status from terminal activity. A hook makes it exact.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Button(installed ? "Remove" : "Install…") { model.confirmHooks(tool, install: !installed) }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                }
+            }
+            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
         }
     }
 }
