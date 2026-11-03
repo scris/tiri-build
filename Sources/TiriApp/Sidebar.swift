@@ -8,11 +8,19 @@ struct SidebarView: View {
     @State private var itemsHeight: CGFloat = 180
     @State private var dragStart: CGFloat?
 
+    // Which sections are open is remembered across launches.
+    @AppStorage(SidebarSection.explorer.rawValue) private var explorerOpen = true
+    @AppStorage(SidebarSection.changes.rawValue) private var changesOpen = true
+    @AppStorage(SidebarSection.items.rawValue) private var itemsOpen = true
+
     var body: some View {
         GeometryReader { geometry in
+        // With the explorer folded, what's still open takes the room it left.
+        let changesFill = !explorerOpen && changesOpen && !model.changes.isEmpty
+        let itemsFill = !explorerOpen && !changesFill && itemsOpen
         VStack(spacing: 0) {
             WorkspaceSwitcher()
-            sectionHeader("Explorer") {
+            sectionHeader("Explorer", isOpen: $explorerOpen) {
                 Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
                     .help("New File")
                 Button { model.fileTree.beginCreating(.folder, in: nil) } label: { Image(systemName: "folder.badge.plus") }
@@ -21,31 +29,58 @@ struct SidebarView: View {
                     .help("Add Folder to Workspace")
             }
             if model.active.folders.isEmpty {
-                NoFoldersView()
-                    .frame(maxHeight: .infinity)
+                if explorerOpen {
+                    NoFoldersView()
+                        .frame(maxHeight: .infinity)
+                }
             } else {
+                // Stays alive while folded, so it keeps what's expanded and where it's scrolled.
                 FileTreeRepresentable(controller: model.fileTree)
-                    .frame(maxHeight: .infinity)
+                    .frame(maxHeight: explorerOpen ? .infinity : 0)
+                    .opacity(explorerOpen ? 1 : 0)
+                    .allowsHitTesting(explorerOpen)
+                    .clipped()
             }
             if !model.changes.isEmpty {
                 Divider()
-                sectionHeader("Changes") {
+                sectionHeader("Changes", isOpen: $changesOpen) {
                     Text("\(model.changes.count)")
                         .foregroundStyle(.tertiary)
                         .font(.caption)
                 }
-                ChangesList()
-                    .frame(height: min(CGFloat(model.changes.count) * 25 + 6, max(geometry.size.height * 0.28, 60)))
+                if changesOpen {
+                    if changesFill {
+                        ChangesList()
+                            .frame(maxHeight: .infinity)
+                    } else {
+                        ChangesList()
+                            .frame(height: min(CGFloat(model.changes.count) * 25 + 6, max(geometry.size.height * 0.28, 60)))
+                    }
+                }
             }
-            resizeHandle
-            sectionHeader("Open Items") {
+            if explorerOpen, itemsOpen {
+                resizeHandle
+            } else {
+                Divider()
+            }
+            sectionHeader("Open Items", isOpen: $itemsOpen) {
                 Text("\(model.active.items.count)")
                     .foregroundStyle(.tertiary)
                     .font(.caption)
             }
-            OpenItemsList()
-                // On a short window the tree still gets most of the room.
-                .frame(height: min(itemsHeight, max(geometry.size.height * 0.3, 60)))
+            if itemsOpen {
+                if itemsFill {
+                    OpenItemsList()
+                        .frame(maxHeight: .infinity)
+                } else {
+                    OpenItemsList()
+                        // On a short window the tree still gets most of the room.
+                        .frame(height: min(itemsHeight, max(geometry.size.height * 0.3, 60)))
+                }
+            }
+            if !explorerOpen, !changesFill, !itemsFill {
+                Spacer(minLength: 0)
+            }
         }
         }
     }
@@ -69,20 +104,45 @@ struct SidebarView: View {
             }
     }
 
-    private func sectionHeader<Actions: View>(_ title: String, @ViewBuilder actions: () -> Actions) -> some View {
+    private func sectionHeader<Actions: View>(_ title: String, isOpen: Binding<Bool>, @ViewBuilder actions: () -> Actions) -> some View {
         HStack(spacing: 8) {
-            Text(title.uppercased())
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(.secondary)
+            Button {
+                withAnimation(.smooth(duration: 0.18)) { isOpen.wrappedValue.toggle() }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .rotationEffect(.degrees(isOpen.wrappedValue ? 90 : 0))
+                        .frame(width: 10)
+                    Text(title.uppercased())
+                        .font(.system(size: 10.5, weight: .semibold))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel(isOpen.wrappedValue ? "Fold \(title)" : "Unfold \(title)")
+            .help(isOpen.wrappedValue ? "Fold \(title)" : "Unfold \(title)")
             Spacer()
             actions()
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .font(.system(size: 12))
         }
-        .padding(.horizontal, 14)
+        .padding(.leading, 10)
+        .padding(.trailing, 14)
         .frame(height: 26)
     }
+}
+
+enum SidebarSection: String {
+    case explorer = "sidebar.explorerOpen"
+    case changes = "sidebar.changesOpen"
+    case items = "sidebar.itemsOpen"
+
+    private var isOpen: Bool { UserDefaults.standard.object(forKey: rawValue) as? Bool ?? true }
+    func open() { UserDefaults.standard.set(true, forKey: rawValue) }
+    func toggle() { UserDefaults.standard.set(!isOpen, forKey: rawValue) }
 }
 
 struct NoFoldersView: View {

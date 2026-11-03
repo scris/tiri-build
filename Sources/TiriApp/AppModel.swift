@@ -767,6 +767,8 @@ final class AppModel {
     }
 
     func revealOrOffer(path rawPath: String) {
+        // Asking to see something in the explorer means opening it.
+        SidebarSection.explorer.open()
         let path = aliasedPath(rawPath)
         if active.folder(containing: path) != nil {
             revealInTree(path)

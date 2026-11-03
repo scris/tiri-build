@@ -30,6 +30,7 @@ extension AppModel {
             },
             AppCommand(id: "focusExplorer", title: "Focus on Explorer", category: "View") { model in
                 if model.sidebarVisibility == .detailOnly { model.sidebarVisibility = .all }
+                SidebarSection.explorer.open()
                 model.fileTree.focus()
             },
             AppCommand(id: "revealActive", title: "Reveal Active Item in Explorer", category: "View") { model in
@@ -82,6 +83,9 @@ extension AppModel {
             AppCommand(id: "saveFile", title: "Save", category: "File") { $0.saveFront() },
             AppCommand(id: "addToAgent", title: "Add to Agent", category: "Agent") { $0.addFrontToAgent() },
             AppCommand(id: "attachToAgent", title: "Add Files or Images to Agent…", category: "Agent") { $0.chooseFilesForAgent() },
+            AppCommand(id: "foldExplorer", title: "Fold or Unfold Explorer", category: "View") { _ in SidebarSection.explorer.toggle() },
+            AppCommand(id: "foldChanges", title: "Fold or Unfold Changes", category: "View") { _ in SidebarSection.changes.toggle() },
+            AppCommand(id: "foldOpenItems", title: "Fold or Unfold Open Items", category: "View") { _ in SidebarSection.items.toggle() },
             AppCommand(id: "searchInFiles", title: "Search in Files", category: "Go") { $0.openSearch() },
             AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
