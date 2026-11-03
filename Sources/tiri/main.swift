@@ -1,0 +1,108 @@
+import Foundation
+import TiriCore
+
+func fail(_ message: String, code: Int32 = 1) -> Never {
+    FileHandle.standardError.write(Data((message + "\n").utf8))
+    exit(code)
+}
+
+let environment = ProcessInfo.processInfo.environment
+let cliEnvironment = CLIParser.Environment(
+    cwd: FileManager.default.currentDirectoryPath,
+    itemID: environment["TIRI_ITEM_ID"],
+    workspace: environment["TIRI_WORKSPACE"]
+)
+
+let arguments = Array(CommandLine.arguments.dropFirst())
+let parsed: CLIParser.Parsed
+do {
+    parsed = try CLIParser.parse(arguments, environment: cliEnvironment)
+} catch {
+    fail("\(error)", code: 2)
+}
+
+let request: ControlRequest
+let rawJSON: Bool
+switch parsed {
+case .printText(let text):
+    print(text)
+    exit(0)
+case .quietSuccess:
+    exit(0)
+case .request(let value, let json):
+    request = value
+    rawJSON = json
+}
+
+// A hook must never disturb the agent, even when Tiri isn't running.
+let isHookCommand = arguments.first == "hook" || arguments.first == "notify"
+
+let response: ControlResponse
+do {
+    let client = try ControlClient(path: TiriPaths.socket)
+    response = try client.send(request)
+} catch {
+    if isHookCommand { exit(0) }
+    if case ControlSocketError.timedOut = error {
+        fail("Tiri didn't answer in time. If macOS is asking for permission to read a folder, answer that first.")
+    }
+    fail("Tiri isn't running (\(error)). Open Tiri.app first.")
+}
+
+func jsonString(_ value: JSONValue?) -> String {
+    guard let value else { return "" }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    guard let data = try? encoder.encode(value) else { return "" }
+    return String(decoding: data, as: UTF8.self)
+}
+
+func cell(_ value: JSONValue?) -> String { value?.stringValue ?? "" }
+
+if rawJSON {
+    if let data = try? ControlCoding.encodeLine(response) {
+        FileHandle.standardOutput.write(data)
+    }
+    exit(response.ok ? 0 : 1)
+}
+
+guard response.ok else {
+    if isHookCommand { exit(0) }
+    fail(response.error ?? "Unknown error")
+}
+
+// Plain text for the common listings; JSON for anything structured.
+switch request.cmd {
+case "items":
+    for item in response.result?.arrayValue ?? [] {
+        var line = [cell(item["id"]), cell(item["kind"]), cell(item["status"]).isEmpty ? "-" : cell(item["status"]), cell(item["title"])]
+        if item["active"]?.boolValue == true { line.append("(active)") }
+        if item["peek"]?.boolValue == true { line.append("(peek)") }
+        line.append("[\(cell(item["workspace"]))]")
+        print(line.joined(separator: "\t"))
+    }
+case "workspace.list":
+    for workspace in response.result?.arrayValue ?? [] {
+        let marker = workspace["active"]?.boolValue == true ? "*" : " "
+        let folders = workspace["folders"]?.arrayValue?.compactMap(\.stringValue).joined(separator: ", ") ?? ""
+        print("\(marker) \(cell(workspace["name"]))\t\(folders)")
+    }
+case "read":
+    print(cell(response.result?["text"]))
+case "tree":
+    for row in response.result?.arrayValue ?? [] { print(cell(row)) }
+case "commands":
+    for command in response.result?.arrayValue ?? [] {
+        print([cell(command["id"]), cell(command["title"]), cell(command["key"])].joined(separator: "\t"))
+    }
+case "ping":
+    print("pong")
+case "open", "preview", "term":
+    if let item = response.result?["item"]?.stringValue { print(item) }
+case "focus", "close", "notify", "theme", "web-dark", "reveal", "run", "send", "workspace.switch",
+     "workspace.new", "workspace.add-folder", "workspace.remove-folder", "workspace.import",
+     "workspace.rename", "workspace.delete", "quit":
+    break
+default:
+    print(jsonString(response.result))
+}

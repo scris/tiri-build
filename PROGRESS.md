@@ -1,0 +1,94 @@
+# Progress
+
+Status of the first build against the [spec](https://claude.ai/artifact/KiXf5aQEigev1vNJFeysbb) (v0.3).
+
+All of milestones M0 to M8 are built. The work is one commit, not one per milestone, because the milestones were built together and then hardened by testing; splitting it afterwards would have invented a history.
+
+## How it was tested
+
+- `swift test`: unit tests for the model, path parsing, persistence, import, settings, keybindings, CLI and an in-process control server.
+- `scripts/e2e.sh`: drives a real app through every CLI command, with isolated state.
+- Real launches, driven with real mouse and keyboard events and checked with window screenshots.
+- Real Claude Code sessions in Tiri terminals, in a scratch project: prompts, status, ⌘-clicking its output, relaunch and resume. Codex was launched to confirm its TUI renders, but no session was run.
+- Real folders, read-only, at their true paths: `~/ai-hotpoints-2026`, `~/nvcm-agent`, `~/mgx-dev`.
+- Real project contents, as copies with the same relative layout: `seenot-web.code-workspace` and its three folders, plus Office, PDF, HEIC, video and other files.
+
+### Not verified yet
+
+| What | Why | How to check |
+|---|---|---|
+| Folders at their real paths in `~/Documents` | macOS asks for permission first and ignores automated clicks on that prompt, so a person has to answer it | Open a folder from Documents and click Allow |
+| Real Claude Code hooks, end to end | A safety hook on the machine blocked writing Claude settings. Payload handling is tested with real-format JSON | Add the output of `tiri hooks claude`, run a prompt, and watch the status |
+| Resume by session ID on a real session | Depends on the hooks above. `claude --continue` is verified on a real session | Same as above, then relaunch |
+| Clicking a native notification | Needs the system permission prompt answered. In-app toasts and badges are verified | Allow notifications, then run `tiri notify done --item <id>` in a terminal in another workspace |
+| Codex session and hooks | Only its first screens were opened. Payload handling is tested with documented-format JSON | Add the output of `tiri hooks codex` and run a session |
+| Reduce Transparency, Increase Contrast | Left to the system's glass, as the spec asks, but not exercised | Turn them on in Accessibility settings |
+| Terminal translucency setting | Implemented, not looked at | Set `terminal.translucent` |
+
+## What works
+
+- **Workspaces:** create, rename, delete, switch (sidebar and ⌃1…⌃9), add and remove folders, persist and restore, import `.code-workspace`.
+- **File tree:** multi-root, lazy, live updates, preview and pinned opens, reveal, context menu, inline new and rename, Trash, Cursor's keys.
+- **Terminal:** login shell with your aliases, truecolor, full-screen TUIs, cwd tracking, presets, exit bar with Restart.
+- **Peek:** ⌘-click or `tiri open` from a terminal floats a viewer, with Open as Tab, Open to the Side, replace on next click, Esc and click-outside to close.
+- **Path links:** existing paths underline on ⌘-hover, VS Code's location formats, soft and hard wrapped paths, directories reveal, web URLs float too.
+- **Tree → terminal:** drag inserts a shell-quoted path.
+- **Agent attention:** status on the tab, item list and workspace switcher, toasts, dock badge, jump to next (⌘⇧U), hooks, fallback estimate when there are no hooks.
+- **Session restore:** layout, cwd and terminals. Agents resume. Other commands wait typed at the prompt, so nothing like `./deploy.sh` re-runs by itself.
+- **Viewers:** markdown (rendered and source), code with light highlighting, images (HEIC, GIF), SVG, PDF, audio, video, HTML, CSV and TSV, Office and iWork through Quick Look, Quick Look for everything else. All reload when the file changes.
+- **Web:** address bar, back, forward, reload, auto-reload for local files, forced dark.
+- **Control API and CLI:** everything in spec §5, plus `send`, `read`, `layout`, `tree`, `commands`, `run`, `perf`, `hook`, `hooks`.
+- **Navigation:** quick open, command palette, all §6 keybindings, chords, breadcrumbs, find, tab drag and drop.
+- **Settings:** live reload, a banner on invalid JSON, comments preserved when Tiri edits the file.
+
+## What is stubbed or thin
+
+- Syntax highlighting is a small tokenizer for comments, strings, numbers and keywords, not a real grammar.
+- Find doesn't cover images, video or Quick Look files. Web and markdown find has no match count.
+- One window per app. A second instance can't take the control socket and says so.
+- `TerminalBackend` and `FileSystemProviding` exist for SSH later, each with only a local implementation.
+
+## Performance (spec §9)
+
+Measured on this Mac (M-series, macOS 27), release build.
+
+| Budget | Target | Measured |
+|---|---|---|
+| Cold launch to window | < 500 ms | 270–360 ms after the first launch of a build. The first launch after a build was 480–900 ms |
+| Open text, code or image under 5 MB | < 100 ms | 15–30 ms |
+| Open markdown | < 100 ms | 47 ms typically; 110 ms for a 124 KB file (over budget) |
+| Open HEIC | (not in budget, was 8 MB) | 134 ms, decoded off the main thread |
+| 50,000 files | stays responsive | Switching in takes 42 ms, the tree loads lazily, quick open searches off the main thread |
+| Memory: 1 workspace, 2 terminals, 3 previews | < 250 MB | 68 MB app + about 80 MB WebKit helpers |
+
+Open times run from the request until the content is showing, except for Office and PDF, where they stop when the viewer is attached and Quick Look's own rendering continues after that.
+
+## Known bugs
+
+- A nested `claude -p` inside a hooked terminal can overwrite the stored session ID, so a relaunch resumes the wrong conversation.
+- Status without hooks is an estimate. A long silent pause can read as done.
+- Multi-line link context isn't handled, such as a `16:5` under a path line from ripgrep.
+- Hard-wrap joining for paths is a heuristic, and hasn't been seen against a long real path from Claude.
+- Tiri shows `.env` files in the tree like any other file, as Cursor does.
+
+## Decisions: deviations from Cursor
+
+| Cursor | Tiri | Why |
+|---|---|---|
+| ⌘-click in a terminal opens a pinned tab | Opens a Peek | The point of the Peek. `terminal.linkOpens` restores tabs; ⌘⇧-click does it once |
+| Opens a second copy in the active group if a file is open elsewhere | Focuses the existing tab, unless you ask for a split | Review-first: one file, one place |
+| Split duplicates the editor | Files and web pages duplicate; a terminal starts a new terminal in the same folder | A process can't be in two places |
+| ⌘W with nothing open closes the window | Does nothing | Closing the window would stop every terminal in every workspace |
+| Bottom terminal panel | None; terminals are tabs | Spec principle 1 |
+| Root row only with several folders | Always a root row | Spec: one section per folder |
+| Compact folders on by default | Not implemented | Not in v0.1 scope; see next tasks |
+| Quick open searches on spaces as AND | Spaces are ignored | Simpler for now |
+| Hides nothing but `.git` and `.DS_Store` by default | Also hides `node_modules` and `.build` | Spec §9 |
+
+## Next 5 tasks
+
+1. Finish the "not verified" table above, starting with real `~/Documents` folders and real hooks.
+2. Offer to install the hooks from inside Tiri, with a visible diff and a clear yes, rather than copying config by hand.
+3. Compact folders in the explorer, and multi-line link context.
+4. Real syntax highlighting, then read-only diff view (the start of the later Git changes work).
+5. An MCP wrapper around the control API, now that the CLI is stable.

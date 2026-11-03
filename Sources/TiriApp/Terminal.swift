@@ -1,0 +1,887 @@
+import AppKit
+import Darwin
+@preconcurrency import SwiftTerm
+import TiriCore
+import UniformTypeIdentifiers
+
+/// Anything that can sit in a tab. Terminals, file viewers and web views are all one of these.
+@MainActor
+protocol ItemController: AnyObject {
+    var itemID: ItemID { get }
+    var view: NSView { get }
+    func focus()
+    func didAttach()
+    func applySettings()
+    func goTo(line: Int?, col: Int?)
+    func teardown()
+    var supportsFind: Bool { get }
+    var selectedTextForFind: String? { get }
+    /// Returns false when nothing matches.
+    func find(_ query: String, backwards: Bool) -> Bool
+    func clearFind()
+}
+
+extension ItemController {
+    func didAttach() {}
+    func applySettings() {}
+    func goTo(line: Int?, col: Int?) {}
+    func teardown() {}
+    var supportsFind: Bool { false }
+    var selectedTextForFind: String? { nil }
+    func find(_ query: String, backwards: Bool) -> Bool { false }
+    func clearFind() {}
+}
+
+// MARK: - Spawning, behind a protocol so a remote (SSH) backend can be added
+
+struct TerminalLaunch {
+    var executable: String
+    var args: [String]
+    var execName: String?
+    var environment: [String]
+    var cwd: String
+}
+
+protocol TerminalBackend {
+    func launch(command: String?, cwd: String, shell: String, itemID: ItemID, workspaceID: WorkspaceID, socket: String) -> TerminalLaunch
+}
+
+struct LocalTerminalBackend: TerminalBackend {
+    func launch(command: String?, cwd: String, shell: String, itemID: ItemID, workspaceID: WorkspaceID, socket: String) -> TerminalLaunch {
+        let shellPath = shell.isEmpty
+            ? (ProcessInfo.processInfo.environment["SHELL"] ?? userShell())
+            : shell
+        var environment = ProcessInfo.processInfo.environment
+        // Nothing from whatever launched Tiri should leak in. If Tiri was started from inside an
+        // agent session, a terminal's agent would think it's a child of that session.
+        for key in environment.keys where key.hasPrefix("CLAUDE_CODE") || key == "CLAUDECODE"
+            || key == "TERM_SESSION_ID" || key == "ITERM_SESSION_ID" || key == "__CF_USER_TEXT_ENCODING"
+            || key == "TIRI_ITEM_ID" || key == "TIRI_WORKSPACE" {
+            environment[key] = nil
+        }
+        environment["TERM"] = "xterm-256color"
+        environment["COLORTERM"] = "truecolor"
+        environment["TERM_PROGRAM"] = "Tiri"
+        environment["TERM_PROGRAM_VERSION"] = TiriCoreVersion.string
+        environment["LANG"] = environment["LANG"] ?? "en_US.UTF-8"
+        environment["TIRI_SOCKET"] = socket
+        environment["TIRI_WORKSPACE"] = workspaceID
+        environment["TIRI_ITEM_ID"] = itemID
+        // `tiri` works in every Tiri terminal, wherever the CLI was installed.
+        if let helpers = Bundle.main.resourceURL?.appendingPathComponent("bin").path {
+            environment["PATH"] = helpers + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
+        }
+        let list = environment.map { "\($0.key)=\($0.value)" }
+        let directory = FileManager.default.fileExists(atPath: cwd) ? cwd : NSHomeDirectory()
+
+        let name = (shellPath as NSString).lastPathComponent
+        if let command, !command.trimmingCharacters(in: .whitespaces).isEmpty {
+            // An interactive login shell, so the user's aliases and PATH apply: the command
+            // behaves as it does when they type it in their own terminal.
+            return TerminalLaunch(executable: shellPath, args: ["-l", "-i", "-c", command], execName: name,
+                                  environment: list, cwd: directory)
+        }
+        return TerminalLaunch(executable: shellPath, args: ["-l"], execName: "-" + name, environment: list, cwd: directory)
+    }
+
+    private func userShell() -> String {
+        if let entry = getpwuid(getuid()), let shell = entry.pointee.pw_shell {
+            return String(cString: shell)
+        }
+        return "/bin/zsh"
+    }
+}
+
+// MARK: - The terminal view
+
+final class TiriTerminalView: LocalProcessTerminalView {
+    weak var owner: TerminalController?
+    private var underlines: [CALayer] = []
+    private var hoverKey: String?
+    private var hoverTarget: LinkTarget?
+    private var swallowNextMouseUp = false
+
+    enum LinkTarget {
+        case path(ResolvedPath)
+        case web(URL)
+    }
+
+    // MARK: Bell
+
+    nonisolated override func bell(source: Terminal) {
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.owner?.bellRang() }
+        }
+    }
+
+    // MARK: Cmd-click
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command), let target = linkTarget(forWindowPoint: event.locationInWindow) {
+            swallowNextMouseUp = true
+            open(target, forceTab: event.modifierFlags.contains(.shift))
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if swallowNextMouseUp {
+            swallowNextMouseUp = false
+            return
+        }
+        super.mouseUp(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if swallowNextMouseUp { return }
+        super.mouseDragged(with: event)
+    }
+
+    private func open(_ target: LinkTarget, forceTab: Bool) {
+        guard let model = owner?.model else { return }
+        switch target {
+        case .path(let resolved):
+            model.openFromTerminal(resolved, forceTab: forceTab)
+        case .web(let url):
+            model.openWebFromTerminal(url, forceTab: forceTab)
+        }
+    }
+
+    func hoverEvent(_ event: NSEvent) {
+        guard window != nil, event.window === window else {
+            clearHover()
+            return
+        }
+        guard event.modifierFlags.contains(.command) else {
+            clearHover()
+            return
+        }
+        let point = window?.mouseLocationOutsideOfEventStream ?? event.locationInWindow
+        let local = convert(point, from: nil)
+        guard bounds.contains(local), !pointIsCoveredByPeek(point) else {
+            clearHover()
+            return
+        }
+        guard let (target, logical, range) = resolveAt(windowPoint: point) else {
+            clearHover()
+            return
+        }
+        hoverTarget = target
+        drawUnderline(logical: logical, range: range)
+        NSCursor.pointingHand.set()
+    }
+
+    private func pointIsCoveredByPeek(_ windowPoint: NSPoint) -> Bool {
+        guard let model = owner?.model, let frame = model.layoutRegistry.peekFrame,
+              let height = window?.contentView?.bounds.height else { return false }
+        return frame.contains(CGPoint(x: windowPoint.x, y: height - windowPoint.y))
+    }
+
+    private func clearHover() {
+        guard hoverTarget != nil || !underlines.isEmpty else { return }
+        hoverTarget = nil
+        underlines.forEach { $0.removeFromSuperlayer() }
+        underlines.removeAll()
+        NSCursor.iBeam.set()
+    }
+
+    private func linkTarget(forWindowPoint point: NSPoint) -> LinkTarget? {
+        resolveAt(windowPoint: point)?.0
+    }
+
+    private func resolveAt(windowPoint point: NSPoint) -> (LinkTarget, LogicalLine, Range<Int>)? {
+        for variant in logicalLines(atWindowPoint: point) {
+            if let (target, range) = resolveLink(in: variant.line, column: variant.column) {
+                return (target, variant.line, range)
+            }
+        }
+        return nil
+    }
+
+    // MARK: Grid geometry
+
+    /// A logical line: soft-wrapped rows joined, with a map from characters back to cells.
+    struct LogicalLine {
+        var text: String
+        var cells: [(row: Int, col: Int, width: Int)]
+    }
+
+    private var cellSize: CGSize {
+        let snapshot = terminalStateSnapshot()
+        let frame = getOptimalFrameSize()
+        return CGSize(width: frame.width / CGFloat(max(snapshot.dimensions.cols, 1)),
+                      height: frame.height / CGFloat(max(snapshot.dimensions.rows, 1)))
+    }
+
+    /// What's under a point, as text to try: the soft-wrapped line first. Then, because agents
+    /// print long paths with real newlines at the screen edge, the row joined to its neighbours.
+    private func logicalLines(atWindowPoint point: NSPoint) -> [(line: LogicalLine, column: Int)] {
+        let local = convert(point, from: nil)
+        let size = cellSize
+        guard size.width > 0, size.height > 0 else { return [] }
+        let snapshot = terminalStateSnapshot()
+        let rows = snapshot.visibleRows
+        let cols = snapshot.dimensions.cols
+        let rowIndex = Int((bounds.height - local.y) / size.height)
+        let column = Int(local.x / size.width)
+        guard rowIndex >= 0, rowIndex < rows.count, column >= 0 else { return [] }
+
+        var start = rowIndex
+        while start > 0, rows[start].isWrapped { start -= 1 }
+        var end = rowIndex
+        while end + 1 < rows.count, rows[end + 1].isWrapped { end += 1 }
+
+        var variants: [(LogicalLine, Int)] = []
+        if let soft = Self.build(rows: rows, indexes: Array(start...end), hitRow: rowIndex, hitColumn: column) {
+            variants.append(soft)
+        }
+        // A row that reaches the right margin may continue on the next one.
+        func nearlyFull(_ index: Int) -> Bool {
+            let trimmed = rows[index].text.reversed().drop { $0 == " " }.count
+            return trimmed >= cols - 8
+        }
+        if end + 1 < rows.count, nearlyFull(end),
+           let joined = Self.build(rows: rows, indexes: Array(start...(end + 1)), hitRow: rowIndex, hitColumn: column, trimIndentOf: end + 1) {
+            variants.append(joined)
+        }
+        if start > 0, nearlyFull(start - 1),
+           let joined = Self.build(rows: rows, indexes: Array((start - 1)...end), hitRow: rowIndex, hitColumn: column, trimIndentOf: start) {
+            variants.append(joined)
+        }
+        return variants.map { (line: $0.0, column: $0.1) }
+    }
+
+    private static func build(rows: [TerminalVisibleRowSnapshot], indexes: [Int], hitRow: Int, hitColumn: Int,
+                              trimIndentOf: Int? = nil) -> (LogicalLine, Int)? {
+        var text = ""
+        var cells: [(row: Int, col: Int, width: Int)] = []
+        var hitCharacter = -1
+        for index in indexes {
+            let row = rows[index]
+            var cursor = 0
+            var characters = Array(row.text)
+            if index == trimIndentOf {
+                while characters.first == " " {
+                    characters.removeFirst()
+                    cursor += 1
+                }
+            }
+            // A hard-wrapped row's trailing spaces aren't part of the path.
+            if trimIndentOf != nil, index != indexes.last {
+                while characters.last == " " { characters.removeLast() }
+            }
+            for character in characters {
+                let width = cursor < row.cellWidths.count ? max(row.cellWidths[cursor], 1) : 1
+                if index == hitRow, hitColumn >= cursor, hitColumn < cursor + width {
+                    hitCharacter = cells.count
+                }
+                text.append(character)
+                cells.append((index, cursor, width))
+                cursor += width
+            }
+        }
+        guard hitCharacter >= 0 else { return nil }
+        return (LogicalLine(text: text, cells: cells), hitCharacter)
+    }
+
+    private func resolveLink(in line: LogicalLine, column: Int) -> (LinkTarget, Range<Int>)? {
+        if let (url, range) = Self.webLink(in: line.text, column: column) {
+            return (.web(url), range)
+        }
+        guard let owner else { return nil }
+        let model = owner.model
+        let workspace = model.workspace(containing: owner.itemID)
+        let folders = workspace?.folders ?? []
+        let resolver = PathResolver(cwd: owner.currentDirectory, workspaceFolders: folders, search: { suffix in
+            MainActor.assumeIsolated { model.fileIndex.uniqueMatch(suffix: suffix) }
+        })
+        guard let resolved = resolver.resolve(atColumn: column, in: line.text) else { return nil }
+        return (.path(resolved), resolved.range)
+    }
+
+    static func webLink(in text: String, column: Int) -> (URL, Range<Int>)? {
+        let characters = Array(text)
+        guard let match = try? NSRegularExpression(pattern: #"https?://[^\s"'`<>│]+"#) else { return nil }
+        let string = String(characters)
+        for result in match.matches(in: string, range: NSRange(string.startIndex..., in: string)) {
+            guard let range = Range(result.range, in: string) else { continue }
+            var raw = String(string[range])
+            while let last = raw.last, ".,;:!?)]}".contains(last) {
+                if last == ")", raw.filter({ $0 == "(" }).count >= raw.filter({ $0 == ")" }).count { break }
+                raw.removeLast()
+            }
+            let lower = string.distance(from: string.startIndex, to: range.lowerBound)
+            let span = lower..<(lower + raw.count)
+            if span.contains(column), let url = URL(string: raw) { return (url, span) }
+        }
+        return nil
+    }
+
+    private func drawUnderline(logical: LogicalLine, range: Range<Int>) {
+        underlines.forEach { $0.removeFromSuperlayer() }
+        underlines.removeAll()
+        guard let layer else { return }
+        let size = cellSize
+        var runs: [Int: (first: Int, last: Int)] = [:]
+        for index in range where index < logical.cells.count {
+            let cell = logical.cells[index]
+            let run = runs[cell.row] ?? (cell.col, cell.col + cell.width)
+            runs[cell.row] = (min(run.first, cell.col), max(run.last, cell.col + cell.width))
+        }
+        for (row, run) in runs {
+            let line = CALayer()
+            line.backgroundColor = NSColor.controlAccentColor.cgColor
+            let y = bounds.height - CGFloat(row + 1) * size.height + 1
+            line.frame = CGRect(x: CGFloat(run.first) * size.width, y: y,
+                                width: CGFloat(run.last - run.first) * size.width, height: 1.5)
+            line.zPosition = 100
+            line.actions = ["position": NSNull(), "bounds": NSNull(), "contents": NSNull(), "opacity": NSNull()]
+            layer.addSublayer(line)
+            underlines.append(line)
+        }
+    }
+
+    // MARK: Drop a file from the tree or Finder
+
+    func registerDrops() {
+        registerForDraggedTypes([.fileURL])
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool { true }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+                                                               options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else { return false }
+        send(txt: ShellQuote.join(urls.map(\.path)) + " ")
+        window?.makeFirstResponder(self)
+        return true
+    }
+
+    override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        guard let url = URL(string: link), let model = owner?.model else { return }
+        if url.isFileURL {
+            model.openFromTerminal(ResolvedPath(path: url.path, isDirectory: false, line: nil, col: nil, range: 0..<0), forceTab: false)
+        } else if url.scheme == "http" || url.scheme == "https" {
+            model.openWebFromTerminal(url, forceTab: false)
+        }
+    }
+}
+
+// MARK: - The controller
+
+final class TerminalController: ItemController, LocalProcessTerminalViewDelegate {
+    let itemID: ItemID
+    let terminalView: TiriTerminalView
+    unowned let model: AppModel
+    var view: NSView { container }
+
+    private let container = TerminalContainer()
+    private let spec: TerminalSpec
+    private var launchCommand: String?
+    /// Typed at the prompt after a relaunch, for a command that shouldn't just run again.
+    private var prefill: String?
+    private let workspaceID: WorkspaceID
+    private var started = false
+    private var exited = false
+    private var trackedCwd: String
+    private var persistedCwd: String
+    private var monitor: Timer?
+    private var oscObservation: TerminalOscObservation?
+    private let activity = OutputActivity()
+    private var lastInputAt: Double = 0
+
+    // Status heuristics. Agent hooks, when installed, are authoritative.
+    private var hookActive = false
+    private var lastHookWorkingAt: Double = 0
+    private var foregroundBusySince: Double?
+    private var sawAgentOutputBurst = false
+    private var agentHasWork = false
+
+    init(itemID: ItemID, spec: TerminalSpec, launchCommand: String?, prefill: String? = nil,
+         workspaceID: WorkspaceID, model: AppModel) {
+        self.itemID = itemID
+        self.spec = spec
+        self.launchCommand = launchCommand
+        self.prefill = prefill
+        self.workspaceID = workspaceID
+        self.model = model
+        self.trackedCwd = spec.cwd
+        self.persistedCwd = spec.cwd
+        var options = TerminalOptions.default
+        options.scrollback = model.settings.terminalScrollback
+        terminalView = TiriTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), font: nil, options: options)
+        terminalView.owner = self
+        terminalView.processDelegate = self
+        // Tiri does its own link detection: SwiftTerm's rejects relative paths and drops :line.
+        terminalView.linkReporting = .none
+        terminalView.bellStyle = .none
+        terminalView.registerDrops()
+        container.host(terminalView)
+        container.onAttach = { [weak self] in self?.didAttach() }
+        container.onAppearanceChange = { [weak self] in self?.applySettings() }
+        applySettings()
+        let activity = activity
+        terminalView.setProcessOutputHandler { activity.noteOutput() }
+        oscObservation = terminalView.observeOscEvents { [weak self] event in
+            let notification = Self.notificationText(from: event)
+            guard let notification else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.oscNotification(notification) }
+            }
+        }
+        monitor = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        monitor?.tolerance = 0.3
+    }
+
+    nonisolated private static func notificationText(from event: TerminalOscEvent) -> String? {
+        let code = event.code
+        guard code == 9 || code == 777 || code == 99 else { return nil }
+        return String(decoding: event.payload, as: UTF8.self)
+    }
+
+    private func oscNotification(_ text: String) {
+        // A progress report (OSC 9;4) isn't a request for attention.
+        if text.hasPrefix("4;") { return }
+        if hookActive { return }
+        model.setStatus(itemID, .needsInput, message: text.replacingOccurrences(of: "notify;", with: ""))
+    }
+
+    // MARK: Lifecycle
+
+    func didAttach() {
+        startIfNeeded(fallbackSize: false)
+    }
+
+    func startIfNeeded(fallbackSize: Bool) {
+        guard !started else { return }
+        if !fallbackSize, terminalView.bounds.width < 40 { return }
+        started = true
+        spawn()
+    }
+
+    private func spawn() {
+        let backend: TerminalBackend = LocalTerminalBackend()
+        let launch = backend.launch(command: launchCommand, cwd: currentDirectory, shell: model.settings.terminalShell,
+                                    itemID: itemID, workspaceID: workspaceID, socket: model.socketPath)
+        terminalView.startProcess(executable: launch.executable, args: launch.args, environment: launch.environment,
+                                  execName: launch.execName, currentDirectory: launch.cwd)
+        exited = false
+        container.hideExitBar()
+        if let prefill {
+            // The terminal holds typed-ahead input until the shell is ready for it.
+            self.prefill = nil
+            terminalView.send(txt: prefill)
+        }
+    }
+
+    func restart() {
+        guard exited else { return }
+        model.updateRuntime(itemID) { runtime in
+            runtime.status = .idle
+            runtime.exitCode = nil
+            runtime.unseen = false
+        }
+        hookActive = false
+        // A resume that failed ("no conversation found") shouldn't fail again. Restart is a fresh run.
+        launchCommand = spec.command
+        spawn()
+        focus()
+    }
+
+    func teardown() {
+        monitor?.invalidate()
+        monitor = nil
+        oscObservation = nil
+        terminalView.setProcessOutputHandler(nil)
+        terminalView.processDelegate = nil
+        if started, !exited { terminalView.terminate() }
+    }
+
+    func focus() {
+        terminalView.window?.makeFirstResponder(terminalView)
+    }
+
+    func applySettings() {
+        let settings = model.settings
+        let family = settings.terminalFontFamily
+        let size = CGFloat(settings.terminalFontSize)
+        terminalView.font = TerminalTheme.font(family: family, size: size)
+        terminalView.changeScrollback(settings.terminalScrollback)
+        TerminalTheme.apply(to: terminalView, dark: model.effectiveDark, translucent: settings.terminalTranslucent)
+        container.setBackground(terminalView.nativeBackgroundColor.withAlphaComponent(settings.terminalTranslucent ? 0.82 : 1))
+    }
+
+    // MARK: Cwd and processes
+
+    /// OSC 7 when the shell reports it, otherwise whatever the process is actually in.
+    var currentDirectory: String {
+        if started, !exited, let fallback = processDirectory() {
+            if fallback != trackedCwd { trackedCwd = fallback }
+        }
+        return trackedCwd
+    }
+
+    private var shellPID: pid_t { started && !exited ? terminalView.process.shellPid : 0 }
+
+    private var foregroundPID: pid_t? {
+        guard started, !exited else { return nil }
+        let fd = terminalView.process.childfd
+        guard fd >= 0 else { return nil }
+        let group = tcgetpgrp(fd)
+        return group > 0 ? group : nil
+    }
+
+    private func processDirectory() -> String? {
+        for pid in [foregroundPID, shellPID > 0 ? shellPID : nil].compactMap({ $0 }) {
+            var info = proc_vnodepathinfo()
+            let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+            if proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size {
+                let path = withUnsafePointer(to: &info.pvi_cdir.vip_path) {
+                    $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+                }
+                if !path.isEmpty { return path }
+            }
+        }
+        return nil
+    }
+
+    /// The program in the foreground, if it isn't just the shell at its prompt.
+    var foregroundProcessName: String? {
+        guard let foreground = foregroundPID, shellPID > 0 else { return nil }
+        // `shell -c cmd` runs the agent inside the shell's own process group.
+        if let launchCommand {
+            return launchCommand.split(separator: " ").first.map(String.init)
+        }
+        guard foreground != shellPID else { return nil }
+        var buffer = [CChar](repeating: 0, count: 256)
+        let length = proc_name(foreground, &buffer, UInt32(buffer.count))
+        return length > 0 ? String(cString: buffer) : "a process"
+    }
+
+    private var isShellBusy: Bool {
+        guard let foreground = foregroundPID, shellPID > 0 else { return false }
+        return foreground != shellPID
+    }
+
+    // MARK: Status
+
+    func noteHookReport(status: TerminalStatus) {
+        hookActive = true
+        if status == .working { lastHookWorkingAt = ProcessClock.now() }
+    }
+
+    private func tick() {
+        guard started, !exited else { return }
+        // Plain shells don't report their folder unless they're set up to, and a relaunch
+        // should come back where the terminal was.
+        if let directory = processDirectory(), directory != persistedCwd {
+            persistedCwd = directory
+            trackedCwd = directory
+            model.terminalCwdChanged(item: itemID, cwd: directory)
+        }
+        let now = ProcessClock.now()
+        let quietFor = now - activity.lastOutput
+        let current = model.runtimes[itemID]?.status ?? .idle
+
+        if hookActive {
+            // `Stop` doesn't fire when a turn is interrupted, so "working" can go stale.
+            // A working agent keeps redrawing its spinner; long silence means it isn't.
+            if current == .working, quietFor > 12_000, now - lastHookWorkingAt > 12_000 {
+                model.setStatus(itemID, .idle, notify: false)
+            }
+            return
+        }
+
+        if launchCommand == nil {
+            // Plain shells: busy means something other than the shell is in the foreground.
+            if isShellBusy {
+                if foregroundBusySince == nil { foregroundBusySince = now }
+                if current != .working { model.setStatus(itemID, .working, notify: false) }
+            } else if current == .working {
+                let ranFor = now - (foregroundBusySince ?? now)
+                foregroundBusySince = nil
+                // Only something that ran a while is worth a "done".
+                model.setStatus(itemID, ranFor > 10_000 ? .done : .idle, notify: false)
+            }
+            return
+        }
+
+        // An agent with no hooks installed: judge by output, ignoring echo from the user's typing.
+        // Nothing counts until the user has given it something to do: drawing a welcome
+        // screen isn't work, and going quiet afterwards isn't "done".
+        guard agentHasWork else { return }
+        let typing = now - lastInputAt < 1_500
+        if quietFor < 1_500, !typing {
+            if current != .working, current != .needsInput {
+                model.setStatus(itemID, .working, notify: false)
+            }
+            sawAgentOutputBurst = true
+        } else if current == .working, quietFor > 6_000 {
+            model.setStatus(itemID, sawAgentOutputBurst ? .done : .idle)
+            sawAgentOutputBurst = false
+            agentHasWork = false
+        }
+    }
+
+    // MARK: Delegate
+
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+
+    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+        let clean = Self.cleanTitle(title)
+        model.updateRuntime(itemID) { $0.title = clean }
+    }
+
+    /// Terminal titles often arrive with a spinner glyph in front.
+    static func cleanTitle(_ title: String) -> String {
+        var scalars = Substring(title).unicodeScalars
+        while let first = scalars.first, !first.properties.isAlphabetic, first != "~", first != "/", first != "." {
+            scalars.removeFirst()
+        }
+        return String(scalars).trimmingCharacters(in: .whitespaces)
+    }
+
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        guard let directory else { return }
+        let path = URL(string: directory)?.path ?? directory
+        guard !path.isEmpty, path != trackedCwd else { return }
+        trackedCwd = path
+        model.terminalCwdChanged(item: itemID, cwd: path)
+    }
+
+    func processTerminated(source: TerminalView, exitCode: Int32?) {
+        exited = true
+        model.updateRuntime(itemID) { runtime in
+            runtime.status = .exited
+            runtime.exitCode = exitCode
+        }
+        container.showExitBar(code: exitCode, onRestart: { [weak self] in self?.restart() }, onClose: { [weak self] in
+            guard let self else { return }
+            self.model.closeNow(self.itemID)
+        })
+    }
+
+    func processFailedToStart(source: TerminalView, error: LocalProcessError) {
+        processTerminated(source: source, exitCode: nil)
+    }
+
+    func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
+
+    func bellRang() {
+        if hookActive { return }
+        if launchCommand != nil {
+            model.setStatus(itemID, .needsInput)
+        } else if !model.isLookingAt(itemID) {
+            model.updateRuntime(itemID) { $0.unseen = true }
+        }
+    }
+
+    /// A real key press, seen by the router. Bytes to the process wouldn't do: terminals answer
+    /// focus and capability queries by themselves, and agents using the enhanced keyboard
+    /// protocol don't get Return as CR. Pressing Return is what hands an agent some work.
+    func noteKeyPress(isReturn: Bool) {
+        lastInputAt = ProcessClock.now()
+        guard isReturn else { return }
+        agentHasWork = true
+        // The user answered. Without hooks nothing else would clear the question.
+        if !hookActive, model.runtimes[itemID]?.status == .needsInput {
+            model.setStatus(itemID, .working, notify: false)
+        }
+    }
+
+    // MARK: Find
+
+    var supportsFind: Bool { true }
+
+    var selectedTextForFind: String? {
+        terminalView.getSelection().flatMap { $0.contains("\n") ? nil : $0 }
+    }
+
+    func find(_ query: String, backwards: Bool) -> Bool {
+        backwards ? terminalView.findPrevious(query) : terminalView.findNext(query)
+    }
+
+    func clearFind() {
+        terminalView.clearSearch()
+    }
+
+    // MARK: Control API
+
+    func send(text: String) {
+        noteKeyPress(isReturn: text.contains("\r"))
+        terminalView.send(txt: text)
+    }
+
+    func readText(lines: Int?) -> String {
+        // Always the whole live screen plus history: the requested last lines are cut below,
+        // after blank rows are gone.
+        let region: TerminalContentRegion = .history(maximumScrollbackRows: max(lines ?? 2000, 2000))
+        guard let snapshot = terminalView.terminalContentSnapshot(region: region) else { return "" }
+        var rows = snapshot.rows.map(\.text)
+        // Blank rows below a full-screen program's content aren't what anyone wants to read.
+        while let last = rows.last, last.allSatisfy(\.isWhitespace) { rows.removeLast() }
+        if let lines { rows = Array(rows.suffix(max(lines, 1))) }
+        return rows.joined(separator: "\n")
+    }
+}
+
+/// Timestamp of the last output, written from the terminal's parse thread.
+final class OutputActivity: @unchecked Sendable {
+    private let lock = NSLock()
+    private var last: Double = 0
+
+    func noteOutput() {
+        let now = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000
+        lock.lock()
+        last = now
+        lock.unlock()
+    }
+
+    var lastOutput: Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return last
+    }
+}
+
+/// Holds the terminal, tells it when it has a real size, and shows the "exited" bar.
+final class TerminalContainer: NSView {
+    private var terminal: NSView?
+    private var exitBar: NSView?
+    var onAttach: (() -> Void)?
+    var onAppearanceChange: (() -> Void)?
+
+    func host(_ view: NSView) {
+        terminal = view
+        wantsLayer = true
+        addSubview(view)
+    }
+
+    func setBackground(_ color: NSColor) {
+        layer?.backgroundColor = color.cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onAppearanceChange?()
+    }
+
+    static let padding = NSEdgeInsets(top: 6, left: 10, bottom: 4, right: 4)
+
+    override func layout() {
+        super.layout()
+        let inset = Self.padding
+        terminal?.frame = CGRect(x: inset.left, y: inset.bottom,
+                                 width: max(bounds.width - inset.left - inset.right, 0),
+                                 height: max(bounds.height - inset.top - inset.bottom, 0))
+        if let exitBar {
+            let height: CGFloat = 40
+            exitBar.frame = CGRect(x: 0, y: 0, width: bounds.width, height: height)
+        }
+        if window != nil, bounds.width > 40 { onAttach?() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        needsLayout = true
+    }
+
+    func showExitBar(code: Int32?, onRestart: @escaping () -> Void, onClose: @escaping () -> Void) {
+        hideExitBar()
+        let bar = TerminalExitBar(code: code, onRestart: onRestart, onClose: onClose)
+        addSubview(bar)
+        exitBar = bar
+        needsLayout = true
+    }
+
+    func hideExitBar() {
+        exitBar?.removeFromSuperview()
+        exitBar = nil
+    }
+}
+
+final class TerminalExitBar: NSVisualEffectView {
+    private let onRestart: () -> Void
+    private let onClose: () -> Void
+
+    init(code: Int32?, onRestart: @escaping () -> Void, onClose: @escaping () -> Void) {
+        self.onRestart = onRestart
+        self.onClose = onClose
+        super.init(frame: .zero)
+        material = .headerView
+        blendingMode = .withinWindow
+        let text = code.map { "Process exited with code \($0)" } ?? "Process exited"
+        let label = NSTextField(labelWithString: text)
+        label.textColor = .secondaryLabelColor
+        label.font = .systemFont(ofSize: 12)
+        let restart = NSButton(title: "Restart", target: self, action: #selector(restartClicked))
+        let close = NSButton(title: "Close", target: self, action: #selector(closeClicked))
+        restart.bezelStyle = .accessoryBarAction
+        close.bezelStyle = .accessoryBarAction
+        let stack = NSStackView(views: [label, NSView(), restart, close])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.spacing = 8
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    @objc private func restartClicked() { onRestart() }
+    @objc private func closeClicked() { onClose() }
+}
+
+// MARK: - Theme
+
+enum TerminalTheme {
+    static func font(family: String, size: CGFloat) -> NSFont {
+        if family != "SF Mono", let named = NSFont(name: family, size: size) { return named }
+        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    /// `dark` comes from the app, not the view: right after a theme change a view's
+    /// effectiveAppearance is still the old one.
+    static func apply(to view: TerminalView, dark: Bool, translucent: Bool) {
+        view.nativeBackgroundColor = dark ? background(dark: true) : background(dark: false)
+        view.nativeForegroundColor = dark ? NSColor(srgbRed: 0.90, green: 0.90, blue: 0.92, alpha: 1)
+                                          : NSColor(srgbRed: 0.11, green: 0.11, blue: 0.12, alpha: 1)
+        view.caretColor = .controlAccentColor
+        view.selectedTextBackgroundColor = NSColor.controlAccentColor.withAlphaComponent(dark ? 0.45 : 0.3)
+        view.backgroundOpacity = translucent ? 0.82 : 1
+        view.installColors(dark ? darkPalette : lightPalette)
+    }
+
+    static func background(dark: Bool) -> NSColor {
+        dark ? NSColor(srgbRed: 0.11, green: 0.11, blue: 0.118, alpha: 1) : .white
+    }
+
+    private static func color(_ hex: UInt32) -> SwiftTerm.Color {
+        SwiftTerm.Color(red8: UInt16((hex >> 16) & 0xFF), green8: UInt16((hex >> 8) & 0xFF), blue8: UInt16(hex & 0xFF))
+    }
+
+    private static let darkPalette: [SwiftTerm.Color] = ([
+        0x1C1C1E, 0xFF6B6B, 0x5FD38D, 0xE5C07B, 0x5AA5FF, 0xC792EA, 0x56C8D8, 0xD8D8DC,
+        0x6E6E73, 0xFF8585, 0x7BE3A5, 0xF2D08F, 0x7DBBFF, 0xD7A9F2, 0x7ADBE8, 0xFFFFFF,
+    ] as [UInt32]).map { color($0) }
+
+    private static let lightPalette: [SwiftTerm.Color] = ([
+        0x1D1D1F, 0xC4262E, 0x1A7F37, 0x8F6500, 0x0A66D6, 0x8E44AD, 0x0B7C8C, 0x6E6E73,
+        0x55555A, 0xD93A42, 0x22963F, 0xA67800, 0x2B7DE9, 0xA056C5, 0x1293A6, 0x1D1D1F,
+    ] as [UInt32]).map { color($0) }
+}

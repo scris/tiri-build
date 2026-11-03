@@ -1,0 +1,489 @@
+import Foundation
+
+/// Turns `tiri …` arguments into a control request. Pure, so it can be tested without an app.
+public enum CLIParser {
+    public enum Parsed: Equatable, Sendable {
+        case request(ControlRequest, json: Bool)
+        case printText(String)
+        /// `tiri notify` outside a Tiri terminal: succeed quietly so hooks never break elsewhere.
+        case quietSuccess
+    }
+
+    public struct UsageError: Error, CustomStringConvertible, Equatable {
+        public var description: String
+        init(_ description: String) { self.description = description }
+    }
+
+    public struct Environment: Sendable {
+        public var cwd: String
+        public var itemID: String?
+        public var workspace: String?
+        public var fileExists: @Sendable (String) -> Bool
+        public var readStdin: @Sendable () -> Data
+        public init(cwd: String, itemID: String?, workspace: String? = nil,
+                    fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+                    readStdin: @escaping @Sendable () -> Data = { FileHandle.standardInput.readDataToEndOfFile() }) {
+            self.cwd = cwd
+            self.itemID = itemID
+            self.workspace = workspace
+            self.fileExists = fileExists
+            self.readStdin = readStdin
+        }
+    }
+
+    public static func parse(_ arguments: [String], environment: Environment) throws -> Parsed {
+        var args = arguments
+        var json = false
+        if let index = args.firstIndex(of: "--json") {
+            json = true
+            args.remove(at: index)
+        }
+        guard let command = args.first else { return .printText(usage) }
+        args.removeFirst()
+
+        func request(_ cmd: String, _ payload: [String: JSONValue] = [:]) -> Parsed {
+            .request(ControlRequest(cmd: cmd, args: payload), json: json)
+        }
+
+        switch command {
+        case "--help", "-h", "help":
+            return .printText(usage)
+        case "--version", "-v":
+            return .printText("tiri \(TiriCoreVersion.string)")
+        case "--skill":
+            return .printText(AgentGuide.markdown)
+
+        case "ping":
+            return request("ping")
+        case "items":
+            return request("items")
+        case "layout":
+            return request("layout")
+        case "commands":
+            return request("commands")
+        case "perf":
+            return request("perf")
+        case "tree":
+            return request("tree")
+
+        case "open":
+            var options = Options(args)
+            let split = try options.split()
+            let pin = options.flag("--pin")
+            let peek = options.flag("--peek")
+            let tab = options.flag("--tab")
+            guard let raw = options.positional() else { throw UsageError("usage: tiri open <path>[:line] [--peek | --tab | --split right|down] [--pin]") }
+            try options.finish()
+            let location = parseLocation(raw, environment: environment)
+            var payload: [String: JSONValue] = ["path": .string(location.path)]
+            if let line = location.line { payload["line"] = .int(line) }
+            if let col = location.col { payload["col"] = .int(col) }
+            if let split { payload["split"] = .string(split) }
+            if pin { payload["pin"] = true }
+            if peek { payload["mode"] = "peek" }
+            if tab { payload["mode"] = "tab" }
+            // Sent from a Tiri terminal: the app floats it as a Peek rather than adding a tab.
+            if let item = environment.itemID { payload["source"] = .string(item) }
+            return request("open", payload)
+
+        case "reveal":
+            var options = Options(args)
+            guard let raw = options.positional() else { throw UsageError("usage: tiri reveal <path>") }
+            try options.finish()
+            return request("reveal", ["path": .string(absolute(raw, cwd: environment.cwd))])
+
+        case "preview":
+            var options = Options(args)
+            let split = try options.split()
+            guard let raw = options.positional() else { throw UsageError("usage: tiri preview <url-or-path> [--split right]") }
+            try options.finish()
+            var payload: [String: JSONValue] = ["target": .string(normalizeWebTarget(raw, cwd: environment.cwd))]
+            if let split { payload["split"] = .string(split) }
+            if let item = environment.itemID { payload["source"] = .string(item) }
+            return request("preview", payload)
+
+        case "term":
+            var options = Options(args)
+            let split = try options.split()
+            let cwd = try options.value("--cwd")
+            let cmd = try options.value("--cmd")
+            try options.finish()
+            var payload: [String: JSONValue] = ["cwd": .string(absolute(cwd ?? environment.cwd, cwd: environment.cwd))]
+            if let cmd { payload["cmd"] = .string(cmd) }
+            if let split { payload["split"] = .string(split) }
+            if let item = environment.itemID { payload["source"] = .string(item) }
+            return request("term", payload)
+
+        case "workspace":
+            guard let sub = args.first else { throw UsageError(workspaceUsage) }
+            var options = Options(Array(args.dropFirst()))
+            switch sub {
+            case "list":
+                try options.finish()
+                return request("workspace.list")
+            case "switch":
+                guard let name = options.positional() else { throw UsageError("usage: tiri workspace switch <name>") }
+                try options.finish()
+                return request("workspace.switch", ["name": .string(name)])
+            case "new":
+                let folders = try options.values("--folder").map { JSONValue.string(absolute($0, cwd: environment.cwd)) }
+                guard let name = options.positional() else { throw UsageError("usage: tiri workspace new <name> [--folder DIR ...]") }
+                try options.finish()
+                return request("workspace.new", ["name": .string(name), "folders": .array(folders)])
+            case "add-folder":
+                guard let folder = options.positional() else { throw UsageError("usage: tiri workspace add-folder <DIR>") }
+                try options.finish()
+                var payload: [String: JSONValue] = ["folder": .string(absolute(folder, cwd: environment.cwd))]
+                if let item = environment.itemID { payload["source"] = .string(item) }
+                return request("workspace.add-folder", payload)
+            case "remove-folder":
+                guard let folder = options.positional() else { throw UsageError("usage: tiri workspace remove-folder <DIR>") }
+                try options.finish()
+                var payload: [String: JSONValue] = ["folder": .string(absolute(folder, cwd: environment.cwd))]
+                if let item = environment.itemID { payload["source"] = .string(item) }
+                return request("workspace.remove-folder", payload)
+            case "import":
+                guard let file = options.positional() else { throw UsageError("usage: tiri workspace import <file.code-workspace>") }
+                try options.finish()
+                return request("workspace.import", ["file": .string(absolute(file, cwd: environment.cwd))])
+            case "rename":
+                guard let name = options.positional() else { throw UsageError("usage: tiri workspace rename <new-name> [<workspace>]") }
+                let target = options.positional()
+                try options.finish()
+                var payload: [String: JSONValue] = ["name": .string(name)]
+                if let target { payload["workspace"] = .string(target) }
+                return request("workspace.rename", payload)
+            case "delete":
+                guard let name = options.positional() else { throw UsageError("usage: tiri workspace delete <name>") }
+                try options.finish()
+                return request("workspace.delete", ["name": .string(name)])
+            default:
+                throw UsageError(workspaceUsage)
+            }
+
+        case "focus", "close":
+            var options = Options(args)
+            guard let id = options.positional() else { throw UsageError("usage: tiri \(command) <item-id>") }
+            try options.finish()
+            return request(command, ["item": .string(id)])
+
+        case "notify":
+            var options = Options(args)
+            let message = try options.value("--message")
+            let explicit = try options.value("--item")
+            guard let state = options.positional() else { throw UsageError("usage: tiri notify <working|needs-input|done> [--message TEXT]") }
+            try options.finish()
+            guard ["working", "needs-input", "done"].contains(state) else {
+                throw UsageError("notify state must be working, needs-input or done")
+            }
+            guard let item = explicit ?? environment.itemID else { return .quietSuccess }
+            var payload: [String: JSONValue] = ["state": .string(state), "item": .string(item)]
+            if let message { payload["message"] = .string(message) }
+            return request("notify", payload)
+
+        case "hook":
+            // Reads the agent's payload. Never fails loudly: a hook must not disturb the agent.
+            guard let tool = args.first, tool == "claude" || tool == "codex" else {
+                throw UsageError("usage: tiri hook claude|codex [payload]   (reads the payload from stdin)")
+            }
+            guard let item = environment.itemID else { return .quietSuccess }
+            let payload = args.count > 1 ? Data(args[1].utf8) : environment.readStdin()
+            let event = tool == "claude" ? AgentHookEvent.parseClaude(payload) : AgentHookEvent.parseCodex(payload)
+            guard let event else { return .quietSuccess }
+            var body: [String: JSONValue] = ["item": .string(item)]
+            if let state = event.state { body["state"] = .string(state) }
+            if let message = event.message { body["message"] = .string(message) }
+            if let session = event.sessionID { body["session"] = .string(session) }
+            body["hook"] = true
+            return request("notify", body)
+
+        case "hooks":
+            guard args.first == "claude" || args.first == "codex", args.count == 1 else {
+                throw UsageError("usage: tiri hooks claude|codex   (prints the config to add)")
+            }
+            return .printText(args[0] == "claude" ? AgentGuide.claudeHooks : AgentGuide.codexHooks)
+
+        case "theme":
+            guard args.count == 1, ThemeMode(rawValue: args[0]) != nil else { throw UsageError("usage: tiri theme light|dark|system") }
+            return request("theme", ["mode": .string(args[0])])
+
+        case "web-dark":
+            guard let mode = args.first, mode == "on" || mode == "off", args.count <= 2 else {
+                throw UsageError("usage: tiri web-dark on|off [<item-id>]")
+            }
+            var payload: [String: JSONValue] = ["on": .bool(mode == "on")]
+            if args.count == 2 { payload["item"] = .string(args[1]) }
+            return request("web-dark", payload)
+
+        case "run":
+            guard args.count == 1 else { throw UsageError("usage: tiri run <command-id>   (see tiri commands)") }
+            return request("run", ["command": .string(args[0])])
+
+        case "send":
+            var options = Options(args)
+            let enter = options.flag("--enter")
+            guard let id = options.positional(), let text = options.positional() else {
+                throw UsageError("usage: tiri send <item-id> <text> [--enter]")
+            }
+            try options.finish()
+            return request("send", ["item": .string(id), "text": .string(enter ? text + "\r" : text)])
+
+        case "read":
+            var options = Options(args)
+            let rawLines = try options.value("--lines")
+            let lines = rawLines.flatMap(Int.init)
+            if rawLines != nil, (lines ?? 0) < 1 { throw UsageError("--lines must be a positive number") }
+            guard let id = options.positional() else { throw UsageError("usage: tiri read <item-id> [--lines N]") }
+            try options.finish()
+            var payload: [String: JSONValue] = ["item": .string(id)]
+            if let lines { payload["lines"] = .int(lines) }
+            return request("read", payload)
+
+        default:
+            throw UsageError("Unknown command \"\(command)\". Run tiri --help.")
+        }
+    }
+
+    private static let workspaceUsage = "usage: tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR> | remove-folder <DIR> | import <file.code-workspace> | rename <new-name> [<workspace>] | delete <name>"
+
+    public static let usage = """
+    tiri — control a running Tiri
+
+      tiri open <path>[:line] [--peek | --tab | --split right|down] [--pin]
+      tiri reveal <path>
+      tiri preview <url-or-path> [--split right]
+      tiri term [--cwd DIR] [--cmd "claude"] [--split right]
+      tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR>
+                     remove-folder <DIR> | import <file.code-workspace> | rename <new-name> | delete <name>
+      tiri items
+      tiri focus <item-id> | close <item-id>
+      tiri notify <working|needs-input|done> [--message TEXT]
+      tiri hook claude|codex    (for agent hooks: reads the payload, prints nothing)
+      tiri hooks claude|codex   (prints the hooks config to add)
+      tiri theme light|dark|system
+      tiri web-dark on|off [<item-id>]
+      tiri send <item-id> <text> [--enter]
+      tiri read <item-id> [--lines N]
+      tiri layout | tree | commands | run <command-id> | perf
+      tiri ping
+      tiri --skill      markdown guide for agents
+
+    Add --json to print the raw response.
+    """
+
+    // MARK: Helpers
+
+    public static func absolute(_ path: String, cwd: String) -> String {
+        var expanded = path
+        if expanded == "~" {
+            expanded = NSHomeDirectory()
+        } else if expanded.hasPrefix("~/") {
+            expanded = NSHomeDirectory() + expanded.dropFirst(1)
+        }
+        if !expanded.hasPrefix("/") {
+            expanded = (cwd as NSString).appendingPathComponent(expanded)
+        }
+        return (expanded as NSString).standardizingPath
+    }
+
+    /// A URL stays as it is; `localhost:3000` gets a scheme; anything else is a file path.
+    public static func normalizeWebTarget(_ raw: String, cwd: String) -> String {
+        if raw.contains("://") { return raw }
+        if raw.wholeMatch(of: /(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/.*)?/) != nil { return "http://" + raw }
+        return URL(fileURLWithPath: absolute(raw, cwd: cwd)).absoluteString
+    }
+
+    /// `path:12:3`, unless a file literally has that name.
+    static func parseLocation(_ raw: String, environment: Environment) -> (path: String, line: Int?, col: Int?) {
+        let whole = absolute(raw, cwd: environment.cwd)
+        if environment.fileExists(whole) { return (whole, nil, nil) }
+        if let match = raw.wholeMatch(of: /(.+?):(\d+):(\d+)/) {
+            return (absolute(String(match.1), cwd: environment.cwd), Int(match.2), Int(match.3))
+        }
+        if let match = raw.wholeMatch(of: /(.+?):(\d+)/) {
+            return (absolute(String(match.1), cwd: environment.cwd), Int(match.2), nil)
+        }
+        return (whole, nil, nil)
+    }
+
+    private struct Options {
+        var args: [String]
+        init(_ args: [String]) { self.args = args }
+
+        mutating func flag(_ name: String) -> Bool {
+            guard let index = args.firstIndex(of: name) else { return false }
+            args.remove(at: index)
+            return true
+        }
+
+        mutating func value(_ name: String) throws -> String? {
+            if let index = args.firstIndex(where: { $0.hasPrefix(name + "=") }) {
+                let value = String(args[index].dropFirst(name.count + 1))
+                args.remove(at: index)
+                return value
+            }
+            guard let index = args.firstIndex(of: name) else { return nil }
+            guard index + 1 < args.count else { throw UsageError("\(name) needs a value") }
+            let value = args[index + 1]
+            args.removeSubrange(index...(index + 1))
+            return value
+        }
+
+        mutating func values(_ name: String) throws -> [String] {
+            var out: [String] = []
+            while let value = try value(name) { out.append(value) }
+            return out
+        }
+
+        mutating func split() throws -> String? {
+            guard let direction = try value("--split") else { return nil }
+            guard SplitDirection(rawValue: direction) != nil else { throw UsageError("--split must be right or down") }
+            return direction
+        }
+
+        mutating func positional() -> String? {
+            guard let index = args.firstIndex(where: { !$0.hasPrefix("--") || $0 == "--" }) else { return nil }
+            return args.remove(at: index)
+        }
+
+        func finish() throws {
+            if let extra = args.first { throw UsageError("Unexpected argument: \(extra)") }
+        }
+    }
+}
+
+public enum AgentGuide {
+    public static let claudeHooks = #"""
+    {
+      "hooks": {
+        "SessionStart": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
+        "UserPromptSubmit": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
+        "PermissionRequest": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
+        "PostToolUse": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
+        "Notification": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
+        "Stop": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }],
+        "StopFailure": [{ "hooks": [{ "type": "command", "async": true, "command": "tiri hook claude" }] }]
+      }
+    }
+    """#
+
+    public static let codexHooks = #"""
+    # ~/.codex/config.toml
+    notify = ["tiri", "hook", "codex"]
+
+    [[hooks.PermissionRequest]]
+    [[hooks.PermissionRequest.hooks]]
+    type = "command"
+    command = "tiri hook codex"
+    """#
+
+    public static let markdown = #"""
+    # Tiri, for agents
+
+    Tiri is the workspace the user is watching. Terminals, files and web previews are equal
+    items in one tab/pane system. You can drive all of it with the `tiri` CLI. Use it to put
+    your work in front of the user instead of describing where it is.
+
+    ## Am I inside Tiri?
+
+    Terminals launched by Tiri set these variables:
+
+    - `TIRI_SOCKET`: control socket path
+    - `TIRI_WORKSPACE`: the workspace's id
+    - `TIRI_ITEM_ID`: this terminal's item id
+
+    If `TIRI_ITEM_ID` is unset, you aren't in a Tiri terminal. `tiri ping` still tells you
+    whether the app is running.
+
+    ## Show the user your work
+
+    ```sh
+    tiri open report.md                   # floats over your terminal as a Peek
+    tiri open report.md --split right     # or put it beside your terminal as a tab
+    tiri open report.md --tab             # or as a tab in the current group
+    tiri open src/app.swift:42            # jump to a line
+    tiri open deck.pptx                   # Office, iWork, PDF, images, video all preview
+    tiri preview http://localhost:3000 --split right
+    tiri preview ./dist/index.html        # local HTML; reloads when the file changes
+    tiri reveal src/components            # expand and select it in the file tree
+    ```
+
+    From a Tiri terminal, a plain `tiri open` shows a Peek: a floating viewer that doesn't take
+    the keyboard away from your session, and one the user can promote to a tab with one button.
+    Prefer it for "here's what I made"; use `--split` or `--tab` only when the user asked to
+    keep something open. Outside a Tiri terminal, `open` makes a tab; `--peek` forces a Peek.
+
+    Files that are already open get focused instead of opened twice, unless you pass `--split`.
+    Open viewers update themselves when the file changes on disk, so don't reopen after editing.
+
+    ## Report status
+
+    The user sees your status on the tab, in the item list and on the workspace switcher, and
+    gets a system notification if they aren't looking at this terminal.
+
+    ```sh
+    tiri notify working
+    tiri notify needs-input --message "Which database should I use?"
+    tiri notify done --message "Report is ready"
+    ```
+
+    The item defaults to `$TIRI_ITEM_ID`. Outside Tiri, `notify` quietly does nothing, so it's
+    safe in hooks and scripts. For Claude Code and Codex, `tiri hook claude|codex` reads the hook
+    payload and does this for you, and also records the session id so a relaunch resumes exactly
+    this conversation. `tiri hooks claude|codex` prints the config to add.
+
+    ## Terminals
+
+    ```sh
+    tiri term --cwd ~/project --cmd "npm run dev" --split down
+    tiri items                            # ids, kinds, status, titles
+    tiri send <item-id> "npm test" --enter
+    tiri read <item-id> --lines 40
+    tiri focus <item-id>
+    tiri close <item-id>
+    ```
+
+    ## Workspaces
+
+    ```sh
+    tiri workspace list
+    tiri workspace new api --folder ~/api --folder ~/shared
+    tiri workspace switch api
+    tiri workspace add-folder ~/docs
+    tiri workspace import team.code-workspace
+    ```
+
+    ## Appearance and settings
+
+    ```sh
+    tiri theme dark                       # light, dark or system
+    tiri web-dark on [<item-id>]          # force dark on web previews
+    ```
+
+    Settings are plain files, reloaded live. Edit them directly:
+
+    - `~/.config/tiri/settings.json`
+    - `~/.config/tiri/keybindings.json` (same shape as Cursor's)
+
+    If a file has invalid JSON, Tiri keeps the last good config and shows a banner.
+
+    ## Anything else
+
+    ```sh
+    tiri commands                         # every action the user can trigger
+    tiri run splitRight                   # run one by id
+    tiri layout                           # the pane tree as JSON
+    ```
+
+    ## Protocol
+
+    The CLI is a thin client. The socket at `$TIRI_SOCKET` speaks newline-delimited JSON:
+
+    ```
+    → {"id":"1","cmd":"open","args":{"path":"/abs/report.md","split":"right"}}
+    ← {"id":"1","ok":true,"result":{"item":"i-abc123"}}
+    ```
+
+    Add `--json` to any CLI command to see the raw response.
+    """#
+}

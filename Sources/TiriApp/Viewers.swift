@@ -1,0 +1,1122 @@
+import AppKit
+import AVKit
+import PDFKit
+import QuickLookUI
+import TiriCore
+import WebKit
+
+/// A plain container so a viewer can swap what it shows while keeping one view in the tab.
+final class HostContainer: NSView {
+    private var hosted: NSView?
+
+    func show(_ view: NSView) {
+        guard hosted !== view else { return }
+        hosted?.removeFromSuperview()
+        hosted = view
+        view.frame = bounds
+        addSubview(view)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        hosted?.frame = bounds
+    }
+}
+
+/// Serves local files to web views, so markdown's relative images work and pages
+/// can't reach anything except by this route.
+final class LocalFileSchemeHandler: NSObject, WKURLSchemeHandler {
+    static let scheme = "tiri-file"
+
+    static func baseURL(forDirectory directory: String) -> URL {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = ""
+        components.path = directory.hasSuffix("/") ? directory : directory + "/"
+        return components.url!
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
+        guard let url = urlSchemeTask.request.url else {
+            urlSchemeTask.didFailWithError(URLError(.badURL))
+            return
+        }
+        let path = url.path(percentEncoded: false)
+        guard let data = FileManager.default.contents(atPath: path) else {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+        let response = URLResponse(url: url, mimeType: type, expectedContentLength: data.count, textEncodingName: nil)
+        urlSchemeTask.didReceive(response)
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {}
+}
+
+// MARK: - Factory
+
+enum ViewerFactory {
+    static func make(itemID: ItemID, spec: FileSpec, model: AppModel) -> ItemController {
+        let kind = FileClassifier.classify(path: spec.path) {
+            guard let handle = FileHandle(forReadingAtPath: spec.path) else { return nil }
+            defer { try? handle.close() }
+            return try? handle.read(upToCount: 8192)
+        }
+        switch kind {
+        case .markdown:
+            return MarkdownController(itemID: itemID, spec: spec, model: model)
+        case .text:
+            return TextController(itemID: itemID, spec: spec, model: model)
+        case .image:
+            return ImageController(itemID: itemID, path: spec.path)
+        case .svg:
+            return SVGController(itemID: itemID, path: spec.path)
+        case .pdf:
+            return PDFController(itemID: itemID, path: spec.path)
+        case .media:
+            return MediaController(itemID: itemID, path: spec.path)
+        case .html:
+            return WebController(itemID: itemID, url: URL(fileURLWithPath: spec.path), forceDark: nil, isFile: true, model: model)
+        case .csv:
+            return CSVController(itemID: itemID, path: spec.path)
+        case .office, .quickLook:
+            return QuickLookController(itemID: itemID, path: spec.path)
+        }
+    }
+}
+
+// MARK: - Markdown: rendered by default, source on request
+
+/// Creating a WKWebView (and its web process) is most of the cost of opening a markdown file.
+/// One is kept warm, so the next open only has to render.
+enum MarkdownWebViews {
+    private static var spare: WKWebView?
+
+    private static func make() -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.setURLSchemeHandler(LocalFileSchemeHandler(), forURLScheme: LocalFileSchemeHandler.scheme)
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.setValue(false, forKey: "drawsBackground")
+        return view
+    }
+
+    static func warmUp() {
+        guard spare == nil else { return }
+        let view = make()
+        view.loadHTMLString("<!DOCTYPE html><title></title>", baseURL: nil)
+        spare = view
+    }
+
+    static func take() -> WKWebView {
+        let view = spare ?? make()
+        spare = nil
+        // Replace it once things are quiet, not during the open it's serving.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { warmUp() }
+        return view
+    }
+}
+
+final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
+    let itemID: ItemID
+    let path: String
+    unowned let model: AppModel
+    private let container = HostContainer()
+    private lazy var webView: WKWebView = makeWebView()
+    private var source: TextController?
+    private(set) var showingSource: Bool
+    private var token: FileWatchHub.Token?
+    private var pendingScrollY: Double?
+    private var pendingAnchor: String?
+    private var pendingLine: (Int?, Int?)
+
+    var view: NSView { container }
+
+    init(itemID: ItemID, spec: FileSpec, model: AppModel) {
+        self.itemID = itemID
+        self.path = spec.path
+        self.model = model
+        self.showingSource = spec.showSource ?? false
+        self.pendingLine = (spec.line, spec.col)
+        super.init()
+        token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.fileChanged() }
+        render(keepScroll: false)
+    }
+
+    private func makeWebView() -> WKWebView {
+        let view = MarkdownWebViews.take()
+        view.navigationDelegate = self
+        return view
+    }
+
+    private func sourceController() -> TextController {
+        if let source { return source }
+        let controller = TextController(itemID: itemID, spec: FileSpec(path: path), model: model, watches: false)
+        source = controller
+        return controller
+    }
+
+    private func render(keepScroll: Bool) {
+        if showingSource {
+            let text = sourceController()
+            container.show(text.view)
+            if let line = pendingLine.0 {
+                text.goTo(line: line, col: pendingLine.1)
+                pendingLine = (nil, nil)
+            }
+            return
+        }
+        container.show(webView)
+        let source = (try? String(contentsOfFile: path, encoding: .utf8))
+            ?? String(data: FileManager.default.contents(atPath: path) ?? Data(), encoding: .isoLatin1)
+            ?? ""
+        let directory = (path as NSString).deletingLastPathComponent
+        let base = LocalFileSchemeHandler.baseURL(forDirectory: directory)
+        let page = MarkdownRenderer.page(markdown: source, baseHref: base.absoluteString, title: (path as NSString).lastPathComponent)
+        if let line = pendingLine.0 {
+            // Rendered stays rendered: `report.md:40` lands on the section holding line 40.
+            pendingAnchor = MarkdownRenderer.anchor(forLine: line, in: source)
+            pendingLine = (nil, nil)
+        }
+        if keepScroll {
+            // Agents rewrite files as they work. A reload shouldn't lose your place.
+            webView.evaluateJavaScript("window.scrollY") { [weak self] value, _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.pendingScrollY = value as? Double
+                    self.webView.loadHTMLString(page, baseURL: base)
+                }
+            }
+        } else {
+            webView.loadHTMLString(page, baseURL: base)
+        }
+    }
+
+    private func fileChanged() {
+        if !FileManager.default.fileExists(atPath: path) { return }
+        if showingSource {
+            source?.reload()
+        } else {
+            render(keepScroll: true)
+        }
+    }
+
+    func toggleSource() {
+        showingSource.toggle()
+        if showingSource {
+            sourceController().reload()
+        }
+        render(keepScroll: false)
+        focus()
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        model.viewerReady(itemID)
+        if let y = pendingScrollY {
+            pendingScrollY = nil
+            webView.evaluateJavaScript("window.scrollTo(0, \(y))", completionHandler: nil)
+        }
+        if let anchor = pendingAnchor {
+            pendingAnchor = nil
+            scrollTo(anchor: anchor)
+        }
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        guard navigationAction.navigationType == .linkActivated else {
+            // Tiri's own load only. Raw HTML in a document (a meta refresh) can't navigate away.
+            let isOwnLoad = url.scheme == LocalFileSchemeHandler.scheme || url.scheme == "about"
+            decisionHandler(isOwnLoad ? .allow : .cancel)
+            return
+        }
+        // Links inside the same document scroll; everything else opens as a peer item.
+        if url.fragment != nil, url.path(percentEncoded: false) == webView.url?.path(percentEncoded: false) {
+            decisionHandler(.allow)
+            return
+        }
+        decisionHandler(.cancel)
+        switch url.scheme {
+        case LocalFileSchemeHandler.scheme, "file":
+            model.open(path: url.path(percentEncoded: false), intent: .pinned)
+            model.requestFocus()
+        case "http", "https":
+            model.openWeb(url: url.absoluteString, split: nil)
+        case "mailto":
+            NSWorkspace.shared.open(url)
+        default:
+            // A document shouldn't be able to launch an arbitrary URL scheme handler.
+            break
+        }
+    }
+
+    func focus() {
+        if showingSource { source?.focus() } else { webView.window?.makeFirstResponder(webView) }
+    }
+
+    func applySettings() { source?.applySettings() }
+
+    private func scrollTo(anchor: String) {
+        let escaped = anchor.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        webView.evaluateJavaScript("document.getElementById('\(escaped)')?.scrollIntoView()", completionHandler: nil)
+    }
+
+    func goTo(line: Int?, col: Int?) {
+        guard let line else { return }
+        if showingSource {
+            source?.goTo(line: line, col: col)
+            return
+        }
+        let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        if let anchor = MarkdownRenderer.anchor(forLine: line, in: text) { scrollTo(anchor: anchor) }
+    }
+
+    func teardown() {
+        token = nil
+        if showingSource == false { webView.stopLoading() }
+    }
+
+    var supportsFind: Bool { true }
+
+    var selectedTextForFind: String? { showingSource ? source?.selectedTextForFind : nil }
+
+    func find(_ query: String, backwards: Bool) -> Bool {
+        if showingSource { return source?.find(query, backwards: backwards) ?? false }
+        return WebFind.run(webView, query: query, backwards: backwards)
+    }
+
+    func clearFind() {
+        if showingSource { source?.clearFind() } else { WebFind.clear(webView) }
+    }
+}
+
+/// `WKWebView.find` is async and our protocol isn't. The bar's "not found" state updates when
+/// the answer arrives; the immediate return only says the query was accepted.
+enum WebFind {
+    static func run(_ webView: WKWebView, query: String, backwards: Bool) -> Bool {
+        let configuration = WKFindConfiguration()
+        configuration.backwards = backwards
+        configuration.wraps = true
+        webView.find(query, configuration: configuration) { result in
+            MainActor.assumeIsolated {
+                AppModel.shared.find?.notFound = !result.matchFound
+            }
+        }
+        return true
+    }
+
+    static func clear(_ webView: WKWebView) {
+        webView.evaluateJavaScript("window.getSelection().removeAllRanges()", completionHandler: nil)
+    }
+}
+
+// MARK: - Plain text and code: read-only, monospaced
+
+final class TextController: NSObject, ItemController {
+    let itemID: ItemID
+    let path: String
+    unowned let model: AppModel
+    private let scrollView = NSTextView.scrollableTextView()
+    private var textView: NSTextView { scrollView.documentView as! NSTextView }
+    private let container: CodeContainer
+    private var ruler: LineGutter { container.gutter }
+    private var token: FileWatchHub.Token?
+    private var pendingLocation: (Int?, Int?)
+    private var loadedOnce = false
+    private var highlightGeneration = 0
+    nonisolated static let maximumBytes = 32 * 1024 * 1024
+
+    var view: NSView { container }
+
+    init(itemID: ItemID, spec: FileSpec, model: AppModel, watches: Bool = true) {
+        self.itemID = itemID
+        self.path = spec.path
+        self.model = model
+        self.pendingLocation = (spec.line, spec.col)
+        self.container = CodeContainer(scrollView: scrollView)
+        super.init()
+        configure()
+        if watches {
+            token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.reload() }
+        }
+        reload()
+    }
+
+    private func configure() {
+        let text = textView
+        text.isEditable = false
+        text.isSelectable = true
+        text.isRichText = false
+        text.usesFindBar = false
+        text.isAutomaticLinkDetectionEnabled = false
+        text.textContainerInset = NSSize(width: 6, height: 8)
+        text.layoutManager?.allowsNonContiguousLayout = true
+        text.drawsBackground = true
+        text.backgroundColor = .textBackgroundColor
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        ruler.attach(to: scrollView, textView: text)
+        applySettings()
+    }
+
+    func applySettings() {
+        let settings = model.settings
+        textView.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSize))
+        ruler.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSize) - 1)
+        let wrap = settings.codeWordWrap
+        let unlimited = NSSize(width: 10_000_000, height: 10_000_000)
+        textView.minSize = .zero
+        textView.maxSize = unlimited
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = !wrap
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = wrap
+        if !wrap { textView.textContainer?.containerSize = unlimited }
+        scrollView.hasHorizontalScroller = !wrap
+        ruler.needsDisplay = true
+        scheduleHighlight()
+    }
+
+    func reload() {
+        let path = path
+        // Agents often write by replacing the file, so it can be briefly missing. A file that's
+        // gone keeps showing what it last said rather than going blank.
+        if loadedOnce, !FileManager.default.fileExists(atPath: path) { return }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
+        let size = (attributes?[.size] as? Int) ?? 0
+        if size > 5 * 1024 * 1024 {
+            // Big logs load off the main thread so opening one never stalls the app.
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let text = Self.read(path: path)
+                await MainActor.run { self?.display(text) }
+            }
+        } else {
+            display(Self.read(path: path))
+        }
+    }
+
+    nonisolated private static func read(path: String) -> String {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return "" }
+        defer { try? handle.close() }
+        let data = (try? handle.read(upToCount: maximumBytes)) ?? Data()
+        var text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        if data.count == maximumBytes {
+            text += "\n\n… truncated at \(maximumBytes / (1024 * 1024)) MB. Open it in an external editor to see the rest."
+        }
+        return text
+    }
+
+    private func display(_ text: String) {
+        guard text != textView.string || !loadedOnce else {
+            applyPendingLocation()
+            return
+        }
+        let origin = scrollView.contentView.bounds.origin
+        let selection = textView.selectedRange()
+        textView.string = text
+        ruler.invalidateLineStarts()
+        if loadedOnce {
+            // A reload shouldn't lose your place.
+            textView.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        loadedOnce = true
+        applyPendingLocation()
+        scheduleHighlight()
+    }
+
+    private func scheduleHighlight() {
+        highlightGeneration += 1
+        let generation = highlightGeneration
+        let text = textView.string
+        let language = FileClassifier.language(path: path)
+        guard (text as NSString).length < 500_000 else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let spans = SyntaxHighlighter.spans(text: text, language: language)
+            await MainActor.run {
+                guard let self, self.highlightGeneration == generation else { return }
+                self.apply(spans)
+            }
+        }
+    }
+
+    private func apply(_ spans: [SyntaxHighlighter.Span]) {
+        guard let layout = textView.layoutManager else { return }
+        let full = NSRange(location: 0, length: (textView.string as NSString).length)
+        layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: full)
+        for span in spans where NSMaxRange(span.range) <= full.length {
+            layout.addTemporaryAttribute(.foregroundColor, value: span.kind.color, forCharacterRange: span.range)
+        }
+    }
+
+    private func applyPendingLocation() {
+        guard let line = pendingLocation.0 else { return }
+        let col = pendingLocation.1
+        pendingLocation = (nil, nil)
+        jump(line: line, col: col)
+    }
+
+    private func jump(line: Int, col: Int?) {
+        let string = textView.string as NSString
+        var location = 0
+        var current = 1
+        while current < line, location < string.length {
+            let range = string.lineRange(for: NSRange(location: location, length: 0))
+            location = NSMaxRange(range)
+            current += 1
+        }
+        let lineRange = string.lineRange(for: NSRange(location: min(location, string.length), length: 0))
+        let cursor = min(location + max((col ?? 1) - 1, 0), NSMaxRange(lineRange))
+        textView.setSelectedRange(col == nil ? lineRange : NSRange(location: cursor, length: 0))
+        textView.scrollRangeToVisible(lineRange)
+        // Long lines shouldn't drag the view sideways and hide their own beginning.
+        if col == nil {
+            var origin = scrollView.contentView.bounds.origin
+            origin.x = 0
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+        textView.showFindIndicator(for: lineRange)
+        ruler.needsDisplay = true
+    }
+
+    func goTo(line: Int?, col: Int?) {
+        guard let line else { return }
+        jump(line: line, col: col)
+    }
+
+    func focus() { textView.window?.makeFirstResponder(textView) }
+
+    func teardown() { token = nil }
+
+    var supportsFind: Bool { true }
+
+    var selectedTextForFind: String? {
+        let range = textView.selectedRange()
+        guard range.length > 0, range.length < 200 else { return nil }
+        let selected = (textView.string as NSString).substring(with: range)
+        return selected.contains("\n") ? nil : selected
+    }
+
+    func find(_ query: String, backwards: Bool) -> Bool {
+        let string = textView.string as NSString
+        let current = textView.selectedRange()
+        var options: NSString.CompareOptions = [.caseInsensitive]
+        if backwards { options.insert(.backwards) }
+        let start = backwards ? current.location : NSMaxRange(current)
+        let first = backwards ? NSRange(location: 0, length: start)
+                              : NSRange(location: start, length: string.length - start)
+        var found = string.range(of: query, options: options, range: first)
+        if found.location == NSNotFound {
+            found = string.range(of: query, options: options)
+        }
+        guard found.location != NSNotFound else { return false }
+        textView.setSelectedRange(found)
+        textView.scrollRangeToVisible(found)
+        textView.showFindIndicator(for: found)
+        return true
+    }
+}
+
+/// Line numbers beside the text. A plain view rather than NSRulerView, which on macOS 26+
+/// covers the document it's attached to.
+final class LineGutter: NSView {
+    var font: NSFont = .monospacedDigitSystemFont(ofSize: 11, weight: .regular) {
+        didSet { needsDisplay = true }
+    }
+    weak var textView: NSTextView?
+    private var lineStarts: [Int] = [0]
+    private var observers: [NSObjectProtocol] = []
+    private(set) var thickness: CGFloat = 44
+    var onThicknessChange: (() -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    func attach(to scrollView: NSScrollView, textView: NSTextView) {
+        self.textView = textView
+        let clip = scrollView.contentView
+        clip.postsBoundsChangedNotifications = true
+        let center = NotificationCenter.default
+        let redraw: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.needsDisplay = true }
+        }
+        observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main, using: redraw))
+        observers.append(center.addObserver(forName: NSTextView.didChangeSelectionNotification, object: textView, queue: .main, using: redraw))
+    }
+
+    isolated deinit {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    func invalidateLineStarts() {
+        guard let text = textView else { return }
+        let string = text.string as NSString
+        var starts = [0]
+        var location = 0
+        let length = string.length
+        while location < length {
+            let next = NSMaxRange(string.lineRange(for: NSRange(location: location, length: 0)))
+            if next >= length {
+                if next == length, length > 0, string.character(at: length - 1) == 10 { starts.append(length) }
+                break
+            }
+            starts.append(next)
+            location = next
+        }
+        lineStarts = starts
+        let digits = max(String(starts.count).count, 3)
+        let width = CGFloat(digits) * 8 + 18
+        if width != thickness {
+            thickness = width
+            onThicknessChange?()
+        }
+        needsDisplay = true
+    }
+
+    private func lineNumber(forCharacter index: Int) -> Int {
+        var low = 0
+        var high = lineStarts.count - 1
+        while low < high {
+            let mid = (low + high + 1) / 2
+            if lineStarts[mid] <= index { low = mid } else { high = mid - 1 }
+        }
+        return low + 1
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill()
+        dirtyRect.fill()
+        guard let text = textView, let layout = text.layoutManager, let container = text.textContainer else { return }
+        let length = (text.string as NSString).length
+        let glyphs = layout.glyphRange(forBoundingRect: text.visibleRect, in: container)
+        let characters = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        let selectedLine = lineNumber(forCharacter: text.selectedRange().location)
+        var index = lineNumber(forCharacter: characters.location) - 1
+        while index < lineStarts.count {
+            let start = lineStarts[index]
+            if start > NSMaxRange(characters) { break }
+            var line: NSRect
+            if start >= length {
+                line = layout.extraLineFragmentRect
+            } else {
+                line = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: start), effectiveRange: nil, withoutAdditionalLayout: true)
+            }
+            if line.isEmpty, length == 0 { line = NSRect(x: 0, y: 0, width: 0, height: font.pointSize + 4) }
+            let y = text.convert(NSPoint(x: 0, y: line.minY + text.textContainerInset.height), to: self).y
+            let color: NSColor = index + 1 == selectedLine ? .secondaryLabelColor : .tertiaryLabelColor
+            let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+            let label = "\(index + 1)" as NSString
+            let size = label.size(withAttributes: attributes)
+            label.draw(at: NSPoint(x: thickness - size.width - 8, y: y + (line.height - size.height) / 2), withAttributes: attributes)
+            index += 1
+        }
+    }
+}
+
+/// A gutter and a scrolling text view, side by side.
+final class CodeContainer: NSView {
+    let gutter = LineGutter()
+    let scrollView: NSScrollView
+
+    init(scrollView: NSScrollView) {
+        self.scrollView = scrollView
+        super.init(frame: .zero)
+        addSubview(gutter)
+        addSubview(scrollView)
+        gutter.onThicknessChange = { [weak self] in self?.needsLayout = true }
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    override func layout() {
+        super.layout()
+        let width = gutter.thickness
+        gutter.frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
+        scrollView.frame = CGRect(x: width, y: 0, width: max(bounds.width - width, 0), height: bounds.height)
+        gutter.needsDisplay = true
+    }
+}
+
+/// A small, fast highlighter: comments, strings, numbers and keywords. Not a parser. It's
+/// here to make code easier to scan while reviewing, and it stays out of the way when unsure.
+nonisolated enum SyntaxHighlighter {
+    enum Kind: Sendable {
+        case comment, string, number, keyword
+
+        @MainActor var color: NSColor {
+            switch self {
+            case .comment: .secondaryLabelColor
+            case .string: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.45, green: 0.83, blue: 0.56, alpha: 1) : NSColor(srgbRed: 0.09, green: 0.48, blue: 0.2, alpha: 1) }
+            case .number: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.9, green: 0.75, blue: 0.48, alpha: 1) : NSColor(srgbRed: 0.6, green: 0.4, blue: 0, alpha: 1) }
+            case .keyword: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.78, green: 0.57, blue: 0.92, alpha: 1) : NSColor(srgbRed: 0.53, green: 0.2, blue: 0.68, alpha: 1) }
+            }
+        }
+    }
+
+    struct Span: Sendable {
+        var range: NSRange
+        var kind: Kind
+    }
+
+    private static let hashComments: Set<String> = ["py", "rb", "sh", "bash", "zsh", "fish", "yaml", "yml", "toml", "r", "pl", "ex", "exs", "conf", "ini", "env", "tf", "gitignore"]
+    private static let slashComments: Set<String> = ["swift", "m", "mm", "h", "hpp", "c", "cc", "cpp", "cs", "java", "kt", "kts", "go", "rs", "js", "jsx", "mjs", "cjs", "ts", "tsx", "css", "scss", "less", "php", "dart", "scala", "proto", "gradle", "jsonc", "code-workspace"]
+    private static let keywords = Set("""
+    if else for while do switch case default break continue return func function def class struct enum protocol interface extension import from export package module public private protected internal static final const let var val fn impl trait type try catch throw throws finally async await new this self super nil null none true false True False None in is as guard defer where match with yield lambda and or not pub mut use mod
+    """.split(whereSeparator: \.isWhitespace).map(String.init))
+
+    static func spans(text: String, language: String?) -> [Span] {
+        let language = language ?? ""
+        let hash = hashComments.contains(language)
+        let slash = slashComments.contains(language)
+        let isData = language == "json" || language == "yaml" || language == "yml" || language == "toml"
+        let isProse = !hash && !slash && !isData
+        if isProse { return [] }
+        let units = Array(text.utf16)
+        var spans: [Span] = []
+        var index = 0
+        let count = units.count
+        var token = [UInt16]()
+        func isWord(_ unit: UInt16) -> Bool {
+            (unit >= 48 && unit <= 57) || (unit >= 65 && unit <= 90) || (unit >= 97 && unit <= 122) || unit == 95
+        }
+        while index < count {
+            let unit = units[index]
+            if slash, unit == 47, index + 1 < count, units[index + 1] == 47 {
+                let start = index
+                while index < count, units[index] != 10 { index += 1 }
+                spans.append(Span(range: NSRange(location: start, length: index - start), kind: .comment))
+            } else if slash, unit == 47, index + 1 < count, units[index + 1] == 42 {
+                let start = index
+                index += 2
+                while index + 1 < count, !(units[index] == 42 && units[index + 1] == 47) { index += 1 }
+                index = min(index + 2, count)
+                spans.append(Span(range: NSRange(location: start, length: index - start), kind: .comment))
+            } else if hash, unit == 35 {
+                let start = index
+                while index < count, units[index] != 10 { index += 1 }
+                spans.append(Span(range: NSRange(location: start, length: index - start), kind: .comment))
+            } else if unit == 34 || unit == 39 || unit == 96 {
+                // An apostrophe in the middle of a word isn't a string.
+                if unit == 39, index > 0, isWord(units[index - 1]) {
+                    index += 1
+                    continue
+                }
+                let start = index
+                index += 1
+                while index < count, units[index] != unit, units[index] != 10 || unit == 96 {
+                    if units[index] == 92 { index += 1 }
+                    index += 1
+                }
+                index = min(index + 1, count)
+                spans.append(Span(range: NSRange(location: start, length: index - start), kind: .string))
+            } else if isWord(unit) {
+                let start = index
+                token.removeAll(keepingCapacity: true)
+                while index < count, isWord(units[index]) {
+                    token.append(units[index])
+                    index += 1
+                }
+                if token[0] >= 48, token[0] <= 57 {
+                    spans.append(Span(range: NSRange(location: start, length: index - start), kind: .number))
+                } else if !isData, keywords.contains(String(decoding: token, as: UTF16.self)) {
+                    spans.append(Span(range: NSRange(location: start, length: index - start), kind: .keyword))
+                }
+            } else {
+                index += 1
+            }
+        }
+        return spans
+    }
+}
+
+// MARK: - Images
+
+final class CenteringClipView: NSClipView {
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedBounds)
+        guard let document = documentView else { return rect }
+        if rect.width > document.frame.width { rect.origin.x = (document.frame.width - rect.width) / 2 }
+        if rect.height > document.frame.height { rect.origin.y = (document.frame.height - rect.height) / 2 }
+        return rect
+    }
+}
+
+final class ImageController: ItemController {
+    let itemID: ItemID
+    let path: String
+    private let scrollView = ImageScrollView()
+    private let imageView = NSImageView()
+    private var token: FileWatchHub.Token?
+    private var generation = 0
+
+    var view: NSView { scrollView }
+
+    init(itemID: ItemID, path: String) {
+        self.itemID = itemID
+        self.path = path
+        scrollView.contentView = CenteringClipView()
+        scrollView.allowsMagnification = true
+        scrollView.minMagnification = 0.05
+        scrollView.maxMagnification = 16
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.animates = true
+        scrollView.documentView = imageView
+        token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
+        load()
+    }
+
+    private func load() {
+        generation += 1
+        let current = generation
+        let path = path
+        let scale = view.window?.backingScaleFactor ?? 2
+        // HEIC and big photos take a second or more to decode. That never happens on the main thread.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let decoded = ImageDecoding.decode(path: path, scale: scale)
+            await MainActor.run {
+                guard let self, self.generation == current, let decoded else {
+                    if let self, self.generation == current { AppModel.shared.viewerReady(self.itemID) }
+                    return
+                }
+                self.display(decoded)
+            }
+        }
+    }
+
+    private func display(_ decoded: ImageDecoding.Decoded) {
+        let image: NSImage
+        if let data = decoded.animatedData, let animated = NSImage(data: data) {
+            image = animated
+        } else if let cgImage = decoded.cgImage {
+            image = NSImage(cgImage: cgImage, size: decoded.size)
+        } else {
+            return
+        }
+        image.size = decoded.size
+        imageView.image = image
+        imageView.frame = CGRect(origin: .zero, size: decoded.size)
+        scrollView.fitOnNextLayout = true
+        scrollView.needsLayout = true
+        AppModel.shared.viewerReady(itemID)
+    }
+
+    func focus() { scrollView.window?.makeFirstResponder(scrollView) }
+    func teardown() { token = nil }
+}
+
+nonisolated enum ImageDecoding {
+    struct Decoded: @unchecked Sendable {
+        var cgImage: CGImage?
+        var animatedData: Data?
+        var size: NSSize
+    }
+
+    /// Longest side kept in memory. Previews don't need a 48-megapixel bitmap.
+    private static let maximumPixels = 6000
+
+    static func decode(path: String, scale: CGFloat) -> Decoded? {
+        let url = URL(fileURLWithPath: path) as CFURL
+        guard let source = CGImageSourceCreateWithURL(url, nil), CGImageSourceGetCount(source) > 0 else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        var width = (properties[kCGImagePropertyPixelWidth] as? Int) ?? 0
+        var height = (properties[kCGImagePropertyPixelHeight] as? Int) ?? 0
+        // Sideways phone photos report their unrotated size.
+        if let orientation = properties[kCGImagePropertyOrientation] as? Int, orientation >= 5 { swap(&width, &height) }
+        let size = NSSize(width: CGFloat(width) / scale, height: CGFloat(height) / scale)
+        if CGImageSourceGetCount(source) > 1, let data = FileManager.default.contents(atPath: path) {
+            return Decoded(cgImage: nil, animatedData: data, size: size)
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumPixels,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return Decoded(cgImage: image, animatedData: nil, size: size)
+    }
+}
+
+final class ImageScrollView: NSScrollView {
+    var fitOnNextLayout = true
+
+    override func layout() {
+        super.layout()
+        guard fitOnNextLayout, let document = documentView, bounds.width > 10, document.frame.width > 0 else { return }
+        fitOnNextLayout = false
+        // Fit big images; never blow small ones up.
+        let scale = min(bounds.width / document.frame.width, bounds.height / document.frame.height, 1)
+        magnification = max(scale, minMagnification)
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+}
+
+final class SVGController: NSObject, ItemController {
+    let itemID: ItemID
+    let path: String
+    private let webView: WKWebView
+    private var token: FileWatchHub.Token?
+
+    var view: NSView { webView }
+
+    init(itemID: ItemID, path: String) {
+        self.itemID = itemID
+        self.path = path
+        let configuration = WKWebViewConfiguration()
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        configuration.setURLSchemeHandler(LocalFileSchemeHandler(), forURLScheme: LocalFileSchemeHandler.scheme)
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.setValue(false, forKey: "drawsBackground")
+        super.init()
+        token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
+        load()
+    }
+
+    private func load() {
+        let name = (path as NSString).lastPathComponent
+        let directory = (path as NSString).deletingLastPathComponent
+        let encoded = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+        let page = """
+        <!DOCTYPE html><style>html,body{height:100%;margin:0;background:transparent;color-scheme:light dark}
+        body{display:flex;align-items:center;justify-content:center}img{max-width:94%;max-height:94%;min-width:40%}</style>
+        <img src="\(encoded)?\(Int(Date().timeIntervalSince1970 * 1000))">
+        """
+        webView.loadHTMLString(page, baseURL: LocalFileSchemeHandler.baseURL(forDirectory: directory))
+    }
+
+    func focus() { webView.window?.makeFirstResponder(webView) }
+    func teardown() { token = nil }
+}
+
+// MARK: - PDF
+
+final class PDFController: ItemController {
+    let itemID: ItemID
+    let path: String
+    private let pdfView = PDFView()
+    private var token: FileWatchHub.Token?
+
+    var view: NSView { pdfView }
+
+    init(itemID: ItemID, path: String) {
+        self.itemID = itemID
+        self.path = path
+        pdfView.autoScales = true
+        pdfView.displayMode = .singlePageContinuous
+        pdfView.backgroundColor = .textBackgroundColor
+        token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
+        load()
+    }
+
+    private func load() {
+        let page = pdfView.currentPage.flatMap { pdfView.document?.index(for: $0) }
+        pdfView.document = PDFDocument(url: URL(fileURLWithPath: path))
+        if let page, let target = pdfView.document?.page(at: page) { pdfView.go(to: target) }
+    }
+
+    func goTo(line: Int?, col: Int?) {
+        // `report.pdf:3` means page 3.
+        if let line, let page = pdfView.document?.page(at: max(line - 1, 0)) { pdfView.go(to: page) }
+    }
+
+    func focus() { pdfView.window?.makeFirstResponder(pdfView) }
+    func teardown() { token = nil }
+
+    var supportsFind: Bool { true }
+    var selectedTextForFind: String? { pdfView.currentSelection?.string }
+
+    func find(_ query: String, backwards: Bool) -> Bool {
+        var options: NSString.CompareOptions = [.caseInsensitive]
+        if backwards { options.insert(.backwards) }
+        guard let document = pdfView.document else { return false }
+        var match = document.findString(query, fromSelection: pdfView.currentSelection, withOptions: options)
+        if match == nil { match = document.findString(query, fromSelection: nil, withOptions: options) }
+        guard let match else { return false }
+        pdfView.setCurrentSelection(match, animate: false)
+        pdfView.scrollSelectionToVisible(nil)
+        return true
+    }
+
+    func clearFind() { pdfView.clearSelection() }
+}
+
+// MARK: - Audio and video
+
+final class MediaController: ItemController {
+    let itemID: ItemID
+    private let playerView = AVPlayerView()
+    private let player: AVPlayer
+
+    var view: NSView { playerView }
+
+    init(itemID: ItemID, path: String) {
+        self.itemID = itemID
+        player = AVPlayer(url: URL(fileURLWithPath: path))
+        playerView.player = player
+        playerView.controlsStyle = .inline
+    }
+
+    func focus() { playerView.window?.makeFirstResponder(playerView) }
+
+    func teardown() {
+        player.pause()
+        playerView.player = nil
+    }
+}
+
+// MARK: - CSV
+
+final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTableViewDelegate {
+    let itemID: ItemID
+    let path: String
+    private let scrollView = NSScrollView()
+    private let table = NSTableView()
+    private var rows: [[String]] = []
+    private var token: FileWatchHub.Token?
+    private var generation = 0
+
+    var view: NSView { scrollView }
+
+    init(itemID: ItemID, path: String) {
+        self.itemID = itemID
+        self.path = path
+        super.init()
+        table.dataSource = self
+        table.delegate = self
+        table.usesAlternatingRowBackgroundColors = true
+        table.columnAutoresizingStyle = .noColumnAutoresizing
+        table.allowsMultipleSelection = true
+        table.gridStyleMask = [.solidVerticalGridLineMask]
+        table.style = .plain
+        scrollView.documentView = table
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = true
+        token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
+        load()
+    }
+
+    private func load() {
+        generation += 1
+        let current = generation
+        let path = path
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let data = FileManager.default.contents(atPath: path) ?? Data()
+            let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+            let parsed = CSVParser.parse(text)
+            await MainActor.run {
+                guard let self, self.generation == current else { return }
+                self.display(parsed)
+            }
+        }
+    }
+
+    private func display(_ parsed: CSVParser.Table) {
+        rows = parsed.rows
+        table.tableColumns.forEach { table.removeTableColumn($0) }
+        let width = max(parsed.header.count, parsed.rows.map(\.count).max() ?? 0)
+        for index in 0..<width {
+            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("\(index)"))
+            column.title = index < parsed.header.count ? parsed.header[index] : ""
+            column.width = columnWidth(index: index, header: column.title)
+            column.minWidth = 40
+            table.addTableColumn(column)
+        }
+        table.reloadData()
+    }
+
+    private func columnWidth(index: Int, header: String) -> CGFloat {
+        var longest = header.count
+        for row in rows.prefix(200) where index < row.count {
+            longest = max(longest, row[index].count)
+        }
+        return min(max(CGFloat(longest) * 7.5 + 18, 60), 420)
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard let column = tableColumn, let index = Int(column.identifier.rawValue) else { return nil }
+        let identifier = NSUserInterfaceItemIdentifier("cell")
+        let field = (tableView.makeView(withIdentifier: identifier, owner: nil) as? NSTextField) ?? {
+            let field = NSTextField(labelWithString: "")
+            field.identifier = identifier
+            field.lineBreakMode = .byTruncatingTail
+            field.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            field.isSelectable = true
+            return field
+        }()
+        let cells = rows[row]
+        field.stringValue = index < cells.count ? cells[index] : ""
+        return field
+    }
+
+    func focus() { table.window?.makeFirstResponder(table) }
+    func teardown() { token = nil }
+
+    var supportsFind: Bool { true }
+
+    func find(_ query: String, backwards: Bool) -> Bool {
+        guard !rows.isEmpty else { return false }
+        let start = table.selectedRow >= 0 ? table.selectedRow : (backwards ? rows.count : -1)
+        let count = rows.count
+        for step in 1...count {
+            let row = ((start + (backwards ? -step : step)) % count + count) % count
+            if rows[row].contains(where: { $0.range(of: query, options: .caseInsensitive) != nil }) {
+                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                table.scrollRowToVisible(row)
+                return true
+            }
+        }
+        return false
+    }
+
+    func clearFind() { table.deselectAll(nil) }
+}
+
+// MARK: - Office, iWork and everything else
+
+final class QuickLookController: ItemController {
+    let itemID: ItemID
+    private let preview: QLPreviewView
+    private let url: URL
+    private var token: FileWatchHub.Token?
+
+    var view: NSView { preview }
+
+    init(itemID: ItemID, path: String) {
+        self.itemID = itemID
+        self.url = URL(fileURLWithPath: path)
+        preview = QLPreviewView(frame: CGRect(x: 0, y: 0, width: 400, height: 300), style: .normal)
+        // Tabs move this view around, and it must survive leaving the window.
+        preview.shouldCloseWithWindow = false
+        preview.previewItem = url as NSURL
+        token = FileWatchHub.shared.watch(path: path) { [weak self] in
+            self?.preview.refreshPreviewItem()
+        }
+    }
+
+    func focus() { preview.window?.makeFirstResponder(preview) }
+
+    func teardown() {
+        token = nil
+        preview.close()
+    }
+}
