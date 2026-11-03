@@ -269,6 +269,23 @@ import Testing
         #expect(throws: CLIParser.UsageError.self) { try request("theme", "blue") }
     }
 
+    @Test func follow() throws {
+        let parsed = try request("follow", "i-1", "2", "5")
+        #expect(parsed.args["row"]?.intValue == 2)
+        #expect(throws: (any Error).self) { try request("follow", "i-1", "x", "5") }
+    }
+
+    @Test func settings() throws {
+        #expect(try request("settings").cmd == "settings.list")
+        #expect(try request("settings", "explain", "theme").args["key"] == "theme")
+        let set = try request("settings", "set", "externalEditors", "zed,", "code")
+        #expect(set.cmd == "settings.set")
+        #expect(set.args["value"] == "zed, code")
+        #expect(try request("settings", "reset", "theme").cmd == "settings.reset")
+        #expect(try request("settings", "open").cmd == "settings.open")
+        #expect(throws: (any Error).self) { try request("settings", "set", "theme") }
+    }
+
     @Test func webDark() throws {
         #expect(try request("web-dark", "on").args["on"] == true)
         let parsed = try request("web-dark", "off", "i-1")

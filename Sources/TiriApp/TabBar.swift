@@ -17,6 +17,8 @@ struct ItemIcon: View {
                 .foregroundStyle(.secondary)
         case .web:
             Image(systemName: "globe").foregroundStyle(.secondary)
+        case .settings:
+            Image(systemName: "gearshape").foregroundStyle(.secondary)
         }
     }
 }

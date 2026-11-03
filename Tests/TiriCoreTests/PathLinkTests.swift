@@ -184,7 +184,7 @@ struct LinkCase: Sendable, CustomTestStringConvertible {
 
     @Test func searchFallbackFindsFileElsewhere() {
         var resolver = resolver()
-        resolver.search = { suffix in suffix == "main.swift" ? "/repo/src/main.swift" : nil }
+        resolver.search = { suffix in suffix == "main.swift" ? ["/repo/src/main.swift"] : [] }
         #expect(resolver.resolve(atColumn: 1, in: "main.swift:3")?.path == "/repo/src/main.swift")
         #expect(resolver.resolve(atColumn: 1, in: "main.swift:3")?.line == 3)
         #expect(resolver.resolve(atColumn: 1, in: "other.swift") == nil)
@@ -192,12 +192,59 @@ struct LinkCase: Sendable, CustomTestStringConvertible {
 
     @Test func searchFallbackIgnoresBareWords() {
         var resolver = resolver()
-        resolver.search = { _ in "/repo/src/main.swift" }
+        resolver.search = { _ in ["/repo/src/main.swift"] }
         #expect(resolver.resolve(atColumn: 1, in: "hello") == nil)
     }
 
     @Test func hoveringWhitespaceFindsNothing() {
         #expect(resolver().resolve(atColumn: 8, in: "Makefile  README.md") == nil)
+    }
+}
+
+@Suite struct PathSearchTests {
+    let files = ["/p/web/resume/opportunities.html", "/p/old/resume/opportunities.html", "/p/docs/opportunities.html", "/p/Makefile"]
+    func named(_ name: String) -> [String] { files.filter { ($0 as NSString).lastPathComponent == name } }
+
+    @Test func aWebRootPathFindsTheFile() {
+        let found = PathSearch.matches(for: "/resume/opportunities.html", filesNamed: named)
+        #expect(found == ["/p/web/resume/opportunities.html", "/p/old/resume/opportunities.html"])
+    }
+
+    @Test func theMostSpecificMatchWins() {
+        #expect(PathSearch.matches(for: "web/resume/opportunities.html", filesNamed: named) == ["/p/web/resume/opportunities.html"])
+        #expect(PathSearch.matches(for: "docs/opportunities.html", filesNamed: named) == ["/p/docs/opportunities.html"])
+    }
+
+    @Test func fallsBackToTheFileName() {
+        #expect(PathSearch.matches(for: "nowhere/opportunities.html", filesNamed: named).count == 3)
+    }
+
+    @Test func aNameWithoutAnExtensionIsTooVagueAlone() {
+        #expect(PathSearch.matches(for: "/api/Makefile", filesNamed: named).isEmpty)
+        #expect(PathSearch.matches(for: "/p/Makefile", filesNamed: named) == ["/p/Makefile"])
+    }
+
+    @Test func noMatchIsEmpty() {
+        #expect(PathSearch.matches(for: "missing.txt", filesNamed: named).isEmpty)
+    }
+
+    @Test func rankingPrefersOpenThenNearThenShort() {
+        let ranked = PathSearch.ranked(["/a/long/name/x.md", "/b/x.md", "/near/deep/er/x.md", "/open/deep/er/x.md"],
+                                       open: ["/open/deep/er/x.md"], near: "/near")
+        #expect(ranked == ["/open/deep/er/x.md", "/near/deep/er/x.md", "/b/x.md", "/a/long/name/x.md"])
+    }
+
+    @Test func existingPathsBeatSearchResults() {
+        let resolver = PathResolver(cwd: "/p", workspaceFolders: [], probe: { $0 == "/p/a.md" || $0 == "/q/a.md" ? false : nil },
+                                    search: { _ in ["/q/a.md"] })
+        #expect(resolver.resolveAll(PathCandidate(path: "a.md", range: 0..<4)).map(\.path) == ["/p/a.md"])
+    }
+
+    @Test func searchReachesAbsolutePathsThatDoNotExist() {
+        let resolver = PathResolver(cwd: "/p", workspaceFolders: [], probe: { $0.hasPrefix("/q") ? false : nil },
+                                    search: { _ in ["/q/one.html", "/q/two/one.html"] })
+        #expect(resolver.resolveAll(PathCandidate(path: "/one.html", range: 0..<9)).count == 2)
+        #expect(resolver.resolveAll(PathCandidate(path: "~/one.html", range: 0..<10)).isEmpty)
     }
 }
 

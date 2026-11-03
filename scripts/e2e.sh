@@ -67,6 +67,7 @@ for _ in $(seq 1 100); do "$CLI" ping >/dev/null 2>&1 && break; sleep 0.1; done
 expect "ping" "pong" "$CLI" ping
 expect "--skill prints the guide" "TIRI_ITEM_ID" "$CLI" --skill
 expect "first launch has a workspace" "Home" "$CLI" workspace list
+refuses "first launch starts no terminal" bash -c "'$CLI' items | grep -q terminal"
 
 check "workspace new with a folder" "$CLI" workspace new demo --folder "$PROJECT"
 sleep 0.6
@@ -125,9 +126,36 @@ check "send to a terminal" "$CLI" send "$SHELL_ID" "echo marker-\$((40+2))" --en
 sleep 1
 expect "read a terminal" "marker-42" "$CLI" read "$SHELL_ID" --lines 10
 
+# A path that doesn't exist as written gets searched for, the way a ⌘-click does.
+mkdir -p "$PROJECT/resume" "$WORK/other/resume" "$PROJECT/only"
+printf 'a' > "$PROJECT/only/single.md"
+printf 'a' > "$PROJECT/resume/opportunities.html"
+printf 'b' > "$WORK/other/resume/opportunities.html"
+LINK_ID=$("$CLI" term --cwd "$PROJECT")
+sleep 2.5
+"$CLI" send "$LINK_ID" "clear; printf '/only/single.md\\n/nothing/missing.html\\nplain words\\n'" --enter
+for _ in $(seq 1 50); do [ "$("$CLI" read "$LINK_ID" | head -1)" = "/only/single.md" ] && break; sleep 0.2; done
+check "follow a path with one match" "$CLI" follow "$LINK_ID" 0 3
+sleep 0.6
+expect "one match opens as a peek" "single.md" "$CLI" items
+check "follow a path with no match shows a toast" "$CLI" follow "$LINK_ID" 1 3
+refuses "follow plain words" "$CLI" follow "$LINK_ID" 2 2
+check "close the link terminal" "$CLI" close "$LINK_ID"
+
 check "hook payload is accepted" "$CLI" hook claude '{"hook_event_name":"Stop"}'
 (unset TIRI_ITEM_ID; check "notify outside a terminal stays quiet" "$CLI" notify done)
 
+expect "settings lists every setting" "terminal.linkOpens" "$CLI" settings
+expect "settings explains itself" "Accepts:" "$CLI" settings explain code.wordWrap
+expect "settings set takes effect" "on" "$CLI" settings set code.wordWrap on
+expect "settings get reads it back" "on" "$CLI" settings get code.wordWrap
+expect "settings reset restores it" "off" "$CLI" settings reset code.wordWrap
+refuses "settings set checks the value" "$CLI" settings set code.wordWrap maybe
+refuses "settings set checks the key" "$CLI" settings set no.such on
+check "settings open" "$CLI" settings open
+expect "settings is a tab" "settings" "$CLI" items
+SETTINGS_ID=$("$CLI" items | grep -m1 '	settings	' | cut -f1)
+check "close settings" "$CLI" close "$SETTINGS_ID"
 check "theme dark" "$CLI" theme dark
 expect "theme written to settings" '"theme": "dark"' cat "$TIRI_CONFIG_HOME/settings.json"
 check "theme system" "$CLI" theme system

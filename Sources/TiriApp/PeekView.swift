@@ -119,7 +119,7 @@ struct PeekView: View {
                                      : (directory as NSString).abbreviatingWithTildeInPath
         case .web(let spec):
             return spec.url
-        case .terminal:
+        case .terminal, .settings:
             return nil
         }
     }

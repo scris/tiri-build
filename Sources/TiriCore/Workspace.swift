@@ -66,12 +66,14 @@ public enum ItemContent: Codable, Hashable, Sendable {
     case terminal(TerminalSpec)
     case file(FileSpec)
     case web(WebSpec)
+    case settings
 
     public var kindName: String {
         switch self {
         case .terminal: "terminal"
         case .file: "file"
         case .web: "web"
+        case .settings: "settings"
         }
     }
 }
@@ -104,6 +106,8 @@ public struct Item: Codable, Hashable, Identifiable, Sendable {
         case .web(let spec):
             if let title = spec.title, !title.isEmpty { return title }
             return URL(string: spec.url)?.host ?? spec.url
+        case .settings:
+            return "Settings"
         }
     }
 }
@@ -347,6 +351,15 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     }
 
     /// The first terminal a new workspace opens with: cwd = first folder.
+    /// What a workspace is called before you've chosen a folder for it.
+    public static let placeholderName = "Home"
+
+    /// The first folder chosen for a placeholder workspace also names it.
+    public mutating func adoptFolder(_ path: String, named newName: String) {
+        if folders.isEmpty, name == Self.placeholderName { name = newName }
+        addFolder(path)
+    }
+
     public mutating func addInitialTerminal(fallbackCwd: String) {
         guard items.isEmpty else { return }
         addItem(Item(content: .terminal(TerminalSpec(cwd: folders.first ?? fallbackCwd))))

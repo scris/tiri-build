@@ -1,0 +1,298 @@
+import AppKit
+import SwiftUI
+import TiriCore
+
+/// Settings as an item, like everything else. Built entirely from `SettingsSchema`.
+final class SettingsController: ItemController {
+    let itemID: ItemID
+    private let host: NSView
+
+    var view: NSView { host }
+
+    init(itemID: ItemID, model: AppModel) {
+        self.itemID = itemID
+        host = NSHostingView(rootView: SettingsView().environment(model))
+    }
+
+    func focus() { host.window?.makeFirstResponder(host) }
+    func didAttach() { AppModel.shared.viewerReady(itemID) }
+}
+
+struct SettingsView: View {
+    @Environment(AppModel.self) private var model
+    @State private var query = ""
+
+    private var visible: [SettingDefinition] {
+        let text = query.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return SettingsSchema.all }
+        return SettingsSchema.all.filter {
+            [$0.title, $0.explanation, $0.section, $0.key].contains { $0.localizedCaseInsensitiveContains(text) }
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                AskAgentCard()
+                TextField("Search settings", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                let shown = visible
+                if shown.isEmpty {
+                    Text("No settings match \u{201C}\(query)\u{201D}.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(SettingsSchema.sections, id: \.self) { section in
+                    let rows = shown.filter { $0.section == section }
+                    if !rows.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(section)
+                                .font(.headline)
+                            VStack(spacing: 0) {
+                                ForEach(Array(rows.enumerated()), id: \.element.id) { index, definition in
+                                    if index > 0 { Divider() }
+                                    SettingRow(definition: definition)
+                                }
+                            }
+                            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: 680)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+}
+
+/// One prompt away: an agent can explain and change everything here.
+struct AskAgentCard: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Ask your AI").font(.headline)
+                Text("Your agent can explain every setting here and change it for you. Send it this prompt:")
+                    .foregroundStyle(.secondary)
+            }
+            Text(SettingsSchema.agentPrompt)
+                .font(.callout)
+                .textSelection(.enabled)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
+            HStack(spacing: 8) {
+                ForEach(model.settings.terminalPresets.filter { !$0.command.isEmpty }) { preset in
+                    Button("Ask \(preset.name)") {
+                        model.askAgentAboutSettings(preset: preset)
+                    }
+                    .help("Sends this prompt to \(preset.name) in this workspace")
+                }
+                Button("Copy Prompt") { Clipboard.copy(SettingsSchema.agentPrompt) }
+            }
+        }
+    }
+}
+
+enum Clipboard {
+    static func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+struct SettingRow: View {
+    let definition: SettingDefinition
+    @Environment(AppModel.self) private var model
+
+    private var value: JSONValue { definition.value(model.settings) }
+
+    private func set(_ value: JSONValue) { model.setSetting(definition.key, to: value) }
+
+    private var isWide: Bool {
+        switch definition.kind {
+        case .presets, .commandMap: true
+        default: false
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(definition.title)
+                    Text(definition.explanation)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if !isWide { control }
+            }
+            if isWide { control }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("Copy Prompt About This Setting") { Clipboard.copy(SettingsSchema.agentPrompt(about: definition)) }
+            Button("Reset to Default") { model.resetSetting(definition.key) }
+        }
+    }
+
+    @ViewBuilder private var control: some View {
+        switch definition.kind {
+        case .toggle:
+            Toggle("", isOn: Binding(get: { value.boolValue ?? false }, set: { set(.bool($0)) }))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+        case .choice(let options):
+            Picker("", selection: Binding(get: { value.stringValue ?? "" }, set: { set(.string($0)) })) {
+                ForEach(options, id: \.self) { Text($0.label).tag($0.value) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        case .number(let minimum, let maximum, let step):
+            let current = value.numberValue ?? minimum
+            Stepper(value: Binding(get: { current }, set: { set($0 == $0.rounded() ? .int(Int($0)) : .double($0)) }),
+                    in: minimum...maximum, step: step) {
+                Text(SettingsSchema.display(value)).monospacedDigit()
+            }
+            .fixedSize()
+        case .font:
+            FontPicker(selection: value.stringValue ?? "") { set(.string($0)) }
+        case .text(let placeholder):
+            CommitField(placeholder: placeholder, text: value.stringValue ?? "") { set(.string($0)) }
+                .frame(width: 220)
+        case .list(let placeholder):
+            let items = value.arrayValue?.compactMap(\.stringValue) ?? []
+            CommitField(placeholder: placeholder, text: items.joined(separator: ", ")) { text in
+                set(.array(text.split(separator: ",").map { .string($0.trimmingCharacters(in: .whitespaces)) }))
+            }
+            .frame(width: 260)
+        case .presets:
+            PairsEditor(firstPlaceholder: "Name", secondPlaceholder: "Command, or empty for a shell",
+                        pairs: (value.arrayValue ?? []).map { ($0["name"]?.stringValue ?? "", $0["command"]?.stringValue ?? "") }) { pairs in
+                set(.array(pairs.map { .object(["name": .string($0.0), "command": .string($0.1)]) }))
+            }
+        case .commandMap:
+            PairsEditor(firstPlaceholder: "Tool", secondPlaceholder: "Resume command",
+                        pairs: value.objectValue.sorted { $0.key < $1.key }.map { ($0.key, $0.value.stringValue ?? "") }) { pairs in
+                set(.object(Dictionary(pairs.map { ($0.0, JSONValue.string($0.1)) }, uniquingKeysWith: { _, last in last })))
+            }
+        }
+    }
+}
+
+/// Monospaced fonts installed on this Mac, plus whatever's already chosen.
+struct FontPicker: View {
+    let selection: String
+    let commit: (String) -> Void
+
+    private static let families: [String] = NSFontManager.shared.availableFontFamilies.filter { family in
+        NSFont(name: family, size: 12)?.isFixedPitch == true
+    }
+
+    var body: some View {
+        let options = Self.families.contains(selection) ? Self.families : [selection] + Self.families
+        Picker("", selection: Binding(get: { selection }, set: commit)) {
+            ForEach(options, id: \.self) { Text($0).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+    }
+}
+
+/// A text field that saves when you press Return or move away, not on every keystroke.
+struct CommitField: View {
+    let placeholder: String
+    let text: String
+    let commit: (String) -> Void
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField(placeholder, text: $draft)
+            .textFieldStyle(.roundedBorder)
+            .focused($focused)
+            .onAppear { draft = text }
+            .onChange(of: text) { _, value in if !focused { draft = value } }
+            .onChange(of: focused) { _, isFocused in if !isFocused, draft != text { commit(draft) } }
+            .onSubmit { if draft != text { commit(draft) } }
+    }
+}
+
+struct PairsEditor: View {
+    let firstPlaceholder: String
+    let secondPlaceholder: String
+    let pairs: [(String, String)]
+    let commit: ([(String, String)]) -> Void
+    @State private var addingRow = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(pairs.enumerated()), id: \.offset) { index, pair in
+                HStack(spacing: 6) {
+                    CommitField(placeholder: firstPlaceholder, text: pair.0) { replace(index, first: $0) }
+                        .frame(width: 150)
+                    CommitField(placeholder: secondPlaceholder, text: pair.1) { replace(index, second: $0) }
+                    Button {
+                        var updated = pairs
+                        updated.remove(at: index)
+                        commit(updated)
+                    } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Remove")
+                }
+            }
+            if addingRow {
+                NewPairRow(firstPlaceholder: firstPlaceholder, secondPlaceholder: secondPlaceholder) { first, second in
+                    addingRow = false
+                    if !first.isEmpty { commit(pairs + [(first, second)]) }
+                }
+            } else {
+                Button {
+                    addingRow = true
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func replace(_ index: Int, first: String? = nil, second: String? = nil) {
+        var updated = pairs
+        updated[index] = (first ?? updated[index].0, second ?? updated[index].1)
+        commit(updated)
+    }
+}
+
+struct NewPairRow: View {
+    let firstPlaceholder: String
+    let secondPlaceholder: String
+    let done: (String, String) -> Void
+    @State private var first = ""
+    @State private var second = ""
+
+    var body: some View {
+        HStack(spacing: 6) {
+            TextField(firstPlaceholder, text: $first)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 150)
+            TextField(secondPlaceholder, text: $second)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { done(first, second) }
+            Button("Add") { done(first, second) }
+                .disabled(first.isEmpty)
+        }
+    }
+}

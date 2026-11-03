@@ -58,16 +58,24 @@ struct MainToolbar: ToolbarContent {
 
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
+            // One button, one menu. Its size and shape match the buttons beside it.
             Menu {
                 ForEach(model.settings.terminalPresets) { preset in
-                    Button(preset.name) { model.newTerminal(command: preset.command) }
+                    if model.active.folders.count > 1 {
+                        Menu(preset.name) {
+                            ForEach(model.active.folders, id: \.self) { folder in
+                                Button(folderLabel(folder)) { model.newTerminal(command: preset.command, cwd: folder) }
+                            }
+                        }
+                    } else {
+                        Button(preset.name) { model.startTerminal(command: preset.command) }
+                    }
                 }
             } label: {
                 Label("New Terminal", systemImage: "plus")
-            } primaryAction: {
-                model.newTerminal()
             }
-            .help("New Terminal (⌃`)")
+            .menuIndicator(.hidden)
+            .help("New terminal or agent")
 
             Button { model.splitActive(.right) } label: {
                 Label("Split Right", systemImage: "rectangle.split.2x1")
@@ -79,6 +87,15 @@ struct MainToolbar: ToolbarContent {
             }
             .help("Split Down (⌘K ⌘\\)")
         }
+    }
+}
+
+extension MainToolbar {
+    /// Two folders can share a name, and the choice decides where an agent works.
+    private func folderLabel(_ folder: String) -> String {
+        let name = (folder as NSString).lastPathComponent
+        let shared = model.active.folders.filter { ($0 as NSString).lastPathComponent == name }.count > 1
+        return shared ? (folder as NSString).abbreviatingWithTildeInPath : name
     }
 }
 
@@ -369,16 +386,40 @@ struct EmptyGroupView: View {
     }
 
     var body: some View {
-        VStack(spacing: 8) {
-            row("Open a file", "quickOpen")
-            row("New terminal", "newTerminal")
-            row("All commands", "commandPalette")
-            row("Toggle sidebar", "toggleSidebar")
+        Group {
+            if model.active.folders.isEmpty {
+                chooseFolder
+            } else {
+                VStack(spacing: 8) {
+                    row("Open a file", "quickOpen")
+                    row("New terminal", "newTerminal")
+                    row("All commands", "commandPalette")
+                    row("Toggle sidebar", "toggleSidebar")
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .contextMenu {
-            Button("New Terminal") { model.newTerminal() }
+            Button("New Terminal") { model.startTerminal() }
+        }
+    }
+
+    private var chooseFolder: some View {
+        VStack(spacing: 14) {
+            VStack(spacing: 4) {
+                Text("Choose a folder to start")
+                    .font(.title3.weight(.semibold))
+                Text("Terminals and agents in this workspace work in the folder you choose.")
+                    .foregroundStyle(.secondary)
+            }
+            Button("Choose Folder…") {
+                model.chooseFolderForActiveWorkspace { folder in
+                    model.newTerminal(cwd: folder)
+                }
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
         }
     }
 }
@@ -391,7 +432,7 @@ struct ItemHeader: View {
 
     var body: some View {
         switch item.content {
-        case .terminal:
+        case .terminal, .settings:
             EmptyView()
         case .file(let spec):
             if model.accessReady, let web = model.controller(for: item.id) as? WebController {

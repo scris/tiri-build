@@ -2,6 +2,57 @@ import Foundation
 import Testing
 @testable import TiriCore
 
+@Suite struct SettingsSchemaTests {
+    @Test func everySettingBelongsToASectionAndHasWords() {
+        for definition in SettingsSchema.all {
+            #expect(SettingsSchema.sections.contains(definition.section), "\(definition.key)")
+            #expect(!definition.title.isEmpty && !definition.explanation.isEmpty, "\(definition.key)")
+        }
+        #expect(Set(SettingsSchema.all.map(\.key)).count == SettingsSchema.all.count)
+    }
+
+    /// A setting whose key doesn't match the parser would look fine and silently do nothing.
+    @Test func everySettingRoundTripsThroughTheFile() throws {
+        for definition in SettingsSchema.all {
+            let value = definition.value(TiriSettings())
+            let text = SettingsFile.setting(definition.key, toJSON: SettingsSchema.json(value), in: TiriSettings.defaultFileContents)
+            let parsed = definition.value(try TiriSettings.parse(text))
+            #expect(parsed == value || (parsed.numberValue != nil && parsed.numberValue == value.numberValue), "\(definition.key)")
+        }
+    }
+
+    @Test func changingAValueIsSeenByTheParser() throws {
+        var text = TiriSettings.defaultFileContents
+        text = SettingsFile.setting("code.wordWrap", toJSON: "true", in: text)
+        text = SettingsFile.setting("code.fontSize", toJSON: "15", in: text)
+        text = SettingsFile.setting("files.exclude", toJSON: #"[".git","dist"]"#, in: text)
+        text = SettingsFile.setting("terminal.presets", toJSON: #"[{"command":"x, y","name":"A"}]"#, in: text)
+        text = SettingsFile.setting("terminal.resume", toJSON: #"{"claude":"claude -c"}"#, in: text)
+        let parsed = try TiriSettings.parse(text)
+        #expect(parsed.codeWordWrap && parsed.codeFontSize == 15)
+        #expect(parsed.filesExclude == [".git", "dist"])
+        #expect(parsed.terminalPresets == [TerminalPreset(name: "A", command: "x, y")])
+        #expect(parsed.terminalResume == ["claude": "claude -c"])
+        #expect(text.contains("// Tiri settings"))
+    }
+
+    @Test func typedValuesAreChecked() throws {
+        #expect(try SettingsSchema.value(from: "on", for: "code.wordWrap") == .bool(true))
+        #expect(try SettingsSchema.value(from: "tab", for: "terminal.linkOpens") == .string("tab"))
+        #expect(try SettingsSchema.value(from: "14", for: "code.fontSize") == .int(14))
+        #expect(try SettingsSchema.value(from: "zed, code", for: "externalEditors") == .array([.string("zed"), .string("code")]))
+        #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "maybe", for: "code.wordWrap") }
+        #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "sideways", for: "terminal.linkOpens") }
+        #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "500", for: "code.fontSize") }
+        #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "x", for: "no.such.setting") }
+    }
+
+    @Test func thePromptTellsAnAgentWhatToRun() {
+        #expect(SettingsSchema.agentPrompt.contains("tiri settings explain"))
+        #expect(SettingsSchema.agentPrompt.contains("tiri settings set"))
+    }
+}
+
 @Suite struct SettingsTests {
     @Test func shippedDefaultFileParsesToDefaults() throws {
         #expect(try TiriSettings.parse(TiriSettings.defaultFileContents) == TiriSettings())

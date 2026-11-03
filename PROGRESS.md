@@ -23,6 +23,8 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | Resume by session ID on a real session | Depends on the hooks above. `claude --continue` is verified on a real session | Same as above, then relaunch |
 | Clicking a native notification | Needs the system permission prompt answered. In-app toasts and badges are verified | Allow notifications, then run `tiri notify done --item <id>` in a terminal in another workspace |
 | Codex session and hooks | Only its first screens were opened. Payload handling is tested with documented-format JSON | Add the output of `tiri hooks codex` and run a session |
+| Seeing the folder panel, and a real ⌘-click on a path | Tested without taking your screen: the panel through accessibility, and the click through `tiri follow`, which runs the same code. An unfocused window doesn't draw the panel or take clicks | Open Tiri, press +, choose Claude Code; then ⌘-click a path |
+| Ask Claude Code against the real agent | Tested with a stand-in command, to avoid a real session on your account | Press Ask Claude Code on the Settings tab |
 | Reduce Transparency, Increase Contrast | Left to the system's glass, as the spec asks, but not exercised | Turn them on in Accessibility settings |
 | Terminal translucency setting | Implemented, not looked at | Set `terminal.translucent` |
 
@@ -33,6 +35,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Terminal:** login shell with your aliases, truecolor, full-screen TUIs, cwd tracking, presets, exit bar with Restart.
 - **Peek:** ⌘-click or `tiri open` from a terminal floats a viewer, with Open as Tab, Open to the Side, replace on next click, Esc and click-outside to close.
 - **Path links:** existing paths underline on ⌘-hover, VS Code's location formats, soft and hard wrapped paths, directories reveal, web URLs float too.
+- **Path search:** a path that doesn't exist as written is searched for across the workspace's folders, its terminals' folders and its open files. One match opens, several offer a choice, none shows a toast. Never an alert.
 - **Tree → terminal:** drag inserts a shell-quoted path.
 - **Agent attention:** status on the tab, item list and workspace switcher, toasts, dock badge, jump to next (⌘⇧U), hooks, fallback estimate when there are no hooks.
 - **Session restore:** layout, cwd and terminals. Agents resume. Other commands wait typed at the prompt, so nothing like `./deploy.sh` re-runs by itself.
@@ -41,7 +44,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Web:** address bar, back, forward, reload, auto-reload for local files, forced dark.
 - **Control API and CLI:** everything in spec §5, plus `send`, `read`, `layout`, `tree`, `commands`, `run`, `perf`, `hook`, `hooks`.
 - **Navigation:** quick open, command palette, all §6 keybindings, chords, breadcrumbs, find, tab drag and drop.
-- **Settings:** live reload, a banner on invalid JSON, comments preserved when Tiri edits the file.
+- **Settings:** a screen built from one list of settings, and `tiri settings` for agents, with a one-click prompt from the screen to your agent. Nobody needs to touch JSON. The file is only where they're stored.
 
 ## What is stubbed or thin
 
@@ -67,6 +70,8 @@ Open times run from the request until the content is showing, except for Office 
 
 ## Known bugs
 
+- ⌘-clicking a labelled hyperlink whose target has no scheme can still show SwiftTerm's "Link blocked" alert, because SwiftTerm doesn't expose link targets. Text that looks like a path never reaches it. Fixing it needs a patch to SwiftTerm.
+- Keyboard shortcuts are still changed in `keybindings.json`. They don't have a screen yet.
 - In dark mode, photos inside a PDF or Office file invert with the page, because the viewer can't tell them apart. The moon button shows true colors.
 - Large Office files show Quick Look's spinner for a few seconds before they appear.
 - A nested `claude -p` inside a hooked terminal can overwrite the stored session ID, so a relaunch resumes the wrong conversation.
@@ -79,11 +84,13 @@ Open times run from the request until the content is showing, except for Office 
 
 | Cursor | Tiri | Why |
 |---|---|---|
+| A path that doesn't exist as written does nothing, or errors | Tiri searches the workspace and opens it, or lets you choose | Agents print paths relative to all sorts of places. Stopping you there is the worst outcome |
 | ⌘-click in a terminal opens a pinned tab | Opens a Peek | The point of the Peek. `terminal.linkOpens` restores tabs; ⌘⇧-click does it once |
 | Opens a second copy in the active group if a file is open elsewhere | Focuses the existing tab, unless you ask for a split | Review-first: one file, one place |
 | Split duplicates the editor | Files and web pages duplicate; a terminal starts a new terminal in the same folder | A process can't be in two places |
 | ⌘W with nothing open closes the window | Does nothing | Closing the window would stop every terminal in every workspace |
 | Bottom terminal panel | None; terminals are tabs | Spec principle 1 |
+| Opens a terminal in your home folder if no folder is open | Asks for a folder first; first launch starts nothing | An agent started in the wrong folder does real work in the wrong place |
 | Root row only with several folders | Always a root row | Spec: one section per folder |
 | Compact folders on by default | Not implemented | Not in v0.1 scope; see next tasks |
 | Quick open searches on spaces as AND | Spaces are ignored | Simpler for now |

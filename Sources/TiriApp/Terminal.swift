@@ -102,6 +102,7 @@ final class TiriTerminalView: LocalProcessTerminalView {
     private var swallowNextMouseUp = false
 
     enum LinkTarget {
+        case choice([ResolvedPath])
         case path(ResolvedPath)
         case web(URL)
     }
@@ -117,10 +118,15 @@ final class TiriTerminalView: LocalProcessTerminalView {
     // MARK: Cmd-click
 
     override func mouseDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.command), let target = linkTarget(forWindowPoint: event.locationInWindow) {
-            swallowNextMouseUp = true
-            open(target, forceTab: event.modifierFlags.contains(.shift))
-            return
+        // Anything that looks like a path is Tiri's to find, so SwiftTerm never gets to put up its
+        // "Link blocked" alert for one. Other text may be a labelled hyperlink, which SwiftTerm
+        // resolves and hands back through `requestOpenLink`.
+        if event.modifierFlags.contains(.command) {
+            let variants = logicalLines(atWindowPoint: event.locationInWindow)
+            if followLink(in: variants, forceTab: event.modifierFlags.contains(.shift)) {
+                swallowNextMouseUp = true
+                return
+            }
         }
         super.mouseDown(with: event)
     }
@@ -143,8 +149,74 @@ final class TiriTerminalView: LocalProcessTerminalView {
         switch target {
         case .path(let resolved):
             model.openFromTerminal(resolved, forceTab: forceTab)
+        case .choice(let matches):
+            model.chooseFromTerminal(matches, forceTab: forceTab)
         case .web(let url):
             model.openWebFromTerminal(url, forceTab: forceTab)
+        }
+    }
+
+    private func openHyperlink(_ link: String, forceTab: Bool) {
+        guard let model = owner?.model else { return }
+        let url = URL(string: link)
+        if let url, url.isFileURL {
+            model.openFromTerminal(ResolvedPath(path: url.path, isDirectory: false), forceTab: forceTab)
+        } else if let url, url.scheme == "http" || url.scheme == "https" {
+            model.openWebFromTerminal(url, forceTab: forceTab)
+        } else if url?.scheme == nil {
+            // A target like `/resume/index.html` is a path that needs finding.
+            let candidate = PathCandidate(path: link, range: 0..<0)
+            let found = pathResolver()?.resolveAll(candidate) ?? []
+            if found.isEmpty {
+                searchAgain(for: link, forceTab: forceTab) { [weak self] in self?.pathResolver()?.resolveAll(candidate) ?? [] }
+            } else {
+                model.chooseFromTerminal(found, forceTab: forceTab)
+            }
+        } else {
+            model.showToast(title: "Tiri doesn't open \(url?.scheme ?? "these") links", detail: link, symbol: "link", tint: .secondary)
+        }
+    }
+
+    /// Nothing matched yet. The file may be newer than the index, so look again before saying so.
+    /// What a ⌘-click does, and what `tiri follow` does.
+    /// Returns false when the text there isn't a link and doesn't look like a path at all.
+    func followLink(row: Int, column: Int, forceTab: Bool) -> Bool {
+        followLink(in: logicalLines(row: row, column: column), forceTab: forceTab)
+    }
+
+    private func followLink(in variants: [(line: LogicalLine, column: Int)], forceTab: Bool) -> Bool {
+        for variant in variants {
+            if let (target, _) = resolveLink(in: variant.line, column: variant.column) {
+                open(target, forceTab: forceTab)
+                return true
+            }
+        }
+        let candidates = variants.flatMap { PathLinkDetector.candidates(atColumn: $0.column, in: $0.line.text) }
+        // A bare word isn't a path. It may be the label of a real hyperlink.
+        guard let shown = candidates.first(where: { $0.path.contains("/") || $0.path.contains(".") })?.path else { return false }
+        searchAgain(for: shown, forceTab: forceTab) { [weak self] in
+            guard let resolver = self?.pathResolver() else { return [] }
+            for variant in variants {
+                let matches = resolver.resolveAll(atColumn: variant.column, in: variant.line.text)
+                if !matches.isEmpty { return matches }
+            }
+            return []
+        }
+        return true
+    }
+
+    private func searchAgain(for shown: String, forceTab: Bool, find: @escaping () -> [ResolvedPath]) {
+        guard let owner else { return }
+        owner.model.rebuildLinkIndexes(for: owner.itemID) { [weak self] in
+            guard let model = self?.owner?.model else { return }
+            let matches = find()
+            if !matches.isEmpty {
+                model.chooseFromTerminal(matches, forceTab: forceTab)
+                return
+            }
+            model.showToast(title: "No file matches \(shown)",
+                            detail: "Searched this workspace's folders, terminals and open files.",
+                            symbol: "magnifyingglass", tint: .secondary)
         }
     }
 
@@ -157,6 +229,7 @@ final class TiriTerminalView: LocalProcessTerminalView {
             clearHover()
             return
         }
+        if let owner { owner.model.warmLinkIndexes(for: owner.itemID) }
         let point = window?.mouseLocationOutsideOfEventStream ?? event.locationInWindow
         let local = convert(point, from: nil)
         guard bounds.contains(local), !pointIsCoveredByPeek(point) else {
@@ -220,11 +293,13 @@ final class TiriTerminalView: LocalProcessTerminalView {
         let local = convert(point, from: nil)
         let size = cellSize
         guard size.width > 0, size.height > 0 else { return [] }
+        return logicalLines(row: Int((bounds.height - local.y) / size.height), column: Int(local.x / size.width))
+    }
+
+    private func logicalLines(row rowIndex: Int, column: Int) -> [(line: LogicalLine, column: Int)] {
         let snapshot = terminalStateSnapshot()
         let rows = snapshot.visibleRows
         let cols = snapshot.dimensions.cols
-        let rowIndex = Int((bounds.height - local.y) / size.height)
-        let column = Int(local.x / size.width)
         guard rowIndex >= 0, rowIndex < rows.count, column >= 0 else { return [] }
 
         var start = rowIndex
@@ -289,15 +364,17 @@ final class TiriTerminalView: LocalProcessTerminalView {
         if let (url, range) = Self.webLink(in: line.text, column: column) {
             return (.web(url), range)
         }
+        guard let matches = pathResolver()?.resolveAll(atColumn: column, in: line.text), let first = matches.first else { return nil }
+        return (matches.count == 1 ? .path(first) : .choice(matches), first.range)
+    }
+
+    private func pathResolver() -> PathResolver? {
         guard let owner else { return nil }
         let model = owner.model
-        let workspace = model.workspace(containing: owner.itemID)
-        let folders = workspace?.folders ?? []
-        let resolver = PathResolver(cwd: owner.currentDirectory, workspaceFolders: folders, search: { suffix in
-            MainActor.assumeIsolated { model.fileIndex.uniqueMatch(suffix: suffix) }
+        let itemID = owner.itemID
+        return PathResolver(cwd: owner.currentDirectory, workspaceFolders: model.workspace(containing: itemID)?.folders ?? [], search: { path in
+            MainActor.assumeIsolated { model.linkMatches(for: path, from: itemID) }
         })
-        guard let resolved = resolver.resolve(atColumn: column, in: line.text) else { return nil }
-        return (.path(resolved), resolved.range)
     }
 
     static func webLink(in text: String, column: Int) -> (URL, Range<Int>)? {
@@ -368,12 +445,7 @@ final class TiriTerminalView: LocalProcessTerminalView {
     }
 
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-        guard let url = URL(string: link), let model = owner?.model else { return }
-        if url.isFileURL {
-            model.openFromTerminal(ResolvedPath(path: url.path, isDirectory: false, line: nil, col: nil, range: 0..<0), forceTab: false)
-        } else if url.scheme == "http" || url.scheme == "https" {
-            model.openWebFromTerminal(url, forceTab: false)
-        }
+        openHyperlink(link, forceTab: false)
     }
 }
 

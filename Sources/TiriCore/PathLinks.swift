@@ -352,14 +352,14 @@ public struct PathResolver: Sendable {
     public var home: String
     /// nil = doesn't exist; otherwise whether it's a directory.
     public var probe: @Sendable (String) -> Bool?
-    /// Last resort: the one file in the workspace with this path suffix, if there's exactly one.
-    /// Agents often print a path relative to some other folder.
-    public var search: (@Sendable (String) -> String?)?
+    /// Last resort: the files in the workspace this could mean, best first. Agents often print a
+    /// path relative to some other folder, or to a web root like `/resume/index.html`.
+    public var search: (@Sendable (String) -> [String])?
 
     public init(cwd: String?, workspaceFolders: [String],
                 home: String = NSHomeDirectory(),
                 probe: @escaping @Sendable (String) -> Bool? = PathResolver.fileSystemProbe,
-                search: (@Sendable (String) -> String?)? = nil) {
+                search: (@Sendable (String) -> [String])? = nil) {
         self.cwd = cwd
         self.workspaceFolders = workspaceFolders
         self.home = home
@@ -374,6 +374,33 @@ public struct PathResolver: Sendable {
     }
 
     public func resolve(_ candidate: PathCandidate) -> ResolvedPath? {
+        resolveAll(candidate).first
+    }
+
+    public func resolve(atColumn column: Int, in line: String) -> ResolvedPath? {
+        resolveAll(atColumn: column, in: line).first
+    }
+
+    /// The path as written if it exists, or else every file in the workspace it could mean.
+    public func resolveAll(_ candidate: PathCandidate) -> [ResolvedPath] {
+        if let exact = resolveExactly(candidate) { return [exact] }
+        return searchMatches(candidate)
+    }
+
+    /// Any reading of the text under the column that exists as written beats any search result.
+    public func resolveAll(atColumn column: Int, in line: String) -> [ResolvedPath] {
+        let candidates = PathLinkDetector.candidates(atColumn: column, in: line)
+        for candidate in candidates {
+            if let exact = resolveExactly(candidate) { return [exact] }
+        }
+        for candidate in candidates {
+            let matches = searchMatches(candidate)
+            if !matches.isEmpty { return matches }
+        }
+        return []
+    }
+
+    private func resolveExactly(_ candidate: PathCandidate) -> ResolvedPath? {
         for path in absoluteVariants(of: candidate.path) {
             if let isDirectory = probe(path) {
                 return ResolvedPath(path: path, isDirectory: isDirectory,
@@ -386,23 +413,18 @@ public struct PathResolver: Sendable {
         if stripped != candidate.path, !stripped.isEmpty {
             var next = candidate
             next.path = stripped
-            return resolve(next)
-        }
-        // Only names that look like files: a bare word shouldn't match something far away.
-        if let search, !candidate.path.hasPrefix("/"), !candidate.path.hasPrefix("~"),
-           candidate.path.contains(".") || candidate.path.contains("/"),
-           let found = search(candidate.path), let isDirectory = probe(found) {
-            return ResolvedPath(path: found, isDirectory: isDirectory,
-                                line: candidate.line, col: candidate.col, range: candidate.range)
+            return resolveExactly(next)
         }
         return nil
     }
 
-    public func resolve(atColumn column: Int, in line: String) -> ResolvedPath? {
-        for candidate in PathLinkDetector.candidates(atColumn: column, in: line) {
-            if let resolved = resolve(candidate) { return resolved }
+    private func searchMatches(_ candidate: PathCandidate) -> [ResolvedPath] {
+        // Only things that look like files: a bare word shouldn't match something far away.
+        guard let search, !candidate.path.hasPrefix("~"),
+              candidate.path.contains(".") || candidate.path.contains("/") else { return [] }
+        return search(candidate.path).compactMap { found in
+            probe(found).map { ResolvedPath(path: found, isDirectory: $0, line: candidate.line, col: candidate.col, range: candidate.range) }
         }
-        return nil
     }
 
     private func absoluteVariants(of path: String) -> [String] {
@@ -418,6 +440,36 @@ public struct PathResolver: Sendable {
     private func standardize(_ path: String) -> String {
         let standardized = (path as NSString).standardizingPath
         return standardized.count > 1 && standardized.hasSuffix("/") ? String(standardized.dropLast()) : standardized
+    }
+}
+
+/// Finding what a path that doesn't exist as written most likely means.
+public enum PathSearch {
+    /// The most specific match wins. Files ending in all of `a/b/c.html` beat files ending in
+    /// `b/c.html`, which beat files that only share the name. A name without an extension is
+    /// too vague to match on its own.
+    public static func matches(for path: String, filesNamed: (String) -> [String]) -> [String] {
+        let parts = path.split(separator: "/").map(String.init).filter { $0 != "." && $0 != ".." }
+        guard let name = parts.last else { return [] }
+        let named = filesNamed(name)
+        guard !named.isEmpty else { return [] }
+        for start in parts.indices {
+            let tail = parts[start...].joined(separator: "/")
+            let hits = named.filter { $0.hasSuffix("/" + tail) }
+            if !hits.isEmpty {
+                return start == parts.count - 1 && !name.contains(".") ? [] : hits
+            }
+        }
+        return []
+    }
+
+    /// What's already open first, then what's under the terminal's folder, then the shortest path.
+    public static func ranked(_ paths: [String], open: Set<String>, near cwd: String?) -> [String] {
+        func key(_ path: String) -> (Int, Int, Int, String) {
+            let isNear = cwd.map { path.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") } ?? false
+            return (open.contains(path) ? 0 : 1, isNear ? 0 : 1, path.count, path)
+        }
+        return Array(Set(paths)).sorted { key($0) < key($1) }
     }
 }
 

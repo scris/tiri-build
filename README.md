@@ -20,6 +20,10 @@ macOS asks for permission the first time Tiri opens something in Documents, Desk
 TIRI_SIGN_IDENTITY="Apple Development: you@example.com (ABCDE12345)" ./build.sh
 ```
 
+## Start with a folder
+
+Nothing runs until you've said where. A new workspace asks for its folder first, and so does the first terminal or agent in a workspace without one. In a workspace with several folders, the **+** menu asks which folder a new terminal or agent should use, and ⌃\` uses the folder of what you're looking at.
+
 ## The Peek
 
 When you ⌘-click a file in a Claude Code or Codex session, it opens as a floating Peek over the session rather than as a new tab. Your layout doesn't change, and the terminal stays visible beside it.
@@ -53,7 +57,9 @@ Shortcuts follow Cursor. All of them can be changed in `keybindings.json`.
 
 In the explorer, a single click previews a file and a double-click keeps it open. Enter renames, Space previews, ⌘↓ opens and ⌘⌫ moves to the Trash. Drag a file from the explorer into a terminal to insert its shell-quoted path. Drag tabs to reorder them, move them between groups, or onto the edge of a pane to split it.
 
-⌘-hover underlines any path that exists in terminal output. ⌘-clicking a file opens it, including `path:line:col` and the other formats compilers and test runners print. ⌘-clicking a folder reveals it in the explorer.
+⌘-hover underlines any path in terminal output that exists or can be found. ⌘-clicking a file opens it, including `path:line:col` and the other formats compilers and test runners print. ⌘-clicking a folder reveals it in the explorer.
+
+Agents often print a path that doesn't exist as written, like `/resume/index.html` from a web root. Tiri doesn't give up on those. It searches the workspace's folders, the folders its terminals are in, and its open files. One match opens right away. If several match, you pick one, with the likeliest first. There's never an alert to dismiss.
 
 ## Drive it from an agent
 
@@ -111,7 +117,18 @@ Black artwork on a transparent background, in a PNG or SVG, gets a light plate b
 
 ## Settings
 
-`~/.config/tiri/settings.json` and `keybindings.json` are plain files that reload as soon as they're saved, so an agent can edit them too. ⌘, opens the settings. If a file has invalid JSON, Tiri keeps the last good version and shows a banner. Keybindings use the same shape as Cursor's.
+There are two ways to change a setting, and neither involves a file.
+
+**The screen:** ⌘, opens Settings as a tab, with every setting explained. Changes apply immediately. Right-click a setting to reset it.
+
+**Your AI:** the top of that screen has a prompt ready to send. **Ask Claude Code** or **Ask Codex** hands it to your agent, which can then explain any setting in plain words and change it for you. Agents use `tiri settings`:
+
+```sh
+tiri settings explain              # every setting, its value and what it does
+tiri settings set code.wordWrap on
+```
+
+Keyboard shortcuts are still in `~/.config/tiri/keybindings.json`, in the same shape as Cursor's.
 
 ## Development
 

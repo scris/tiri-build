@@ -10,6 +10,7 @@ final class PaletteModel {
         case files
         case commands
         case prompt(title: String, commit: (String) -> Void)
+        case choices(title: String, rows: [Row])
     }
 
     struct Row: Identifiable {
@@ -48,7 +49,7 @@ final class PaletteModel {
         switch mode {
         case .files: "Search files by name. Add :line to jump, or > for commands."
         case .commands: "Type a command"
-        case .prompt(let title, _): title
+        case .prompt(let title, _), .choices(let title, _): title
         }
     }
 
@@ -63,7 +64,18 @@ final class PaletteModel {
         case .files: refreshFiles()
         case .commands: refreshCommands()
         case .prompt: rows = []
+        case .choices(_, let all): refreshChoices(all)
         }
+    }
+
+    // MARK: Choices
+
+    private func refreshChoices(_ all: [Row]) {
+        let text = query.trimmingCharacters(in: .whitespaces)
+        rows = text.isEmpty ? all : all.filter {
+            FuzzyMatcher.match(query: text, candidate: ($0.detail ?? "") + "/" + $0.title, nameStart: 0) != nil
+        }
+        selection = 0
     }
 
     // MARK: Commands

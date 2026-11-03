@@ -198,18 +198,18 @@ public struct TiriSettings: Equatable, Sendable {
 }
 
 public enum SettingsFile {
-    /// Change one string-valued key in place, keeping the user's comments and formatting.
+    /// Change one key in place, keeping any comments and formatting around it.
     public static func setting(_ key: String, to value: String, in text: String) -> String {
+        setting(key, toJSON: SettingsSchema.json(.string(value)), in: text)
+    }
+
+    public static func setting(_ key: String, toJSON encoded: String, in text: String) -> String {
         let escapedKey = NSRegularExpression.escapedPattern(for: key)
-        let pattern = "(\"\(escapedKey)\"\\s*:\\s*)\"[^\"]*\""
-        let encoded = "\"\(value)\""
-        if let regex = try? NSRegularExpression(pattern: pattern) {
-            let range = NSRange(text.startIndex..., in: text)
-            if let match = regex.firstMatch(in: text, range: range),
-               let prefix = Range(match.range(at: 1), in: text),
-               let whole = Range(match.range, in: text) {
-                return text.replacingCharacters(in: whole, with: text[prefix] + encoded)
-            }
+        if let regex = try? NSRegularExpression(pattern: "\"\(escapedKey)\"\\s*:\\s*"),
+           let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           let whole = Range(match.range, in: text),
+           let end = endOfValue(in: text, from: whole.upperBound) {
+            return text.replacingCharacters(in: whole.upperBound..<end, with: encoded)
         }
         if let brace = text.firstIndex(of: "{") {
             let after = text.index(after: brace)
@@ -218,6 +218,41 @@ public enum SettingsFile {
             return text[..<after] + "\n  \"\(key)\": \(encoded)\(separator)" + text[after...]
         }
         return "{\n  \"\(key)\": \(encoded)\n}\n"
+    }
+
+    /// Where the JSON value starting here ends: a string, a nested list or object, or a bare word.
+    private static func endOfValue(in text: String, from start: String.Index) -> String.Index? {
+        guard start < text.endIndex else { return nil }
+        var index = start
+        var depth = 0
+        var inString = false
+        var escaped = false
+        while index < text.endIndex {
+            let character = text[index]
+            let next = text.index(after: index)
+            if inString {
+                if escaped { escaped = false }
+                else if character == "\\" { escaped = true }
+                else if character == "\"" {
+                    inString = false
+                    if depth == 0 { return next }
+                }
+            } else {
+                switch character {
+                case "\"": inString = true
+                case "[", "{": depth += 1
+                case "]", "}":
+                    if depth == 0 { return index }
+                    depth -= 1
+                    if depth == 0 { return next }
+                case ",", "\n", " ", "\t":
+                    if depth == 0 { return index }
+                default: break
+                }
+            }
+            index = next
+        }
+        return depth == 0 && !inString ? text.endIndex : nil
     }
 }
 

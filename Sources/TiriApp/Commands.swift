@@ -35,7 +35,7 @@ extension AppModel {
             AppCommand(id: "revealActive", title: "Reveal Active Item in Explorer", category: "View") { model in
                 if let path = model.activeFilePath { model.revealInTree(path) }
             },
-            AppCommand(id: "newTerminal", title: "New Terminal", category: "Terminal") { $0.newTerminal() },
+            AppCommand(id: "newTerminal", title: "New Terminal", category: "Terminal") { $0.startTerminal() },
             AppCommand(id: "restartTerminal", title: "Restart Exited Terminal", category: "Terminal") { model in
                 if let id = model.active.focused.active {
                     (model.existingController(for: id) as? TerminalController)?.restart()
@@ -49,7 +49,7 @@ extension AppModel {
                 if let id = model.active.focused.active { model.updateActive { $0.pin(id) } }
             },
             AppCommand(id: "find", title: "Find", category: "Edit") { $0.openFind() },
-            AppCommand(id: "openSettings", title: "Open Settings…", category: "Preferences") { $0.openSettingsFile() },
+            AppCommand(id: "openSettings", title: "Open Settings…", category: "Preferences") { $0.openSettings() },
             AppCommand(id: "openKeybindings", title: "Open Keyboard Shortcuts", category: "Preferences") { $0.openKeybindingsFile() },
             AppCommand(id: "themeSystem", title: "Theme: Follow System", category: "Preferences") { $0.setTheme(.system) },
             AppCommand(id: "themeLight", title: "Theme: Light", category: "Preferences") { $0.setTheme(.light) },
@@ -98,7 +98,7 @@ extension AppModel {
         var list = Self.staticCommands
         for preset in settings.terminalPresets where !preset.command.isEmpty {
             list.append(AppCommand(id: "newTerminal:\(preset.name)", title: "New Terminal: \(preset.name)", category: "Terminal") {
-                $0.newTerminal(command: preset.command)
+                $0.startTerminal(command: preset.command)
             })
         }
         for workspace in workspaces where workspace.id != activeID {
@@ -199,6 +199,8 @@ enum ControlHandler {
             object["path"] = .string(spec.path)
         case .web(let spec):
             object["url"] = .string((model.existingController(for: item.id) as? WebController)?.currentURLString ?? spec.url)
+        case .settings:
+            break
         }
         return .object(object)
     }
@@ -389,6 +391,55 @@ enum ControlHandler {
                                    session: request.args["session"]?.stringValue)
             return .object(["item": .string(id), "status": .string(model.runtimes[id]?.status.rawValue ?? "idle")])
 
+        case "settings.list", "settings.explain":
+            let settings = model.settings
+            func entry(_ definition: SettingDefinition) -> JSONValue {
+                .object(["key": .string(definition.key), "section": .string(definition.section), "title": .string(definition.title),
+                         "explanation": .string(definition.explanation), "accepts": .string(SettingsSchema.allowedValues(definition.kind)),
+                         "value": definition.value(settings), "display": .string(SettingsSchema.display(definition.value(settings))),
+                         "defaultDisplay": .string(SettingsSchema.display(definition.value(TiriSettings())))])
+            }
+            if let key = request.args["key"]?.stringValue {
+                guard let definition = SettingsSchema.definition(for: key) else {
+                    throw ControlFailure("No setting called \"\(key)\". Run tiri settings to see them all.")
+                }
+                return .array([entry(definition)])
+            }
+            return .array(SettingsSchema.all.map(entry))
+
+        case "settings.get":
+            let key = try string(request, "key")
+            guard let definition = SettingsSchema.definition(for: key) else {
+                throw ControlFailure("No setting called \"\(key)\". Run tiri settings to see them all.")
+            }
+            let value = definition.value(model.settings)
+            return .object(["key": .string(key), "value": value, "display": .string(SettingsSchema.display(value))])
+
+        case "settings.set":
+            let key = try string(request, "key")
+            let value: JSONValue
+            do {
+                value = try SettingsSchema.value(from: try string(request, "value"), for: key)
+            } catch let invalid as SettingsSchema.InvalidValue {
+                throw ControlFailure(invalid.description)
+            }
+            if let problem = model.setSetting(key, to: value) { throw ControlFailure(problem) }
+            let now = SettingsSchema.definition(for: key)?.value(model.settings) ?? value
+            return .object(["key": .string(key), "value": now, "display": .string(SettingsSchema.display(now))])
+
+        case "settings.reset":
+            let key = try string(request, "key")
+            guard let definition = SettingsSchema.definition(for: key) else {
+                throw ControlFailure("No setting called \"\(key)\". Run tiri settings to see them all.")
+            }
+            model.resetSetting(key)
+            let now = definition.value(model.settings)
+            return .object(["key": .string(key), "value": now, "display": .string(SettingsSchema.display(now))])
+
+        case "settings.open":
+            model.openSettings()
+            return .object([:])
+
         case "theme":
             guard let mode = request.args["mode"]?.stringValue.flatMap(ThemeMode.init(rawValue:)) else {
                 throw ControlFailure("Theme must be light, dark or system")
@@ -437,6 +488,17 @@ enum ControlHandler {
             guard let terminal = model.controller(for: id) as? TerminalController else { throw ControlFailure("\(id) isn't a terminal") }
             terminal.startIfNeeded(fallbackSize: true)
             terminal.send(text: try string(request, "text"))
+            return .object(["item": .string(id)])
+
+        case "follow":
+            let id = try requireItem(request, model: model)
+            guard let terminal = model.controller(for: id) as? TerminalController else { throw ControlFailure("\(id) isn't a terminal") }
+            guard let row = request.args["row"]?.intValue, let col = request.args["col"]?.intValue else {
+                throw ControlFailure("Missing row or column")
+            }
+            guard terminal.terminalView.followLink(row: row, column: col, forceTab: false) else {
+                throw ControlFailure("There's no link or path there")
+            }
             return .object(["item": .string(id)])
 
         case "read":

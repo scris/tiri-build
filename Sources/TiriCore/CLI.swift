@@ -215,6 +215,36 @@ public enum CLIParser {
             if args.count == 2 { payload["item"] = .string(args[1]) }
             return request("web-dark", payload)
 
+        case "follow":
+            guard args.count == 3, let row = Int(args[1]), let col = Int(args[2]) else {
+                throw UsageError("usage: tiri follow <item-id> <row> <col>   (what ⌘-click does; counts from 0)")
+            }
+            return request("follow", ["item": .string(args[0]), "row": .int(row), "col": .int(col)])
+
+        case "settings":
+            let usage = "usage: tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open]"
+            switch args.first {
+            case nil:
+                return request("settings.list")
+            case "explain":
+                guard args.count <= 2 else { throw UsageError(usage) }
+                return request("settings.explain", args.count == 2 ? ["key": .string(args[1])] : [:])
+            case "get":
+                guard args.count == 2 else { throw UsageError(usage) }
+                return request("settings.get", ["key": .string(args[1])])
+            case "set":
+                guard args.count >= 3 else { throw UsageError(usage) }
+                return request("settings.set", ["key": .string(args[1]), "value": .string(args[2...].joined(separator: " "))])
+            case "reset":
+                guard args.count == 2 else { throw UsageError(usage) }
+                return request("settings.reset", ["key": .string(args[1])])
+            case "open":
+                guard args.count == 1 else { throw UsageError(usage) }
+                return request("settings.open")
+            default:
+                throw UsageError(usage)
+            }
+
         case "run":
             guard args.count == 1 else { throw UsageError("usage: tiri run <command-id>   (see tiri commands)") }
             return request("run", ["command": .string(args[0])])
@@ -262,6 +292,8 @@ public enum CLIParser {
       tiri hooks claude|codex   (prints the hooks config to add)
       tiri theme light|dark|system
       tiri web-dark on|off [<item-id>]
+      tiri follow <item-id> <row> <col>
+      tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open]
       tiri send <item-id> <text> [--enter]
       tiri read <item-id> [--lines N]
       tiri layout | tree | commands | run <command-id> | perf
@@ -460,12 +492,18 @@ public enum AgentGuide {
     tiri web-dark on [<item-id>]          # force dark on a web preview, PDF or Office file
     ```
 
-    Settings are plain files, reloaded live. Edit them directly:
+    Change settings with `tiri settings`, never by editing a file. Changes apply immediately.
 
-    - `~/.config/tiri/settings.json`
-    - `~/.config/tiri/keybindings.json` (same shape as Cursor's)
+    ```sh
+    tiri settings                         # every setting and its current value
+    tiri settings explain [<key>]         # what each one does, and what it accepts
+    tiri settings get <key>
+    tiri settings set <key> <value>       # for example: tiri settings set code.wordWrap on
+    tiri settings reset <key>
+    tiri settings open                    # open the settings screen for the user
+    ```
 
-    If a file has invalid JSON, Tiri keeps the last good config and shows a banner.
+    When someone asks about their settings, run `tiri settings explain`, describe them in plain words, and change what they ask for.
 
     ## Anything else
 

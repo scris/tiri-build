@@ -78,7 +78,7 @@ struct TiriMenus: Commands {
             item("newTerminal")
             Menu("New Terminal Preset") {
                 ForEach(model.settings.terminalPresets) { preset in
-                    Button(preset.name) { model.newTerminal(command: preset.command) }
+                    Button(preset.name) { model.startTerminal(command: preset.command) }
                 }
             }
             Divider()

@@ -103,6 +103,7 @@ final class AppModel {
     @ObservationIgnored let fileTree = FileTreeController()
     @ObservationIgnored let settingsStore = SettingsStore()
     @ObservationIgnored let fileIndex = FileIndexStore()
+    @ObservationIgnored let terminalFolderIndex = FileIndexStore()
     @ObservationIgnored var skipQuitConfirmation = false
     @ObservationIgnored var launchMilliseconds: Double?
     @ObservationIgnored var lastOpenMilliseconds: Double?
@@ -135,10 +136,17 @@ final class AppModel {
                 }
             }
         } else {
-            var first = Workspace(name: "Home")
-            first.addInitialTerminal(fallbackCwd: NSHomeDirectory())
+            // Nothing runs until you've said where: see `startTerminal`.
+            let first = Workspace(name: Workspace.placeholderName)
             workspaces = [first]
             activeID = first.id
+        }
+        // A settings.json tab from before Settings had a screen becomes the screen.
+        let settingsFile = settingsStore.settingsURL.path
+        for index in workspaces.indices {
+            for item in workspaces[index].items where item.filePath == settingsFile {
+                workspaces[index].updateItem(item.id) { $0.content = .settings }
+            }
         }
         settingsStore.onChange = { [weak self] in self?.applySettings() }
         settingsStore.start()
@@ -174,7 +182,7 @@ final class AppModel {
             switch item.content {
             case .terminal(let spec): paths.append(spec.cwd)
             case .file(let spec): paths.append(spec.path)
-            case .web: break
+            case .web, .settings: break
             }
         }
         let unchecked = Array(Set(paths).subtracting(checkedPaths))
@@ -366,6 +374,8 @@ final class AppModel {
                                             workspaceID: workspaceID, model: self)
         case .file(let spec):
             controller = ViewerFactory.make(itemID: id, spec: spec, model: self)
+        case .settings:
+            controller = SettingsController(itemID: id, model: self)
         case .web(let spec):
             guard let url = URL(string: spec.url) else { return nil }
             controller = WebController(itemID: id, url: url, forceDark: spec.forceDark, isFile: false, model: self)
@@ -612,6 +622,89 @@ final class AppModel {
         }
     }
 
+    /// One match opens. Several let you pick, with the likeliest first.
+    func chooseFromTerminal(_ matches: [ResolvedPath], forceTab: Bool) {
+        if matches.count <= 1 {
+            if let match = matches.first { openFromTerminal(match, forceTab: forceTab) }
+            return
+        }
+        let name = (matches[0].path as NSString).lastPathComponent
+        let rows = matches.map { match in
+            // Which project each one is in is the whole question, so the folder is always shown.
+            let parent = (match.path as NSString).deletingLastPathComponent
+            let detail: String
+            if let folder = active.folder(containing: match.path) {
+                let folderName = (folder as NSString).lastPathComponent
+                let directory = (active.relativePath(match.path) as NSString).deletingLastPathComponent
+                detail = directory.isEmpty ? folderName : folderName + " • " + directory
+            } else {
+                detail = (parent as NSString).abbreviatingWithTildeInPath
+            }
+            return PaletteModel.Row(id: match.path, title: (match.path as NSString).lastPathComponent,
+                                    detail: detail,
+                                    symbol: FileIcons.symbolName(forName: name, isDirectory: match.isDirectory)) { [weak self] alternate in
+                self?.closePalette(restoreFocus: false)
+                self?.openFromTerminal(match, forceTab: forceTab || alternate)
+            }
+        }
+        openPalette(.choices(title: "\(matches.count) files match \(name). Type to narrow down.", rows: rows))
+    }
+
+    // MARK: Finding what a terminal path means
+
+    /// Where a terminal in this workspace has been working, beyond the workspace's own folders.
+    /// Your whole home folder isn't a project, so it isn't searched.
+    private func extraLinkRoots(for workspace: Workspace) -> [String] {
+        let home = NSHomeDirectory()
+        var roots: [String] = []
+        for item in workspace.items {
+            guard case .terminal(let spec) = item.content else { continue }
+            let cwd = (existingController(for: item.id) as? TerminalController)?.currentDirectory ?? spec.cwd
+            let isAncestorOfHome = cwd == home || home.hasPrefix(cwd.hasSuffix("/") ? cwd : cwd + "/")
+            // A terminal reports the real path, and a folder can be open under another name for it.
+            let real = (cwd as NSString).resolvingSymlinksInPath
+            let inWorkspace = workspace.folders.contains { folder in
+                let realFolder = (folder as NSString).resolvingSymlinksInPath
+                return real == realFolder || real.hasPrefix(realFolder + "/")
+            }
+            guard !isAncestorOfHome, !inWorkspace, !roots.contains(cwd) else { continue }
+            roots.append(cwd)
+        }
+        return roots.filter { root in !roots.contains { $0 != root && root.hasPrefix($0 + "/") } }
+    }
+
+    /// Called as soon as ⌘ is held over a terminal, so underlines are ready by the time you click.
+    func warmLinkIndexes(for item: ItemID) {
+        guard let workspace = workspace(containing: item) else { return }
+        let excludes = ExcludeMatcher(patterns: settings.filesExclude)
+        fileIndex.refreshIfNeeded(roots: active.folders, excludes: excludes)
+        terminalFolderIndex.ensure(roots: extraLinkRoots(for: workspace), excludes: excludes)
+    }
+
+    func rebuildLinkIndexes(for item: ItemID, then done: @escaping () -> Void) {
+        fileIndex.invalidate()
+        terminalFolderIndex.invalidate()
+        warmLinkIndexes(for: item)
+        fileIndex.whenReady { [weak self] in
+            self?.terminalFolderIndex.whenReady(done)
+        }
+    }
+
+    func linkMatches(for path: String, from item: ItemID) -> [String] {
+        guard let workspace = workspace(containing: item) else { return [] }
+        let openFiles = workspace.items.compactMap(\.filePath)
+        let cwd = (existingController(for: item) as? TerminalController)?.currentDirectory
+        let found = PathSearch.matches(for: path) { name in
+            fileIndex.paths(named: name) + terminalFolderIndex.paths(named: name)
+                + openFiles.filter { ($0 as NSString).lastPathComponent == name }
+        }
+        // The same file reached by two names is one match.
+        var seen = Set<String>()
+        return PathSearch.ranked(found, open: Set(openFiles), near: cwd).filter {
+            seen.insert(($0 as NSString).resolvingSymlinksInPath).inserted
+        }
+    }
+
     func openWebFromTerminal(_ url: URL, forceTab: Bool) {
         if forceTab || settings.terminalLinkOpens == .tab {
             openWeb(url: url.absoluteString, split: nil)
@@ -706,6 +799,41 @@ final class AppModel {
         return item.id
     }
 
+    /// What every "new terminal" control in the app uses. An agent started in the wrong folder
+    /// does real work in the wrong place, so a workspace without a folder asks for one first.
+    /// Cancelling starts nothing. Agents using `tiri term` go straight to `newTerminal`.
+    func startTerminal(command: String? = nil, split: SplitDirection? = nil, named name: String? = nil) {
+        guard active.folders.isEmpty else {
+            newTerminal(command: command, split: split)
+            return
+        }
+        let purpose = name ?? settings.terminalPresets.first { $0.command == command && command?.isEmpty == false }?.name
+        chooseFolderForActiveWorkspace(for: purpose) { [weak self] folder in
+            self?.newTerminal(command: command, cwd: folder, split: split)
+        }
+    }
+
+    func chooseFolderForActiveWorkspace(for purpose: String? = nil, then start: @escaping (String) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the folder \(purpose ?? "this terminal") will work in"
+        panel.prompt = "Choose Folder"
+        let workspaceID = activeID
+        let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+            guard let self, response == .OK, let folder = panel.url?.path,
+                  self.workspaces.contains(where: { $0.id == workspaceID }) else { return }
+            self.addFolder(folder, in: workspaceID)
+            if workspaceID == self.activeID { start(folder) }
+        }
+        if let window {
+            panel.beginSheetModal(for: window) { response in MainActor.assumeIsolated { finish(response) } }
+        } else {
+            finish(panel.runModal())
+        }
+    }
+
     private func defaultTerminalDirectory() -> String {
         if let item = active.activeItem {
             switch item.content {
@@ -713,7 +841,7 @@ final class AppModel {
                 return (existingController(for: item.id) as? TerminalController)?.currentDirectory ?? spec.cwd
             case .file(let spec):
                 return active.folder(containing: spec.path) ?? (spec.path as NSString).deletingLastPathComponent
-            case .web:
+            case .web, .settings:
                 break
             }
         }
@@ -852,7 +980,7 @@ final class AppModel {
         case .web:
             if let title = (existingController(for: item.id) as? WebController)?.title, !title.isEmpty { return title }
             return item.defaultTitle
-        case .file:
+        case .file, .settings:
             return item.defaultTitle
         }
     }
@@ -909,7 +1037,7 @@ final class AppModel {
 
     func splitActive(_ direction: SplitDirection) {
         guard let item = active.activeItem else {
-            newTerminal(split: direction)
+            startTerminal(split: direction)
             return
         }
         switch item.content {
@@ -921,6 +1049,10 @@ final class AppModel {
             // A process can't be in two places, so splitting a terminal starts a new one beside it.
             let cwd = (existingController(for: item.id) as? TerminalController)?.currentDirectory ?? spec.cwd
             newTerminal(cwd: cwd, split: direction)
+            return
+        case .settings:
+            // One Settings tab per workspace. Beside it, a new terminal is what's useful.
+            startTerminal(split: direction)
             return
         }
         requestFocus()
@@ -991,7 +1123,7 @@ final class AppModel {
     @discardableResult
     func createWorkspace(name: String, folders: [String]) -> Workspace {
         var workspace = Workspace(name: uniqueName(name), folders: folders)
-        workspace.addInitialTerminal(fallbackCwd: NSHomeDirectory())
+        if !folders.isEmpty { workspace.addInitialTerminal(fallbackCwd: NSHomeDirectory()) }
         workspaces.append(workspace)
         switchWorkspace(workspace.id)
         return workspace
@@ -1034,9 +1166,7 @@ final class AppModel {
         guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
         if workspaces.count == 1 {
             // There's always a workspace to be in.
-            var fresh = Workspace(name: "Home")
-            fresh.addInitialTerminal(fallbackCwd: NSHomeDirectory())
-            workspaces.append(fresh)
+            workspaces.append(Workspace(name: Workspace.placeholderName))
         }
         let wasActive = id == activeID
         workspaces.remove(at: index)
@@ -1068,7 +1198,9 @@ final class AppModel {
 
     func addFolder(_ path: String, in workspaceID: WorkspaceID? = nil) {
         let target = workspaceID ?? activeID
-        update(workspace: target) { $0.addFolder(path) }
+        // Worked out first: looking through `workspaces` during the update below would crash.
+        let name = uniqueName((path as NSString).lastPathComponent)
+        update(workspace: target) { $0.adoptFolder(path, named: name) }
         if target == activeID { foldersChanged() }
     }
 
@@ -1237,10 +1369,50 @@ final class AppModel {
 
     // MARK: Settings
 
-    func openSettingsFile() {
-        settingsStore.ensureFilesExist()
-        open(path: settingsStore.settingsURL.path, intent: .pinned)
+    /// One Settings tab per workspace. Asking again goes back to it.
+    func openSettings() {
+        if let existing = active.items.first(where: { $0.content == .settings }) {
+            focusItem(existing.id)
+            return
+        }
+        updateActive { $0.addItem(Item(content: .settings), split: nil) }
         requestFocus()
+    }
+
+    /// Saves a change from the settings screen or `tiri settings set`, and applies it at once.
+    /// Returns what went wrong, if anything.
+    @discardableResult
+    func setSetting(_ key: String, to value: JSONValue) -> String? {
+        do {
+            try settingsStore.write(key, value: value)
+        } catch {
+            showToast(title: "Couldn't change that setting", detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
+            return "\(error)"
+        }
+        return nil
+    }
+
+    func resetSetting(_ key: String) {
+        guard let definition = SettingsSchema.definition(for: key) else { return }
+        setSetting(key, to: definition.value(TiriSettings()))
+    }
+
+    /// Sends the settings prompt to that agent if it's already running in this workspace, for you
+    /// to read before pressing Return. Otherwise starts the agent with the prompt.
+    func askAgentAboutSettings(preset: TerminalPreset) {
+        let tool = preset.command.split(separator: " ").first.map(String.init) ?? preset.command
+        let running = active.items.first { item in
+            guard case .terminal(let spec) = item.content else { return false }
+            let controller = existingController(for: item.id) as? TerminalController
+            if let name = controller?.foregroundProcessName, name.localizedCaseInsensitiveContains(tool) { return true }
+            return spec.command?.hasPrefix(tool) == true
+        }
+        if let running, let terminal = existingController(for: running.id) as? TerminalController {
+            focusItem(running.id)
+            terminal.send(text: SettingsSchema.agentPrompt)
+            return
+        }
+        startTerminal(command: preset.command + " " + ShellQuote.quote(SettingsSchema.agentPrompt), named: preset.name)
     }
 
     func openKeybindingsFile() {
@@ -1331,7 +1503,7 @@ final class AppModel {
                     case .file(var spec):
                         spec.forceDark = on
                         item.content = .file(spec)
-                    case .terminal:
+                    case .terminal, .settings:
                         break
                     }
                 }
@@ -1527,6 +1699,16 @@ final class SettingsStore {
         currentError = settingsError ?? keybindingsError
     }
 
+    /// Checks the result parses before saving, so a change can't break the file, then applies it.
+    func write(_ key: String, value: JSONValue) throws {
+        ensureFilesExist()
+        let text = (try? String(contentsOf: settingsURL, encoding: .utf8)) ?? TiriSettings.defaultFileContents
+        let updated = SettingsFile.setting(key, toJSON: SettingsSchema.json(value), in: text)
+        _ = try TiriSettings.parse(updated)
+        try updated.write(to: settingsURL, atomically: true, encoding: .utf8)
+        fileChanged()
+    }
+
     func writeTheme(_ mode: ThemeMode) {
         let text = (try? String(contentsOf: settingsURL, encoding: .utf8)) ?? TiriSettings.defaultFileContents
         try? SettingsFile.setting("theme", to: mode.rawValue, in: text).write(to: settingsURL, atomically: true, encoding: .utf8)
@@ -1543,6 +1725,8 @@ final class FileIndexStore {
     private var building = false
     private var generation = 0
     private var latest: (roots: [String], excludes: ExcludeMatcher)?
+    private var indexedRoots: [String]?
+    private var waiting: [() -> Void] = []
     var onUpdate: (() -> Void)?
 
     func invalidate() {
@@ -1550,14 +1734,25 @@ final class FileIndexStore {
         generation += 1
     }
 
-    /// The one indexed file ending in this path, if exactly one does.
-    func uniqueMatch(suffix: String) -> String? {
-        let name = (suffix as NSString).lastPathComponent
+    func paths(named name: String) -> [String] {
         if byName == nil {
             byName = Dictionary(grouping: files, by: \.name).mapValues { $0.map(\.path) }
         }
-        let matches = (byName?[name] ?? []).filter { $0.hasSuffix("/" + suffix) }
-        return matches.count == 1 ? matches[0] : nil
+        return byName?[name] ?? []
+    }
+
+    /// Runs now if the index is up to date, or else when the walk underway finishes.
+    func whenReady(_ block: @escaping () -> Void) {
+        if building { waiting.append(block) } else { block() }
+    }
+
+    /// For roots that change on their own, with no file watcher to say so.
+    func ensure(roots: [String], excludes: ExcludeMatcher) {
+        if roots != indexedRoots {
+            indexedRoots = roots
+            invalidate()
+        }
+        refreshIfNeeded(roots: roots, excludes: excludes)
     }
 
     func refreshIfNeeded(roots: [String], excludes: ExcludeMatcher) {
@@ -1575,6 +1770,9 @@ final class FileIndexStore {
                 if self.generation == currentGeneration {
                     self.files = files
                     self.onUpdate?()
+                    let ready = self.waiting
+                    self.waiting = []
+                    ready.forEach { $0() }
                 } else if let latest = self.latest {
                     // Things changed during the walk. Its result may be for another workspace.
                     self.refreshIfNeeded(roots: latest.roots, excludes: latest.excludes)

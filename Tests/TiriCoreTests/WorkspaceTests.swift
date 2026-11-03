@@ -6,6 +6,24 @@ private func file(_ name: String, preview: Bool = false) -> Item {
     Item(id: name, content: .file(FileSpec(path: "/w/\(name)")), isPreview: preview)
 }
 
+@Suite struct FolderFirstTests {
+    @Test func firstFolderNamesAPlaceholderWorkspace() {
+        var workspace = Workspace(name: Workspace.placeholderName)
+        workspace.adoptFolder("/code/api", named: "api 2")
+        #expect(workspace.name == "api 2")
+        #expect(workspace.folders == ["/code/api"])
+        workspace.adoptFolder("/code/web", named: "web")
+        #expect(workspace.name == "api 2")
+        #expect(workspace.folders == ["/code/api", "/code/web"])
+    }
+
+    @Test func aNamedWorkspaceKeepsItsNameWhenItGetsAFolder() {
+        var workspace = Workspace(name: "team")
+        workspace.adoptFolder("/code/api", named: "api")
+        #expect(workspace.name == "team")
+    }
+}
+
 @Suite struct LayoutTests {
     @Test func newWorkspaceStartsWithTerminalInFirstFolder() {
         var workspace = Workspace(name: "w", folders: ["/a", "/b"])
