@@ -157,28 +157,69 @@ public enum Git {
         run(arguments, in: directory)
     }
 
-    private static func run(_ arguments: [String], in directory: String) -> (status: Int32, output: Data)? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+    /// Spawned and waited for directly. Foundation's Process can wait forever for a child that has
+    /// already exited, which would silently stop the changes list. A hung git gets killed.
+    private static func run(_ arguments: [String], in directory: String, timeout: Double = 20) -> (status: Int32, output: Data)? {
+        var pipes: [Int32] = [0, 0]
+        guard pipe(&pipes) == 0 else { return nil }
+        let (readEnd, writeEnd) = (pipes[0], pipes[1])
+        defer { close(readEnd) }
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addchdir_np(&actions, directory)
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        posix_spawn_file_actions_adddup2(&actions, writeEnd, 1)
+        posix_spawn_file_actions_addclose(&actions, readEnd)
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        // Nothing of Tiri's stays open in git, or a pipe might never see its end.
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+        for keep: Int32 in [0, 1, 2] { posix_spawn_file_actions_addinherit_np(&actions, keep) }
+
         var environment = ProcessInfo.processInfo.environment
         // Looking at a repository shouldn't write to it, or the watcher hears git and asks again.
         environment["GIT_OPTIONAL_LOCKS"] = "0"
         environment["LC_ALL"] = "C"
-        process.environment = environment
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        do {
-            try process.run()
-        } catch {
-            return nil
+        let argv: [UnsafeMutablePointer<CChar>?] = (["git"] + arguments).map { strdup($0) } + [nil]
+        let envp: [UnsafeMutablePointer<CChar>?] = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
+        defer {
+            argv.forEach { free($0) }
+            envp.forEach { free($0) }
         }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return (process.terminationStatus, data)
+        var pid: pid_t = 0
+        let spawned = posix_spawn(&pid, "/usr/bin/git", &actions, &attributes, argv, envp)
+        close(writeEnd)
+        guard spawned == 0 else { return nil }
+
+        var output = Data()
+        var buffer = [UInt8](repeating: 0, count: 65536)
+        let deadline = Date().addingTimeInterval(timeout)
+        while true {
+            var wait = pollfd(fd: readEnd, events: Int16(POLLIN), revents: 0)
+            let remaining = Int32(max(deadline.timeIntervalSinceNow, 0) * 1000)
+            let ready = poll(&wait, 1, remaining)
+            if ready == 0 {
+                kill(pid, SIGKILL)
+                break
+            }
+            if ready < 0 {
+                if errno == EINTR { continue }
+                break
+            }
+            let count = read(readEnd, &buffer, buffer.count)
+            if count > 0 {
+                output.append(buffer, count: count)
+            } else if count == 0 || errno != EINTR {
+                break
+            }
+        }
+        var status: Int32 = 0
+        while waitpid(pid, &status, 0) < 0, errno == EINTR {}
+        let exited = status & 0x7F == 0
+        return (exited ? (status >> 8) & 0xFF : 128, output)
     }
 
     public static func repositoryRoot(of folder: String) -> String? {
@@ -264,5 +305,21 @@ public enum Git {
         let data = (try? handle.read(upToCount: limit)) ?? Data()
         guard FileClassifier.isLikelyText(data.prefix(8192)) else { return FileDiff(isBinary: true) }
         return .allAdded(String(decoding: data, as: UTF8.self))
+    }
+}
+
+/// Selected rows of a diff, written out for an agent to read.
+public enum DiffQuote {
+    public static func text<Rows: Sequence>(path: String, rows: Rows) -> String where Rows.Element == DiffLine {
+        let name = (path as NSString).lastPathComponent
+        let body = rows.compactMap { row -> String? in
+            switch row.kind {
+            case .added: "+" + row.text
+            case .removed: "-" + row.text
+            case .context: " " + row.text
+            case .hunk: nil
+            }
+        }.joined(separator: "\n")
+        return "From the changes in \(name):\n```diff\n\(body)\n```\n"
     }
 }

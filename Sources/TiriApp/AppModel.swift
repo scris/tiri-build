@@ -112,6 +112,7 @@ final class AppModel {
     @ObservationIgnored private var detachedDelegates: [ItemID: DetachedWindowDelegate] = [:]
     @ObservationIgnored var lastSearchQuery = ""
     @ObservationIgnored private var changesTokens: [FileWatchHub.Token] = []
+    @ObservationIgnored private var changesWorkspace: WorkspaceID?
     @ObservationIgnored private var changesWork: DispatchWorkItem?
     @ObservationIgnored private var changesInFlight = false
     @ObservationIgnored private var changesAgain = false
@@ -1637,6 +1638,11 @@ final class AppModel {
     /// Anything changing under a folder can change the list, including a commit, so it's
     /// looked at again shortly after. One look at a time, and one more if more happened meanwhile.
     private func watchForChanges() {
+        // Another workspace's changes shouldn't show here, even for a moment.
+        if changesWorkspace != activeID {
+            changesWorkspace = activeID
+            changes = []
+        }
         changesTokens = active.folders.map { folder in
             FileWatchHub.shared.watch(path: folder, recursive: true) { [weak self] in self?.scheduleChangesRefresh() }
         }
@@ -1658,7 +1664,7 @@ final class AppModel {
         changesInFlight = true
         let folders = active.folders
         let workspace = activeID
-        Task.detached(priority: .utility) { [weak self] in
+        Task.detached(priority: .userInitiated) { [weak self] in
             let found = Git.changesAcross(folders)
             await MainActor.run {
                 guard let self else { return }

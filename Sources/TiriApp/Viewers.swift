@@ -338,6 +338,7 @@ final class TextController: NSObject, ItemController, NSTextViewDelegate {
     private var pendingLocation: (Int?, Int?)
     private var loadedOnce = false
     private var highlightWork: DispatchWorkItem?
+    private var quoteButton: QuoteButton?
     private var highlightGeneration = 0
     /// What's on disk, as far as this viewer knows.
     private var savedText = ""
@@ -404,6 +405,8 @@ final class TextController: NSObject, ItemController, NSTextViewDelegate {
     private func configure() {
         NotificationCenter.default.addObserver(self, selector: #selector(selectionDidChange(_:)),
                                                name: NSTextView.didChangeSelectionNotification, object: textView)
+        quoteButton = QuoteButton(textView: textView, scrollView: scrollView, host: container)
+        quoteButton?.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         let text = textView
         text.isEditable = true
         text.allowsUndo = true
@@ -516,6 +519,19 @@ final class TextController: NSObject, ItemController, NSTextViewDelegate {
     }
 
     // MARK: Editing
+
+    /// Right-click on a selection offers the same thing as the button beside it.
+    func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+        if view.selectedRange().length > 0 {
+            let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteSelection), keyEquivalent: "")
+            item.target = self
+            menu.insertItem(item, at: 0)
+            menu.insertItem(.separator(), at: 1)
+        }
+        return menu
+    }
+
+    @objc private func quoteSelection() { model.addFrontToAgent() }
 
     func textDidChange(_ notification: Notification) {
         isDirty = textView.string != savedText

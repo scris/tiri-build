@@ -139,9 +139,14 @@ final class PaletteModel {
 
     private func refreshChoices(_ all: [Row]) {
         let text = query.trimmingCharacters(in: .whitespaces)
-        rows = text.isEmpty ? all : all.filter {
+        let matching = text.isEmpty ? all : all.filter {
             FuzzyMatcher.match(query: text, candidate: ($0.detail ?? "") + "/" + $0.title, nameStart: 0) != nil
         }
+        // What you typed, word for word, comes before what merely has those letters in order.
+        func contains(_ row: Row) -> Bool {
+            !text.isEmpty && (row.title + " " + (row.detail ?? "")).localizedCaseInsensitiveContains(text)
+        }
+        rows = matching.filter(contains) + matching.filter { !contains($0) }
         selection = 0
     }
 

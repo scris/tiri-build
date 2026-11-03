@@ -3,7 +3,7 @@ import SwiftUI
 import TiriCore
 
 /// What an agent changed in one file. An item like any other: a tab, a split or a Peek.
-final class DiffController: NSObject, ItemController {
+final class DiffController: NSObject, ItemController, NSTextViewDelegate {
     let itemID: ItemID
     let path: String
     private unowned let model: AppModel
@@ -15,6 +15,7 @@ final class DiffController: NSObject, ItemController {
     private var generation = 0
     private var firstLoad = true
     private let message = NSTextField(labelWithString: "")
+    private var quoteButton: QuoteButton?
     private(set) var diff = FileDiff()
 
     var view: NSView { container }
@@ -47,9 +48,14 @@ final class DiffController: NSObject, ItemController {
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .textBackgroundColor
         gutter.attach(to: scrollView, textView: textView)
+        textView.delegate = self
+        NotificationCenter.default.addObserver(self, selector: #selector(selectionDidChange(_:)),
+                                               name: NSTextView.didChangeSelectionNotification, object: textView)
         message.alignment = .center
         message.textColor = .secondaryLabelColor
         container.install(gutter: gutter, scrollView: scrollView, message: message)
+        quoteButton = QuoteButton(textView: textView, scrollView: scrollView, host: container)
+        quoteButton?.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         applySettings()
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
         load()
@@ -120,20 +126,57 @@ final class DiffController: NSObject, ItemController {
     func focus() { textView.window?.makeFirstResponder(textView) }
     func teardown() { token = nil }
 
-    /// The selected rows, by their line numbers in the file as it is now.
+    /// The selected rows, as they appear in the diff. Removed lines aren't in the file any more,
+    /// so a line number couldn't point at them: the agent gets the change itself.
     var agentReference: AgentSelection? {
+        let rows = selectedRows
+        guard !rows.isEmpty else { return AgentSelection(path: path) }
+        return AgentSelection(path: path, quote: DiffQuote.text(path: path, rows: rows))
+    }
+
+    private var selectedRows: ArraySlice<DiffLine> {
         let string = textView.string as NSString
         let range = textView.selectedRange()
-        guard range.length > 0 else { return AgentSelection(path: path) }
-        var first = 0
-        string.enumerateSubstrings(in: NSRange(location: 0, length: range.location), options: [.byLines, .substringNotRequired]) { _, _, _, _ in first += 1 }
-        if range.location > 0, string.character(at: range.location - 1) != 10 { first = max(first - 1, 0) }
-        var count = 0
-        string.enumerateSubstrings(in: range, options: [.byLines, .substringNotRequired]) { _, _, _, _ in count += 1 }
-        let rows = diff.lines[min(first, diff.lines.count)..<min(first + max(count, 1), diff.lines.count)]
-        let numbers = rows.compactMap(\.newLine)
-        return AgentSelection(path: path, firstLine: numbers.first.map { $0 - 1 }, lastLine: numbers.last.map { $0 - 1 })
+        guard range.length > 0 else { return [] }
+        func row(at location: Int) -> Int {
+            var count = 0
+            var search = NSRange(location: 0, length: min(location, string.length))
+            while true {
+                let found = string.range(of: "\n", options: .literal, range: search)
+                if found.location == NSNotFound { return count }
+                count += 1
+                search = NSRange(location: NSMaxRange(found), length: min(location, string.length) - NSMaxRange(found))
+            }
+        }
+        let first = row(at: range.location)
+        // A selection ending just after a newline doesn't reach into the next row.
+        let endsAtLineStart = string.character(at: NSMaxRange(range) - 1) == 10
+        let last = row(at: NSMaxRange(range)) - (endsAtLineStart ? 1 : 0)
+        guard first < diff.lines.count else { return [] }
+        return diff.lines[first...min(max(last, first), diff.lines.count - 1)]
     }
+
+    @objc private func selectionDidChange(_ notification: Notification) {
+        // Claude sees it too, as lines of the file as it stands, where the rows have numbers.
+        let rows = selectedRows
+        let numbers = rows.compactMap(\.newLine)
+        guard let first = numbers.first, let last = numbers.last, textView.window != nil else { return }
+        let text = rows.filter { $0.kind != .removed && $0.kind != .hunk }.map(\.text).joined(separator: "\n")
+        model.editorBridge.selectionChanged(EditorSelection(path: path, text: text, startLine: first - 1, startCharacter: 0,
+                                                            endLine: last - 1, endCharacter: rows.last?.text.utf16.count ?? 0))
+    }
+
+    func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+        if view.selectedRange().length > 0 {
+            let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteSelection), keyEquivalent: "")
+            item.target = self
+            menu.insertItem(item, at: 0)
+            menu.insertItem(.separator(), at: 1)
+        }
+        return menu
+    }
+
+    @objc private func quoteSelection() { model.addFrontToAgent() }
 
     var supportsFind: Bool { true }
 

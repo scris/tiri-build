@@ -883,6 +883,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     // MARK: Control API
 
+    var isRunning: Bool { started && !exited }
+
     var runningAgent: AgentReference.Agent? {
         var command: String?
         if case .terminal(let spec)? = model.anyItem(itemID)?.content { command = spec.command }

@@ -201,24 +201,52 @@ final class EditorBridge {
 // MARK: - Adding things to an agent
 
 extension AppModel {
-    /// The agent you've most recently been working with in this workspace.
-    func agentTerminal() -> (TerminalController, AgentReference.Agent)? {
-        var ordered: [Item] = []
-        if let last = lastAgentTerminal, let item = active.item(last) { ordered.append(item) }
-        ordered += active.items
-        for item in ordered {
-            guard case .terminal(let spec) = item.content, let terminal = existingController(for: item.id) as? TerminalController,
-                  let agent = AgentReference.agent(commandLine: terminal.foregroundCommandLine, command: spec.command) else { continue }
-            return (terminal, agent)
+    /// Every agent running in a terminal right now, in any workspace: the one you last used, then
+    /// this workspace's, then the rest.
+    func activeAgentSessions() -> [AgentSession] {
+        var sessions: [AgentSession] = []
+        for workspace in workspaces {
+            for item in workspace.items {
+                guard case .terminal(let spec) = item.content else { continue }
+                // An agent in a workspace not visited since Tiri relaunched is still running.
+                if existingController(for: item.id) == nil, TerminalSessions.isAlive(item.id) {
+                    (controller(for: item.id) as? TerminalController)?.startIfNeeded(fallbackSize: true)
+                }
+                guard let terminal = existingController(for: item.id) as? TerminalController,
+                      terminal.isRunning, let agent = AgentReference.agent(commandLine: terminal.foregroundCommandLine, command: spec.command) else { continue }
+                sessions.append(AgentSession(terminal: terminal, agent: agent, item: item, workspace: workspace))
+            }
         }
-        return nil
+        func rank(_ session: AgentSession) -> Int {
+            if session.item.id == lastAgentTerminal { return 0 }
+            return session.workspace.id == activeID ? 1 : 2
+        }
+        return sessions.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
     }
 
-    private func requireAgent() -> (TerminalController, AgentReference.Agent)? {
-        if let found = agentTerminal() { return found }
-        showToast(title: "No agent is running in this workspace", detail: "Start Claude Code or Codex from the + button, then add this again.",
-                  symbol: "sparkles", tint: .secondary)
-        return nil
+    /// With one agent running there's nothing to ask. With several, you choose.
+    private func withAgent(asking question: String, _ deliver: @escaping (TerminalController, AgentReference.Agent) -> Void) {
+        let sessions = activeAgentSessions()
+        guard let first = sessions.first else {
+            showToast(title: "No agent is running", detail: "Start Claude Code or Codex from the + button, then try again.",
+                      symbol: "sparkles", tint: .secondary)
+            return
+        }
+        guard sessions.count > 1 else {
+            deliver(first.terminal, first.agent)
+            return
+        }
+        let rows = sessions.map { session in
+            let name = session.agent == .claude ? "Claude Code" : (session.agent == .codex ? "Codex" : "Agent")
+            let status = runtimes[session.item.id]?.status.rawValue ?? "idle"
+            return PaletteModel.Row(id: session.item.id, title: name + " · " + title(for: session.item),
+                                    detail: session.workspace.name + " · " + status,
+                                    symbol: session.agent == .claude ? "sparkle" : "chevron.left.forwardslash.chevron.right") { [weak self] _ in
+                self?.closePalette(restoreFocus: false)
+                deliver(session.terminal, session.agent)
+            }
+        }
+        openPalette(.choices(title: question, rows: rows))
     }
 
     /// ⌘L: the lines you've selected, or the whole file in front.
@@ -237,7 +265,12 @@ extension AppModel {
     }
 
     private func addReference(_ reference: AgentSelection) {
-        guard let (terminal, agent) = requireAgent() else { return }
+        withAgent(asking: "Which session should get \(reference.shortDescription)?") { [weak self] terminal, agent in
+            self?.deliver(reference, to: terminal, agent: agent)
+        }
+    }
+
+    private func deliver(_ reference: AgentSelection, to terminal: TerminalController, agent: AgentReference.Agent) {
         focusAgent(terminal)
         if let quote = reference.quote {
             terminal.send(text: AgentReference.bracketedPaste(quote))
@@ -252,9 +285,12 @@ extension AppModel {
     }
 
     func addFilesToAgent(_ paths: [String]) {
-        guard !paths.isEmpty, let (terminal, agent) = requireAgent() else { return }
-        focusAgent(terminal)
-        insert(paths, into: terminal, agent: agent)
+        guard !paths.isEmpty else { return }
+        let what = paths.count == 1 ? (paths[0] as NSString).lastPathComponent : "\(paths.count) files"
+        withAgent(asking: "Which session should get \(what)?") { [weak self] terminal, agent in
+            self?.focusAgent(terminal)
+            self?.insert(paths, into: terminal, agent: agent)
+        }
     }
 
     /// Images go in as a paste, which agents take as the image. Other files become mentions.
@@ -272,6 +308,7 @@ extension AppModel {
     }
 
     private func focusAgent(_ terminal: TerminalController) {
+        lastAgentTerminal = terminal.itemID
         if active.peek != nil { dismissPeek(restoreFocus: false) }
         focusItem(terminal.itemID)
     }
@@ -328,6 +365,90 @@ struct AgentSelection {
     var path: String
     var firstLine: Int?
     var lastLine: Int?
-    /// Text from something without lines, like a PDF, goes in as a quotation.
+    /// Text that isn't simply lines of the file as it stands, like a PDF's or a diff's, goes in as a quotation.
     var quote: String?
+
+    var shortDescription: String {
+        let name = (path as NSString).lastPathComponent
+        guard let firstLine else { return quote == nil ? name : "this from \(name)" }
+        let count = (lastLine ?? firstLine) - firstLine + 1
+        return count == 1 ? "line \(firstLine + 1) of \(name)" : "\(count) lines of \(name)"
+    }
+}
+
+struct AgentSession {
+    var terminal: TerminalController
+    var agent: AgentReference.Agent
+    var item: Item
+    var workspace: Workspace
+}
+
+/// The small button that appears by what you've selected, in a file or a diff.
+final class QuoteButton: NSButton {
+    private weak var textView: NSTextView?
+    private weak var host: NSView?
+    private var observers: [NSObjectProtocol] = []
+    var onQuote: (() -> Void)?
+
+    convenience init(textView: NSTextView, scrollView: NSScrollView, host: NSView) {
+        self.init(title: "Quote in Agent ⌘L", target: nil, action: nil)
+        self.textView = textView
+        self.host = host
+        target = self
+        action = #selector(pressed)
+        // Solid, because it sits over code and has to stay readable.
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        attributedTitle = NSAttributedString(string: "Quote in Agent  ⌘L", attributes: [
+            .font: NSFont.systemFont(ofSize: 11.5, weight: .medium), .foregroundColor: NSColor.white,
+        ])
+        isHidden = true
+        sizeToFit()
+        setFrameSize(NSSize(width: frame.width + 18, height: 22))
+        toolTip = "Add this selection to your agent's input"
+        host.addSubview(self)
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        let reposition: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.update() }
+        }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main, using: reposition))
+        observers.append(center.addObserver(forName: NSTextView.didChangeSelectionNotification, object: textView, queue: .main, using: reposition))
+    }
+
+    isolated deinit {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    @objc private func pressed() { onQuote?() }
+
+    /// Just above the selection, inside the pane. Off screen with its selection, it hides.
+    func update() {
+        guard let textView, let host, let layout = textView.layoutManager, let container = textView.textContainer else { return }
+        let range = textView.selectedRange()
+        guard range.length > 0 else {
+            isHidden = true
+            return
+        }
+        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        var rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        rect.origin.y += textView.textContainerInset.height
+        rect.origin.x += textView.textContainerInset.width
+        let visible = textView.visibleRect
+        guard rect.intersects(visible) else {
+            isHidden = true
+            return
+        }
+        // At the pane's right edge, level with the start of the selection, where it covers the least.
+        let top = max(rect.minY, visible.minY)
+        let anchor = textView.convert(NSPoint(x: 0, y: top), to: host)
+        let size = frame.size
+        var y = host.isFlipped ? anchor.y : anchor.y - size.height
+        y = min(max(y, 4), max(host.bounds.height - size.height - 4, 4))
+        setFrameOrigin(NSPoint(x: max(host.bounds.width - size.width - 18, 8), y: y))
+        layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        isHidden = false
+    }
 }

@@ -226,6 +226,21 @@ import Testing
         #expect(DiffParser.parse("Binary files a/x.png and b/x.png differ\n").isBinary)
     }
 
+    @Test func aQuotedDiffKeepsItsMarks() {
+        let quote = DiffQuote.text(path: "/p/a.ts", rows: [
+            DiffLine(kind: .hunk, text: "@@ -1 +1 @@"),
+            DiffLine(kind: .context, oldLine: 1, newLine: 1, text: "same"),
+            DiffLine(kind: .removed, oldLine: 2, text: "old"),
+            DiffLine(kind: .added, newLine: 2, text: "new"),
+        ])
+        #expect(quote == "From the changes in a.ts:\n```diff\n same\n-old\n+new\n```\n")
+    }
+
+    @Test func gitThatFailsIsReportedAndDoesNotHang() {
+        #expect(Git.repositoryRoot(of: "/") == nil)
+        #expect(Git.changes(in: "/").isEmpty)
+    }
+
     @Test func aNewFileIsAllAdded() {
         let diff = FileDiff.allAdded("one\ntwo\n")
         #expect(diff.lines.map(\.newLine) == [1, 2])
