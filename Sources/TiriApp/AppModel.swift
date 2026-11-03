@@ -1020,6 +1020,25 @@ final class AppModel {
             dismissPeek()
             return
         }
+        if confirm, let controller = existingController(for: id), controller.isDirty, let window, let item = anyItem(id) {
+            let alert = NSAlert()
+            alert.messageText = "Save your changes to \(title(for: item))?"
+            alert.informativeText = "They're lost if you don't save them."
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Don't Save")
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { [weak self] response in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if response == .alertFirstButtonReturn {
+                        self.save(controller) { self.closeNow(id) }
+                    } else if response == .alertSecondButtonReturn {
+                        self.closeNow(id)
+                    }
+                }
+            }
+            return
+        }
         if confirm, let terminal = existingController(for: id) as? TerminalController,
            let name = terminal.foregroundProcessName, let window {
             let alert = NSAlert()
@@ -1457,6 +1476,57 @@ final class AppModel {
     var frontWebController: WebController? {
         if let peek = active.peek { return existingController(for: peek.id) as? WebController }
         return active.focused.active.flatMap { existingController(for: $0) as? WebController }
+    }
+
+    // MARK: Editing
+
+    /// An edit in a Peek or a preview tab is something you mean to keep.
+    func fileWasEdited(_ id: ItemID) {
+        if active.peek?.id == id {
+            promotePeek()
+        } else {
+            updateWorkspace(containing: id) { $0.pin(id) }
+        }
+    }
+
+    var firstUnsavedFileName: String? {
+        for (id, controller) in controllers where controller.isDirty {
+            if let item = anyItem(id) { return title(for: item) }
+        }
+        return nil
+    }
+
+    func saveFront() {
+        guard let item = active.peek ?? active.activeItem, let controller = existingController(for: item.id) else { return }
+        save(controller) {}
+    }
+
+    private func save(_ controller: ItemController, then done: @escaping () -> Void) {
+        switch controller.save(overwriting: false) {
+        case .saved:
+            done()
+        case .failed(let why):
+            showToast(title: "Couldn't save", detail: why, symbol: "exclamationmark.triangle", tint: .orange)
+        case .changedOnDisk:
+            guard let window else { return }
+            let alert = NSAlert()
+            alert.messageText = "This file changed on disk"
+            alert.informativeText = "Something else, perhaps an agent, changed it after you started editing. Saving replaces that with what you have here."
+            alert.addButton(withTitle: "Replace")
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { response in
+                MainActor.assumeIsolated {
+                    if response == .alertFirstButtonReturn, case .saved = controller.save(overwriting: true) { done() }
+                }
+            }
+        }
+    }
+
+    func saveAllEdits() -> Bool {
+        for controller in controllers.values where controller.isDirty {
+            guard case .saved = controller.save(overwriting: true) else { return false }
+        }
+        return true
     }
 
     // MARK: Search

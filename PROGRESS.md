@@ -35,6 +35,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Terminal:** login shell with your aliases, truecolor, full-screen TUIs, cwd tracking, presets, exit bar with Restart.
 - **Peek:** ⌘-click or `tiri open` from a terminal floats a viewer, with Open as Tab, Open to the Side, replace on next click, Esc and click-outside to close.
 - **Path links:** existing paths underline on ⌘-hover, VS Code's location formats, soft and hard wrapped paths, directories reveal, web URLs float too.
+- **Editing and highlighting:** plain-text editing with save, undo and conflict handling, and highlight.js grammars, bundled and run locally, for common languages.
 - **Sessions:** a small background server keeps each terminal's program running while Tiri is closed, and Tiri reattaches. Closing the tab ends it.
 - **Agent input:** selections reach Claude Code through its editor protocol. ⌘L, paste, drag and a picker add lines, files and images to Claude Code or Codex.
 - **Changes:** a sidebar section and diff items in the main window, live, in tabs and Peeks, with `tiri changes` and `tiri diff`. Read-only: no staging or committing.
@@ -51,7 +52,6 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 
 ## What is stubbed or thin
 
-- Syntax highlighting is a small tokenizer for comments, strings, numbers and keywords, not a real grammar.
 - Find doesn't cover images, video or Quick Look files. Web and markdown find has no match count.
 - One window per app. A second instance can't take the control socket and says so.
 - `TerminalBackend` and `FileSystemProviding` exist for SSH later, each with only a local implementation.

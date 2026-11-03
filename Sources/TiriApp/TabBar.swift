@@ -198,6 +198,11 @@ struct TabView: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .help("Close (⌘W)")
+        } else if model.existingController(for: item.id)?.isDirty == true {
+            Circle()
+                .fill(Color.primary.opacity(0.7))
+                .frame(width: 7, height: 7)
+                .help("Unsaved changes")
         } else if runtime?.unseen == true {
             // The attention dot: something happened here you haven't seen.
             Circle()

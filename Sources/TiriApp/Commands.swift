@@ -73,6 +73,7 @@ extension AppModel {
             AppCommand(id: "webDarkOff", title: "View: Force Dark Off", category: "View") { model in
                 model.setForceDark(false, item: model.active.focused.active)
             },
+            AppCommand(id: "saveFile", title: "Save", category: "File") { $0.saveFront() },
             AppCommand(id: "addToAgent", title: "Add to Agent", category: "Agent") { $0.addFrontToAgent() },
             AppCommand(id: "attachToAgent", title: "Add Files or Images to Agent…", category: "Agent") { $0.chooseFilesForAgent() },
             AppCommand(id: "searchInFiles", title: "Search in Files", category: "Go") { $0.openSearch() },
@@ -568,6 +569,8 @@ enum ControlHandler {
             return .array(model.fileTree.visibleRows().map(JSONValue.string))
 
         case "quit":
+            // Asked for from outside, nobody's there to answer "save your changes?".
+            if let name = model.firstUnsavedFileName { throw ControlFailure("\(name) has unsaved changes") }
             model.skipQuitConfirmation = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { NSApp.terminate(nil) }
             return .object([:])

@@ -6,6 +6,13 @@ import UniformTypeIdentifiers
 
 /// Anything that can sit in a tab. Terminals, file viewers and web views are all one of these.
 @MainActor
+enum SaveResult {
+    case saved
+    /// The file changed on disk since it was opened here. Saving would replace that.
+    case changedOnDisk
+    case failed(String)
+}
+
 protocol ItemController: AnyObject {
     var itemID: ItemID { get }
     var view: NSView { get }
@@ -19,6 +26,7 @@ protocol ItemController: AnyObject {
     /// What ⌘L adds to an agent, if this item has something more specific than its whole file.
     var agentReference: AgentSelection? { get }
     var isDirty: Bool { get }
+    func save(overwriting: Bool) -> SaveResult
     /// Returns false when nothing matches.
     func find(_ query: String, backwards: Bool) -> Bool
     func clearFind()
@@ -33,6 +41,7 @@ extension ItemController {
     var selectedTextForFind: String? { nil }
     var agentReference: AgentSelection? { nil }
     var isDirty: Bool { false }
+    func save(overwriting: Bool) -> SaveResult { .saved }
     func find(_ query: String, backwards: Bool) -> Bool { false }
     func clearFind() {}
 }

@@ -42,6 +42,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let name = AppModel.shared.firstUnsavedFileName {
+            let alert = NSAlert()
+            alert.messageText = "Save your changes before quitting?"
+            alert.informativeText = "\(name) has unsaved changes."
+            alert.addButton(withTitle: "Save All")
+            alert.addButton(withTitle: "Don't Save")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                if !AppModel.shared.saveAllEdits() { return .terminateCancel }
+            case .alertSecondButtonReturn:
+                break
+            default:
+                return .terminateCancel
+            }
+        }
         let working = AppModel.shared.workingTerminalCount
         guard working > 0, !AppModel.shared.skipQuitConfirmation else { return .terminateNow }
         // They'll still be running when Tiri comes back.

@@ -2,6 +2,7 @@ import AppKit
 import AVKit
 import PDFKit
 import QuickLookUI
+import JavaScriptCore
 import TiriCore
 import WebKit
 
@@ -290,6 +291,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
 
     var selectedTextForFind: String? { showingSource ? source?.selectedTextForFind : nil }
     var agentReference: AgentSelection? { showingSource ? source?.agentReference : nil }
+    var isDirty: Bool { source?.isDirty ?? false }
+    func save(overwriting: Bool) -> SaveResult { source?.save(overwriting: overwriting) ?? .saved }
 
     func find(_ query: String, backwards: Bool) -> Bool {
         if showingSource { return source?.find(query, backwards: backwards) ?? false }
@@ -323,7 +326,7 @@ enum WebFind {
 
 // MARK: - Plain text and code: read-only, monospaced
 
-final class TextController: NSObject, ItemController {
+final class TextController: NSObject, ItemController, NSTextViewDelegate {
     let itemID: ItemID
     let path: String
     unowned let model: AppModel
@@ -334,7 +337,14 @@ final class TextController: NSObject, ItemController {
     private var token: FileWatchHub.Token?
     private var pendingLocation: (Int?, Int?)
     private var loadedOnce = false
+    private var highlightWork: DispatchWorkItem?
     private var highlightGeneration = 0
+    /// What's on disk, as far as this viewer knows.
+    private var savedText = ""
+    private var diskChangedUnderEdits = false
+    private(set) var isDirty = false {
+        didSet { if isDirty != oldValue { model.controllerRevision += 1 } }
+    }
     nonisolated static let maximumBytes = 32 * 1024 * 1024
 
     var view: NSView { container }
@@ -395,9 +405,17 @@ final class TextController: NSObject, ItemController {
         NotificationCenter.default.addObserver(self, selector: #selector(selectionDidChange(_:)),
                                                name: NSTextView.didChangeSelectionNotification, object: textView)
         let text = textView
-        text.isEditable = false
+        text.isEditable = true
+        text.allowsUndo = true
+        text.delegate = self
         text.isSelectable = true
         text.isRichText = false
+        // It's code. Quotes and dashes stay what was typed.
+        text.isAutomaticQuoteSubstitutionEnabled = false
+        text.isAutomaticDashSubstitutionEnabled = false
+        text.isAutomaticTextReplacementEnabled = false
+        text.isAutomaticSpellingCorrectionEnabled = false
+        text.isContinuousSpellCheckingEnabled = false
         text.usesFindBar = false
         text.isAutomaticLinkDetectionEnabled = false
         text.textContainerInset = NSSize(width: 6, height: 8)
@@ -440,26 +458,44 @@ final class TextController: NSObject, ItemController {
         if size > 5 * 1024 * 1024 {
             // Big logs load off the main thread so opening one never stalls the app.
             Task.detached(priority: .userInitiated) { [weak self] in
-                let text = Self.read(path: path)
-                await MainActor.run { self?.display(text) }
+                let (text, editable) = Self.read(path: path)
+                await MainActor.run { self?.display(text, editable: editable) }
             }
         } else {
-            display(Self.read(path: path))
+            let (text, editable) = Self.read(path: path)
+            display(text, editable: editable)
         }
     }
 
-    nonisolated private static func read(path: String) -> String {
-        guard let handle = FileHandle(forReadingAtPath: path) else { return "" }
+    /// Saving what's shown has to give back exactly what's on disk, or it isn't editable: a file
+    /// that was cut short or isn't valid UTF-8 would be damaged.
+    nonisolated private static func read(path: String) -> (String, Bool) {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return ("", false) }
         defer { try? handle.close() }
         let data = (try? handle.read(upToCount: maximumBytes)) ?? Data()
-        var text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        let decoded = String(data: data, encoding: .utf8)
+        var text = decoded ?? String(decoding: data, as: UTF8.self)
         if data.count == maximumBytes {
             text += "\n\n… truncated at \(maximumBytes / (1024 * 1024)) MB. Open it in an external editor to see the rest."
+            return (text, false)
         }
-        return text
+        return (text, decoded != nil)
     }
 
-    private func display(_ text: String) {
+    private func display(_ text: String, editable: Bool) {
+        // Your edits come first. An agent writing the same file doesn't get to erase them.
+        if isDirty {
+            if text != savedText {
+                diskChangedUnderEdits = true
+                model.showToast(title: "\((path as NSString).lastPathComponent) changed on disk", detail: "You have unsaved changes here, so they're still showing.",
+                                symbol: "exclamationmark.triangle", tint: .orange, actionTitle: "Use Disk Version") { [weak self] in
+                    self?.discardEdits()
+                }
+            }
+            return
+        }
+        savedText = text
+        textView.isEditable = editable
         guard text != textView.string || !loadedOnce else {
             applyPendingLocation()
             return
@@ -477,6 +513,41 @@ final class TextController: NSObject, ItemController {
         loadedOnce = true
         applyPendingLocation()
         scheduleHighlight()
+    }
+
+    // MARK: Editing
+
+    func textDidChange(_ notification: Notification) {
+        isDirty = textView.string != savedText
+        if isDirty { model.fileWasEdited(itemID) }
+        ruler.invalidateLineStarts()
+        ruler.needsDisplay = true
+        highlightWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.scheduleHighlight() }
+        highlightWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    func save(overwriting: Bool) -> SaveResult {
+        guard isDirty else { return .saved }
+        let onDisk = Self.read(path: path).0
+        if !overwriting, onDisk != savedText, FileManager.default.fileExists(atPath: path) { return .changedOnDisk }
+        do {
+            try textView.string.write(toFile: path, atomically: true, encoding: .utf8)
+            savedText = textView.string
+            diskChangedUnderEdits = false
+            isDirty = false
+            return .saved
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    func discardEdits() {
+        isDirty = false
+        diskChangedUnderEdits = false
+        textView.undoManager?.removeAllActions()
+        reload()
     }
 
     private func scheduleHighlight() {
@@ -698,11 +769,14 @@ final class CodeContainer: NSView {
 /// here to make code easier to scan while reviewing, and it stays out of the way when unsure.
 nonisolated enum SyntaxHighlighter {
     enum Kind: Sendable {
-        case comment, string, number, keyword
+        case comment, string, number, keyword, function, type, attribute
 
         @MainActor var color: NSColor {
             switch self {
             case .comment: .secondaryLabelColor
+            case .function: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.51, green: 0.71, blue: 0.98, alpha: 1) : NSColor(srgbRed: 0.1, green: 0.34, blue: 0.75, alpha: 1) }
+            case .type: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.42, green: 0.82, blue: 0.82, alpha: 1) : NSColor(srgbRed: 0.03, green: 0.44, blue: 0.47, alpha: 1) }
+            case .attribute: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.93, green: 0.62, blue: 0.47, alpha: 1) : NSColor(srgbRed: 0.65, green: 0.27, blue: 0.07, alpha: 1) }
             case .string: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.45, green: 0.83, blue: 0.56, alpha: 1) : NSColor(srgbRed: 0.09, green: 0.48, blue: 0.2, alpha: 1) }
             case .number: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.9, green: 0.75, blue: 0.48, alpha: 1) : NSColor(srgbRed: 0.6, green: 0.4, blue: 0, alpha: 1) }
             case .keyword: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.78, green: 0.57, blue: 0.92, alpha: 1) : NSColor(srgbRed: 0.53, green: 0.2, blue: 0.68, alpha: 1) }
@@ -721,7 +795,13 @@ nonisolated enum SyntaxHighlighter {
     if else for while do switch case default break continue return func function def class struct enum protocol interface extension import from export package module public private protected internal static final const let var val fn impl trait type try catch throw throws finally async await new this self super nil null none true false True False None in is as guard defer where match with yield lambda and or not pub mut use mod
     """.split(whereSeparator: \.isWhitespace).map(String.init))
 
+    /// A real grammar when there is one, and the small tokenizer below when there isn't.
     static func spans(text: String, language: String?) -> [Span] {
+        if let language, let found = CodeGrammar.shared.spans(text: text, language: language) { return found }
+        return tokenSpans(text: text, language: language)
+    }
+
+    private static func tokenSpans(text: String, language: String?) -> [Span] {
         let language = language ?? ""
         let hash = hashComments.contains(language)
         let slash = slashComments.contains(language)
@@ -783,6 +863,61 @@ nonisolated enum SyntaxHighlighter {
             }
         }
         return spans
+    }
+}
+
+/// highlight.js, run in JavaScriptCore on its own thread. Bundled with the app, nothing fetched.
+nonisolated final class CodeGrammar: @unchecked Sendable {
+    static let shared = CodeGrammar()
+    private let queue = DispatchQueue(label: "tiri.grammar", qos: .utility)
+    private var context: JSContext?
+    private var known = Set<String>()
+    private var loaded = false
+
+    /// Beyond this, a real grammar isn't worth the wait on a file you're scrolling.
+    private static let maximumLength = 300_000
+
+    private func load() {
+        guard !loaded else { return }
+        loaded = true
+        guard let url = Bundle.main.url(forResource: "highlight.min", withExtension: "js"),
+              let source = try? String(contentsOf: url, encoding: .utf8), let context = JSContext() else { return }
+        context.evaluateScript(source)
+        context.evaluateScript("var hl = globalThis.hljs || hljs; function tiriHighlight(t, l) { return hl.highlight(t, { language: l, ignoreIllegals: true }).value; }")
+        self.context = context
+    }
+
+    func spans(text: String, language: String) -> [SyntaxHighlighter.Span]? {
+        guard text.utf16.count <= Self.maximumLength else { return nil }
+        return queue.sync {
+            load()
+            guard let context, context.evaluateScript("!!hl.getLanguage(\(Self.quote(language)))")?.toBool() == true,
+                  let html = context.objectForKeyedSubscript("tiriHighlight")?.call(withArguments: [text, language])?.toString() else { return nil }
+            return HighlightMarkup.parse(html).compactMap { run in
+                Self.kind(for: run.scope).map { SyntaxHighlighter.Span(range: run.range, kind: $0) }
+            }
+        }
+    }
+
+    private static func quote(_ text: String) -> String {
+        "\"" + text.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "+" || $0 == "#" } + "\""
+    }
+
+    private static func kind(for scope: String) -> SyntaxHighlighter.Kind? {
+        let parts = scope.split(separator: " ").map { $0.replacingOccurrences(of: "hljs-", with: "") }
+        guard let first = parts.first else { return nil }
+        switch first {
+        case "comment", "quote", "doctag": return .comment
+        case "string", "regexp", "addition", "symbol", "bullet", "code": return .string
+        case "number", "literal": return .number
+        case "keyword", "selector-tag", "meta-keyword", "operator" where first != "operator": return .keyword
+        case "title":
+            return parts.contains("class_") ? .type : .function
+        case "function", "section", "selector-id", "selector-class", "name": return .function
+        case "type", "built_in", "class": return .type
+        case "attr", "attribute", "property", "params", "variable", "template-variable", "meta", "tag": return .attribute
+        default: return nil
+        }
     }
 }
 

@@ -353,6 +353,7 @@ public enum Keymap {
             ("cmd+shift+]", "nextTab"),
             ("cmd+shift+[", "previousTab"),
             ("cmd+f", "find"),
+            ("cmd+s", "saveFile"),
             ("cmd+l", "addToAgent"),
             ("cmd+shift+l", "attachToAgent"),
             ("cmd+shift+f", "searchInFiles"),

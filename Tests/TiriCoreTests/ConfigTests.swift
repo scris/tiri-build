@@ -109,6 +109,25 @@ import Testing
     }
 }
 
+@Suite struct HighlightMarkupTests {
+    @Test func spansAreLocatedInTheOriginalText() {
+        let runs = HighlightMarkup.parse(#"<span class="hljs-keyword">let</span> x = <span class="hljs-string">&quot;a&quot;</span>"#)
+        #expect(runs == [.init(range: NSRange(location: 0, length: 3), scope: "hljs-keyword"),
+                         .init(range: NSRange(location: 8, length: 3), scope: "hljs-string")])
+    }
+
+    @Test func nestedSpansKeepTheirOwnScope() {
+        let runs = HighlightMarkup.parse(#"<span class="hljs-string">a<span class="hljs-subst">b</span>c</span>"#)
+        #expect(runs.map(\.scope) == ["hljs-string", "hljs-subst", "hljs-string"])
+        #expect(runs.map(\.range.location) == [0, 1, 2])
+    }
+
+    @Test func wideCharactersCountAsTheyDoInNSString() {
+        let runs = HighlightMarkup.parse(#"😀<span class="hljs-number">1</span>"#)
+        #expect(runs.first?.range.location == 2)
+    }
+}
+
 @Suite struct ContentSearchTests {
     func find(_ text: String, _ query: String) -> [ContentMatch] {
         ContentSearch.matches(in: Data(text.utf8), path: "/a.txt", query: query)
