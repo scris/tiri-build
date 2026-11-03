@@ -97,6 +97,10 @@ case "commands":
     }
 case "ping":
     print("pong")
+case "search":
+    for entry in response.result?.arrayValue ?? [] {
+        print("\(cell(entry["path"])):\(entry["line"]?.intValue ?? 0): \(cell(entry["text"]))")
+    }
 case "changes":
     for entry in response.result?.arrayValue ?? [] {
         print([cell(entry["status"]), cell(entry["path"])].joined(separator: "\t"))

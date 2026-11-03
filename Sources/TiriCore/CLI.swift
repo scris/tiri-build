@@ -86,6 +86,10 @@ public enum CLIParser {
             if let item = environment.itemID { payload["source"] = .string(item) }
             return request("open", payload)
 
+        case "search":
+            guard !args.isEmpty else { throw UsageError("usage: tiri search <text>") }
+            return request("search", ["query": .string(args.joined(separator: " "))])
+
         case "changes":
             guard args.isEmpty else { throw UsageError("usage: tiri changes") }
             return request("changes")
@@ -327,6 +331,7 @@ public enum CLIParser {
       tiri hooks claude|codex   (prints the hooks config)
       tiri theme light|dark|system
       tiri web-dark on|off [<item-id>]
+      tiri search <text>           (across the workspace's files, as ⌘⇧F does)
       tiri changes                 (files changed since the last commit)
       tiri diff <path> [--tab]     (what changed in one file; floats as a Peek)
       tiri follow <item-id> <row> <col>

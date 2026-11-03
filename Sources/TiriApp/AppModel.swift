@@ -105,6 +105,7 @@ final class AppModel {
     @ObservationIgnored let fileIndex = FileIndexStore()
     @ObservationIgnored let terminalFolderIndex = FileIndexStore()
     var changes: [ChangedFile] = []
+    @ObservationIgnored var lastSearchQuery = ""
     @ObservationIgnored private var changesTokens: [FileWatchHub.Token] = []
     @ObservationIgnored private var changesWork: DispatchWorkItem?
     @ObservationIgnored private var changesInFlight = false
@@ -1443,6 +1444,34 @@ final class AppModel {
     var frontWebController: WebController? {
         if let peek = active.peek { return existingController(for: peek.id) as? WebController }
         return active.focused.active.flatMap { existingController(for: $0) as? WebController }
+    }
+
+    // MARK: Search
+
+    /// The files worth searching: what git counts as the project, which leaves out what
+    /// .gitignore does, or else everything the explorer shows.
+    func searchablePaths() async -> [String] {
+        let folders = active.folders
+        let excludes = ExcludeMatcher(patterns: settings.filesExclude)
+        let openFiles = active.items.compactMap(\.filePath)
+        return await Task.detached(priority: .userInitiated) {
+            var seen = Set<String>()
+            var result: [String] = []
+            for folder in folders {
+                let files = Git.projectFiles(in: folder)?.filter { path in
+                    !path.dropFirst(folder.count + 1).split(separator: "/").contains { excludes.excludes(name: String($0)) }
+                } ?? FileIndexer.walk(roots: [folder], excludes: excludes).map(\.path)
+                for path in files where seen.insert(path).inserted { result.append(path) }
+            }
+            for path in openFiles where seen.insert(path).inserted { result.append(path) }
+            return result
+        }.value
+    }
+
+    /// Picks up what's selected, or where the last search left off.
+    func openSearch() {
+        let selected = (active.peek ?? active.activeItem).flatMap { existingController(for: $0.id)?.selectedTextForFind }
+        palette = PaletteModel(mode: .search, model: self, initialQuery: selected ?? lastSearchQuery)
     }
 
     // MARK: Changes

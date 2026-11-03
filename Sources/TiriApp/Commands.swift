@@ -73,6 +73,7 @@ extension AppModel {
             AppCommand(id: "webDarkOff", title: "View: Force Dark Off", category: "View") { model in
                 model.setForceDark(false, item: model.active.focused.active)
             },
+            AppCommand(id: "searchInFiles", title: "Search in Files", category: "Go") { $0.openSearch() },
             AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 model.frontWebController?.reload()
@@ -143,6 +144,17 @@ enum ControlHandler {
     static func handle(_ request: ControlRequest) async -> ControlResponse {
         let touched = paths(in: request)
         if !touched.isEmpty { _ = await FolderAccess.deniedPaths(touched) }
+        // These read a lot of files. The app keeps responding while they do.
+        if request.cmd == "search", let query = request.args["query"]?.stringValue {
+            let paths = await AppModel.shared.searchablePaths()
+            let collector = SearchCollector()
+            await Task.detached(priority: .userInitiated) {
+                ContentSearch.run(paths: paths, query: query, cancellation: ContentSearch.Cancellation()) { collector.add($0) }
+            }.value
+            return ControlResponse.success(id: request.id, .array(collector.sorted().map { match in
+                .object(["path": .string(match.path), "line": .int(match.line), "text": .string(match.text)])
+            }))
+        }
         return await MainActor.run {
             do {
                 let result = try perform(request, model: AppModel.shared)

@@ -2,6 +2,55 @@ import Foundation
 import Testing
 @testable import TiriCore
 
+@Suite struct ContentSearchTests {
+    func find(_ text: String, _ query: String) -> [ContentMatch] {
+        ContentSearch.matches(in: Data(text.utf8), path: "/a.txt", query: query)
+    }
+
+    @Test func lineAndColumnAreRight() {
+        let found = find("one\n  two three\nfour", "three")
+        #expect(found.count == 1)
+        #expect(found[0].line == 2 && found[0].column == 7)
+        #expect(found[0].text == "two three")
+        #expect(found[0].matchOffset == 4 && found[0].matchLength == 5)
+    }
+
+    @Test func lowercaseIgnoresCaseAndACapitalMeansIt() {
+        #expect(find("Hello\nhello\nHELLO", "hello").count == 3)
+        #expect(find("Hello\nhello\nHELLO", "Hello").count == 1)
+    }
+
+    @Test func oneResultPerLine() {
+        #expect(find("aa aa aa\nbb", "aa").count == 1)
+    }
+
+    @Test func nonAsciiWorks() {
+        let found = find("第一行\n这里有用户行为分析\n", "用户")
+        #expect(found.first?.line == 2)
+        #expect(found.first?.text == "这里有用户行为分析")
+        #expect(found.first?.column == 4)
+    }
+
+    @Test func binaryFilesHaveNoMatches() {
+        var data = Data("needle".utf8)
+        data.append(0)
+        #expect(ContentSearch.matches(in: data, path: "/a", query: "needle").isEmpty)
+    }
+
+    @Test func aMatchAtTheVeryEndIsFound() {
+        #expect(find("abc", "abc").count == 1)
+        #expect(find("x\nabc", "abc").first?.line == 2)
+    }
+
+    @Test func longLinesStayReadableAroundTheMatch() {
+        let line = String(repeating: "x", count: 5000) + "needle" + String(repeating: "y", count: 5000)
+        let found = find(line, "needle")
+        #expect(found[0].text.utf8.count <= 220)
+        let text = Array(found[0].text.utf8)
+        #expect(String(decoding: text[found[0].matchOffset..<(found[0].matchOffset + 6)], as: UTF8.self) == "needle")
+    }
+}
+
 @Suite struct GitChangesTests {
     @Test func statusCoversEveryKind() {
         let output = " M a.swift\0A  new.swift\0 D gone.swift\0?? fresh/x.md\0R  to.swift\0from.swift\0UU clash.swift\0"

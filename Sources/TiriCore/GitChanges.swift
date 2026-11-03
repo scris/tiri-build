@@ -153,6 +153,10 @@ public enum DiffParser {
 
 /// Runs git, read-only, for the changes view.
 public enum Git {
+    static func runGit(_ arguments: [String], in directory: String) -> (status: Int32, output: Data)? {
+        run(arguments, in: directory)
+    }
+
     private static func run(_ arguments: [String], in directory: String) -> (status: Int32, output: Data)? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")

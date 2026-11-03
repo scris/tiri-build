@@ -172,6 +172,10 @@ expect "floating diff is a peek" "(peek)" "$CLI" items
 PEEK_DIFF=$("$CLI" items | grep '(peek)' | cut -f1)
 check "close the floating diff" "$CLI" close "$PEEK_DIFF"
 
+expect "search finds text in files" "report.md:1" "$CLI" search Report
+expect "search reaches into folders" "app.py:1" "$CLI" search 'print("hi")'
+check "search with no match succeeds" "$CLI" search nothing-has-this-text
+
 expect "keys lists commands" "toggleSidebar" "$CLI" keys
 expect "keys set takes effect" "⌘J" "$CLI" keys set toggleSidebar cmd+j
 expect "commands show the new key" "⌘J" bash -c "'$CLI' keys | grep toggleSidebar"

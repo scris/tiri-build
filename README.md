@@ -20,6 +20,10 @@ macOS asks for permission the first time Tiri opens something in Documents, Desk
 TIRI_SIGN_IDENTITY="Apple Development: you@example.com (ABCDE12345)" ./build.sh
 ```
 
+## Search across files
+
+⌘⇧F searches the contents of the workspace's files and leaves out what `.gitignore` does. Results appear as you type, and lowercase ignores case. Return floats the file over what you're doing, at that line, and ⌘↩ keeps it as a tab. It starts from what you've selected, or your last search.
+
 ## See what changed
 
 When a workspace folder is in a Git repository, the sidebar has a **Changes** section listing every file changed since the last commit, live as your agents work. Click one to see its diff as a tab, or double-click to keep it. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. They work the same in a Peek. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.

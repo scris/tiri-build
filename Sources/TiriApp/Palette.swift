@@ -11,6 +11,7 @@ final class PaletteModel {
         case commands
         case prompt(title: String, commit: (String) -> Void)
         case choices(title: String, rows: [Row])
+        case search
     }
 
     struct Row: Identifiable {
@@ -50,6 +51,7 @@ final class PaletteModel {
         case .files: "Search files by name. Add :line to jump, or > for commands."
         case .commands: "Type a command"
         case .prompt(let title, _), .choices(let title, _): title
+        case .search: "Search in files"
         }
     }
 
@@ -65,6 +67,71 @@ final class PaletteModel {
         case .commands: refreshCommands()
         case .prompt: rows = []
         case .choices(_, let all): refreshChoices(all)
+        case .search: refreshSearch()
+        }
+    }
+
+    // MARK: Search
+
+    private var searchCancellation: ContentSearch.Cancellation?
+    var searchFoundNothing = false
+
+    private func refreshSearch() {
+        searchCancellation?.cancel()
+        searchFoundNothing = false
+        let text = query
+        model.lastSearchQuery = text
+        guard text.trimmingCharacters(in: .whitespaces).count >= 2 else {
+            rows = []
+            isIndexing = false
+            return
+        }
+        let cancellation = ContentSearch.Cancellation()
+        searchCancellation = cancellation
+        isIndexing = true
+        searchTask = Task { [weak self] in
+            // A pause for typing, so each letter doesn't set off a search of the whole project.
+            try? await Task.sleep(for: .milliseconds(120))
+            guard let self, !Task.isCancelled, !cancellation.isCancelled else { return }
+            let paths = await self.model.searchablePaths()
+            guard !Task.isCancelled, !cancellation.isCancelled else { return }
+            let collector = SearchCollector()
+            Task.detached(priority: .userInitiated) {
+                ContentSearch.run(paths: paths, query: text, cancellation: cancellation) { batch in
+                    collector.add(batch)
+                }
+                collector.finish()
+            }
+            // Results show as they arrive. Waiting for the whole search would feel slow on big projects.
+            while !Task.isCancelled, !collector.isFinished {
+                try? await Task.sleep(for: .milliseconds(60))
+                self.showSearchResults(collector.sorted(), final: false)
+            }
+            guard !Task.isCancelled else { return }
+            self.showSearchResults(collector.sorted(), final: true)
+        }
+    }
+
+    private func showSearchResults(_ matches: [ContentMatch], final: Bool) {
+        guard rows.count != matches.count || final else { return }
+        let previous = rows.indices.contains(selection) ? rows[selection].id : nil
+        rows = matches.map { match in
+            let relative = model.active.folder(containing: match.path) != nil ? model.active.relativePath(match.path)
+                : (match.path as NSString).abbreviatingWithTildeInPath
+            let name = (match.path as NSString).lastPathComponent
+            return Row(id: match.id, title: match.text,
+                       positions: Array(match.matchOffset..<(match.matchOffset + match.matchLength)),
+                       detail: "\(relative):\(match.line)",
+                       symbol: FileIcons.symbolName(forName: name, isDirectory: false)) { [model] alternate in
+                model.closePalette(restoreFocus: false)
+                model.open(path: match.path, line: match.line, intent: alternate ? .pinned : .peek(takeFocus: true))
+                model.requestFocus()
+            }
+        }
+        selection = previous.flatMap { id in rows.firstIndex { $0.id == id } } ?? 0
+        if final {
+            isIndexing = false
+            searchFoundNothing = rows.isEmpty
         }
     }
 
@@ -210,6 +277,23 @@ final class PaletteModel {
     }
 }
 
+/// Collects a search's matches as they come in from many threads.
+nonisolated final class SearchCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var matches: [ContentMatch] = []
+    private var finished = false
+
+    func finish() { lock.withLock { finished = true } }
+    var isFinished: Bool { lock.withLock { finished } }
+
+    func add(_ batch: [ContentMatch]) { lock.withLock { matches.append(contentsOf: batch) } }
+    var count: Int { lock.withLock { matches.count } }
+
+    func sorted() -> [ContentMatch] {
+        lock.withLock { matches }.sorted { ($0.path, $0.line) < ($1.path, $1.line) }
+    }
+}
+
 struct PaletteView: View {
     @Bindable var palette: PaletteModel
     @Environment(AppModel.self) private var model
@@ -241,6 +325,14 @@ struct PaletteView: View {
             }
             .padding(.horizontal, 14)
             .frame(height: 42)
+
+            if palette.searchFoundNothing {
+                Divider()
+                Text("Nothing in this workspace matches.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 12)
+            }
 
             if !palette.rows.isEmpty {
                 Divider()
