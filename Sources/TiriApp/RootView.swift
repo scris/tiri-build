@@ -275,7 +275,11 @@ struct ItemContentView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            ItemHost(itemID: item.id, group: group)
+            if model.detachedItems.contains(item.id) {
+                DetachedPlaceholder(itemID: item.id)
+            } else {
+                ItemHost(itemID: item.id, group: group)
+            }
             if let find = model.find, find.targetItem == item.id {
                 FindBar()
                     .padding(.top, 8)
@@ -290,6 +294,8 @@ struct ItemContentView: View {
 struct ItemHost: NSViewRepresentable {
     let itemID: ItemID
     var group: GroupID?
+    /// In its own window, not in a tab or a Peek.
+    var isDetached = false
     @Environment(AppModel.self) private var model
 
     final class Host: NSView {
@@ -350,7 +356,8 @@ struct ItemHost: NSViewRepresentable {
         if let group { model.groupHosts[group] = AppModel.WeakView(view: host) }
         // A view on its way out (a Peek fading after being promoted, a tab that just moved) still
         // gets updated. It must not pull the viewer back from where the item lives now.
-        let owns = { [model, group, itemID] () -> Bool in
+        let owns = { [model, group, itemID, isDetached] () -> Bool in
+            if model.detachedItems.contains(itemID) { return isDetached }
             if let group { return model.active.group(id: group)?.active == itemID }
             return model.active.peek?.id == itemID
         }
@@ -426,6 +433,60 @@ struct EmptyGroupView: View {
             .buttonStyle(.glassProminent)
             .controlSize(.large)
         }
+    }
+}
+
+// MARK: - An item in its own window
+
+final class DetachedWindowDelegate: NSObject, NSWindowDelegate {
+    private let item: ItemID
+    private unowned let model: AppModel
+
+    init(item: ItemID, model: AppModel) {
+        self.item = item
+        self.model = model
+    }
+
+    /// Closing the window doesn't close the item. It goes back to its tab.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        model.bringBack(item)
+        return false
+    }
+}
+
+struct DetachedItemView: View {
+    let itemID: ItemID
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if let item = model.anyItem(itemID) {
+                ItemHeader(item: item)
+            }
+            ItemHost(itemID: itemID, group: nil, isDetached: true)
+                .background(Color(nsColor: TerminalTheme.background(dark: model.effectiveDark)))
+        }
+        .frame(minWidth: 420, minHeight: 280)
+    }
+}
+
+struct DetachedPlaceholder: View {
+    let itemID: ItemID
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "macwindow.on.rectangle")
+                .font(.system(size: 30))
+                .foregroundStyle(.tertiary)
+            Text("Showing in its own window")
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Show Window") { model.showDetachedWindow(itemID) }
+                Button("Bring Back") { model.bringBack(itemID) }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

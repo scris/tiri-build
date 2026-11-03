@@ -231,6 +231,11 @@ struct TabContextMenu: View {
         if item.isPreview {
             Button("Keep Open") { model.updateActive { $0.pin(item.id) } }
         }
+        if model.detachedItems.contains(item.id) {
+            Button("Bring Back to This Window") { model.bringBack(item.id) }
+        } else {
+            Button("Move to New Window") { model.moveToNewWindow(item.id) }
+        }
         Button("Split Right") {
             model.focusItem(item.id)
             model.splitActive(.right)

@@ -19,10 +19,12 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | What | Why | How to check |
 |---|---|---|
 | The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
+| By hand, with the keyboard and mouse in a focused window | Tested on a virtual display without taking your screen, so these never had a real press: Shift+Enter and Option+Enter in Claude Code, ⌘V with a picture or a copied file, drag and drop, the paperclip's picker, ⌘-clicking a path | Try each one once |
+| Sessions over days, and across a reboot | Quit and relaunch are tested on a real Claude session. A long run isn't | Use it |
 | Your own Install click for hooks | The installer ran through its real yes against an isolated config, and a real Claude session ran with the hooks passed for that session only. Status and session ID both arrived. Your real config waits for your click, because it's yours and a safety hook rightly stops an agent editing it | Settings, Agent Status, Install |
 | Resume by session ID on a real session | Depends on the hooks above. `claude --continue` is verified on a real session | Same as above, then relaunch |
 | Clicking a native notification | Needs the system permission prompt answered. In-app toasts and badges are verified | Allow notifications, then run `tiri notify done --item <id>` in a terminal in another workspace |
-| Codex session and hooks | Only its first screens were opened. Payload handling is tested with documented-format JSON | Add the output of `tiri hooks codex` and run a session |
+| Codex hooks, and a Codex turn | Its composer is tested with lines and an image, unsent. Hook payloads are tested with documented-format JSON | Settings, Agent Status, then run a session |
 | Seeing the folder panel, and a real ⌘-click on a path | Tested without taking your screen: the panel through accessibility, and the click through `tiri follow`, which runs the same code. An unfocused window doesn't draw the panel or take clicks | Open Tiri, press +, choose Claude Code; then ⌘-click a path |
 | Ask Claude Code against the real agent | Tested with a stand-in command, to avoid a real session on your account | Press Ask Claude Code on the Settings tab |
 | Reduce Transparency, Increase Contrast | Left to the system's glass, as the spec asks, but not exercised | Turn them on in Accessibility settings |
@@ -53,7 +55,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 ## What is stubbed or thin
 
 - Find doesn't cover images, video or Quick Look files. Web and markdown find has no match count.
-- One window per app. A second instance can't take the control socket and says so.
+- One main window. Any tab can move to its own window, but a second window can't hold its own workspace. A second instance can't take the control socket and says so.
 - `TerminalBackend` and `FileSystemProviding` exist for SSH later, each with only a local implementation.
 
 ## Performance (spec §9)
@@ -100,7 +102,8 @@ Open times run from the request until the content is showing, except for Office 
 
 ## Next 5 tasks
 
-1. Finish the "not verified" table above, starting with real `~/Documents` folders and real hooks.
+1. A real workday with several agents, because nothing here has had one, and fixing what it finds.
+2. Patch SwiftTerm so a labelled hyperlink with no scheme can't show "Link blocked", and read link targets directly.
 3. Compact folders in the explorer, and multi-line link context.
-4. Real syntax highlighting, then read-only diff view (the start of the later Git changes work).
+4. Staging and committing from the changes view, if reviewing there makes it wanted.
 5. An MCP wrapper around the control API, now that the CLI is stable.

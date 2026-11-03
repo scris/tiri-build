@@ -107,6 +107,9 @@ final class AppModel {
     @ObservationIgnored lazy var editorBridge = EditorBridge(model: self)
     @ObservationIgnored var lastAgentTerminal: ItemID?
     var changes: [ChangedFile] = []
+    var detachedItems: Set<ItemID> = []
+    @ObservationIgnored private var detachedWindows: [ItemID: NSWindow] = [:]
+    @ObservationIgnored private var detachedDelegates: [ItemID: DetachedWindowDelegate] = [:]
     @ObservationIgnored var lastSearchQuery = ""
     @ObservationIgnored private var changesTokens: [FileWatchHub.Token] = []
     @ObservationIgnored private var changesWork: DispatchWorkItem?
@@ -342,6 +345,7 @@ final class AppModel {
             if let peek = workspace.peek { live.insert(peek.id) }
         }
         for (id, controller) in controllers where !live.contains(id) {
+            bringBack(id)
             (controller as? TerminalController)?.endSession()
             controller.teardown()
             controllers[id] = nil
@@ -448,7 +452,8 @@ final class AppModel {
                 self.controller(for: peek.id)?.focus()
                 return
             }
-            if let id = self.active.focused.active {
+            // Something in its own window doesn't take the keyboard from over there.
+            if let id = self.active.focused.active, !self.detachedItems.contains(id) {
                 self.controller(for: id)?.focus()
             }
         }
@@ -1478,6 +1483,51 @@ final class AppModel {
         return active.focused.active.flatMap { existingController(for: $0) as? WebController }
     }
 
+    // MARK: Separate windows
+
+    /// Puts a tab in its own window, for another display. Its tab stays, saying where it went.
+    func moveToNewWindow(_ id: ItemID) {
+        guard detachedWindows[id] == nil, let item = anyItem(id), active.peek?.id != id else { return }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 680),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.title = title(for: item)
+        window.tabbingMode = .disallowed
+        let delegate = DetachedWindowDelegate(item: id, model: self)
+        detachedDelegates[id] = delegate
+        window.delegate = delegate
+        detachedItems.insert(id)
+        detachedWindows[id] = window
+        window.contentView = NSHostingView(rootView: DetachedItemView(itemID: id).environment(self))
+        if let main = self.window {
+            window.setFrameOrigin(NSPoint(x: main.frame.minX + 60, y: main.frame.maxY - window.frame.height - 60))
+        }
+        window.makeKeyAndOrderFront(nil)
+        controller(for: id)?.focus()
+    }
+
+    /// Back to its tab, in the main window.
+    func bringBack(_ id: ItemID) {
+        guard let window = detachedWindows.removeValue(forKey: id) else { return }
+        detachedItems.remove(id)
+        window.delegate = nil
+        detachedDelegates[id] = nil
+        window.close()
+        window.contentView = nil
+        if active.item(id) != nil {
+            self.window?.makeKeyAndOrderFront(nil)
+            focusItem(id)
+        }
+    }
+
+    func showDetachedWindow(_ id: ItemID) {
+        detachedWindows[id]?.makeKeyAndOrderFront(nil)
+    }
+
+    func detachedItem(of window: NSWindow) -> ItemID? {
+        detachedWindows.first { $0.value === window }?.key
+    }
+
     // MARK: Editing
 
     /// An edit in a Peek or a preview tab is something you mean to keep.
@@ -1494,6 +1544,10 @@ final class AppModel {
             if let item = anyItem(id) { return title(for: item) }
         }
         return nil
+    }
+
+    func saveItem(_ id: ItemID) {
+        if let controller = existingController(for: id) { save(controller) {} }
     }
 
     func saveFront() {

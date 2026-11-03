@@ -73,6 +73,12 @@ extension AppModel {
             AppCommand(id: "webDarkOff", title: "View: Force Dark Off", category: "View") { model in
                 model.setForceDark(false, item: model.active.focused.active)
             },
+            AppCommand(id: "moveToNewWindow", title: "Move to New Window", category: "View") { model in
+                if let id = model.active.focused.active { model.moveToNewWindow(id) }
+            },
+            AppCommand(id: "bringBackFromWindow", title: "Bring Back from Its Window", category: "View") { model in
+                if let id = model.active.focused.active { model.bringBack(id) }
+            },
             AppCommand(id: "saveFile", title: "Save", category: "File") { $0.saveFront() },
             AppCommand(id: "addToAgent", title: "Add to Agent", category: "Agent") { $0.addFrontToAgent() },
             AppCommand(id: "attachToAgent", title: "Add Files or Images to Agent…", category: "Agent") { $0.chooseFilesForAgent() },

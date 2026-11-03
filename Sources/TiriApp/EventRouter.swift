@@ -63,6 +63,21 @@ final class EventRouter {
             if let stroke = Self.stroke(from: event) { model.recordKey(stroke) }
             return nil
         }
+        // A tab in its own window keeps its keyboard. Only closing and saving mean something different there.
+        if let model, let window = event.window, let item = model.detachedItem(of: window), let stroke = Self.stroke(from: event) {
+            if stroke.modifiers == .command, stroke.key == "w" {
+                model.bringBack(item)
+                return nil
+            }
+            if stroke.modifiers == .command, stroke.key == "s" {
+                model.saveItem(item)
+                return nil
+            }
+            if let terminal = window.firstResponder as? TiriTerminalView {
+                terminal.owner?.noteKeyPress(isReturn: stroke.key == "enter")
+            }
+            return event
+        }
         guard let model, event.window === model.window, NSApp.modalWindow == nil, event.window?.attachedSheet == nil,
               let stroke = Self.stroke(from: event) else { return event }
         // With a web view focused, WebKit sends one key press through the app several times.

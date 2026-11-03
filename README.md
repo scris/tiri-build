@@ -39,6 +39,10 @@ To add files and images, use whichever is closest:
 
 In a plain shell, these insert quoted paths instead.
 
+## Another window
+
+Right-click a tab and choose **Move to New Window** to put a terminal, file or page on your other display. Its tab stays and says where it went, and closing the window brings it back. Each window shows one item: there's still one set of workspaces, in the main window.
+
 ## Quick edits
 
 Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes the file while you're editing, your text stays on screen and Tiri tells you, so nothing is overwritten without you choosing. Editing a Peek makes it a tab. This is for quick fixes, and it's still not a full editor: there's no autocomplete or language server.
