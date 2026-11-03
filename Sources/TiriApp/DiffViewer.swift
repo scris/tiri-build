@@ -120,6 +120,21 @@ final class DiffController: NSObject, ItemController {
     func focus() { textView.window?.makeFirstResponder(textView) }
     func teardown() { token = nil }
 
+    /// The selected rows, by their line numbers in the file as it is now.
+    var agentReference: AgentSelection? {
+        let string = textView.string as NSString
+        let range = textView.selectedRange()
+        guard range.length > 0 else { return AgentSelection(path: path) }
+        var first = 0
+        string.enumerateSubstrings(in: NSRange(location: 0, length: range.location), options: [.byLines, .substringNotRequired]) { _, _, _, _ in first += 1 }
+        if range.location > 0, string.character(at: range.location - 1) != 10 { first = max(first - 1, 0) }
+        var count = 0
+        string.enumerateSubstrings(in: range, options: [.byLines, .substringNotRequired]) { _, _, _, _ in count += 1 }
+        let rows = diff.lines[min(first, diff.lines.count)..<min(first + max(count, 1), diff.lines.count)]
+        let numbers = rows.compactMap(\.newLine)
+        return AgentSelection(path: path, firstLine: numbers.first.map { $0 - 1 }, lastLine: numbers.last.map { $0 - 1 })
+    }
+
     var supportsFind: Bool { true }
 
     func find(_ query: String, backwards: Bool) -> Bool {
@@ -350,6 +365,7 @@ struct ChangeRow: View {
             if change.status != .deleted {
                 Button("Open File") { model.open(path: change.path, intent: .pinned); model.requestFocus() }
             }
+            Button("Add to Agent") { model.addFilesToAgent([change.path]) }
             Divider()
             Button("Copy Path") { Clipboard.copy(change.path) }
         }

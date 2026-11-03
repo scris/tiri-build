@@ -104,6 +104,8 @@ final class AppModel {
     @ObservationIgnored let settingsStore = SettingsStore()
     @ObservationIgnored let fileIndex = FileIndexStore()
     @ObservationIgnored let terminalFolderIndex = FileIndexStore()
+    @ObservationIgnored lazy var editorBridge = EditorBridge(model: self)
+    @ObservationIgnored var lastAgentTerminal: ItemID?
     var changes: [ChangedFile] = []
     @ObservationIgnored var lastSearchQuery = ""
     @ObservationIgnored private var changesTokens: [FileWatchHub.Token] = []
@@ -169,6 +171,7 @@ final class AppModel {
     func finishLaunching() {
         guard !didFinishLaunching else { return }
         didFinishLaunching = true
+        editorBridge.start()
         router.install(model: self)
         applyTheme()
         observeSystemAppearance()
@@ -246,6 +249,7 @@ final class AppModel {
     func prepareForTermination() {
         saveWork?.cancel()
         saveNow()
+        editorBridge.stop()
         for controller in controllers.values { controller.teardown() }
         server?.stop()
     }
@@ -1146,6 +1150,7 @@ final class AppModel {
         if !folders.isEmpty { workspace.addInitialTerminal(fallbackCwd: NSHomeDirectory()) }
         workspaces.append(workspace)
         switchWorkspace(workspace.id)
+        editorBridge.writeLock()
         return workspace
     }
 
@@ -1231,6 +1236,7 @@ final class AppModel {
     }
 
     private func foldersChanged() {
+        editorBridge.writeLock()
         syncWatchRoots()
         enterActiveWorkspace()
     }
@@ -1424,8 +1430,9 @@ final class AppModel {
         let running = active.items.first { item in
             guard case .terminal(let spec) = item.content else { return false }
             let controller = existingController(for: item.id) as? TerminalController
-            if let name = controller?.foregroundProcessName, name.localizedCaseInsensitiveContains(tool) { return true }
-            return spec.command?.hasPrefix(tool) == true
+            let running = AgentReference.agent(commandLine: controller?.foregroundCommandLine ?? [], command: spec.command)
+            let wanted = AgentReference.agent(commandLine: [], command: tool)
+            return running != nil && running == wanted
         }
         if let running, let terminal = existingController(for: running.id) as? TerminalController {
             focusItem(running.id)

@@ -479,6 +479,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             menu.addItem(.separator())
             add("Reveal in Finder", #selector(menuRevealInFinder))
             add("Open in Integrated Terminal", #selector(menuOpenTerminal))
+            add("Add to Agent", #selector(menuAddToAgent), key: "l", modifiers: [.command])
             if node?.isDirectory == false { add("Open in External Editor", #selector(menuOpenExternal)) }
             menu.addItem(.separator())
             add("Copy Path", #selector(menuCopyPath), key: "c", modifiers: [.option, .command])
@@ -512,6 +513,13 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         guard let node = menuNode(sender) else { return }
         let directory = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
         model?.newTerminal(cwd: directory)
+    }
+
+    @objc private func menuAddToAgent(_ sender: NSMenuItem) {
+        guard let node = menuNode(sender) else { return }
+        // Several selected rows, if the one clicked is among them.
+        let selected = selectedPaths()
+        model?.addFilesToAgent(selected.contains(node.path) ? selected : [node.path])
     }
 
     @objc private func menuOpenExternal(_ sender: NSMenuItem) {

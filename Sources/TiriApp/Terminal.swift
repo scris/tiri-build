@@ -16,6 +16,9 @@ protocol ItemController: AnyObject {
     func teardown()
     var supportsFind: Bool { get }
     var selectedTextForFind: String? { get }
+    /// What ⌘L adds to an agent, if this item has something more specific than its whole file.
+    var agentReference: AgentSelection? { get }
+    var isDirty: Bool { get }
     /// Returns false when nothing matches.
     func find(_ query: String, backwards: Bool) -> Bool
     func clearFind()
@@ -28,6 +31,8 @@ extension ItemController {
     func teardown() {}
     var supportsFind: Bool { false }
     var selectedTextForFind: String? { nil }
+    var agentReference: AgentSelection? { nil }
+    var isDirty: Bool { false }
     func find(_ query: String, backwards: Bool) -> Bool { false }
     func clearFind() {}
 }
@@ -67,6 +72,12 @@ struct LocalTerminalBackend: TerminalBackend {
         environment["TIRI_SOCKET"] = socket
         environment["TIRI_WORKSPACE"] = workspaceID
         environment["TIRI_ITEM_ID"] = itemID
+        // How Claude Code finds Tiri as its editor. It's asked to connect, and it decides.
+        let bridge = AppModel.shared.editorBridge
+        if bridge.port != 0 {
+            environment["CLAUDE_CODE_SSE_PORT"] = String(bridge.port)
+            environment["ENABLE_IDE_INTEGRATION"] = "true"
+        }
         // `tiri` works in every Tiri terminal, wherever the CLI was installed.
         if let helpers = Bundle.main.resourceURL?.appendingPathComponent("bin").path {
             environment["PATH"] = helpers + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
@@ -439,9 +450,34 @@ final class TiriTerminalView: LocalProcessTerminalView {
         guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
                                                                options: [.urlReadingFileURLsOnly: true]) as? [URL],
               !urls.isEmpty else { return false }
-        send(txt: ShellQuote.join(urls.map(\.path)) + " ")
+        insertFiles(urls.map(\.path))
         window?.makeFirstResponder(self)
         return true
+    }
+
+    /// An agent gets mentions and images. A shell gets quoted paths.
+    private func insertFiles(_ paths: [String]) {
+        if let owner, let agent = owner.runningAgent {
+            owner.model.insert(paths, into: owner, agent: agent)
+        } else {
+            send(txt: ShellQuote.join(paths) + " ")
+        }
+    }
+
+    /// A picture on the clipboard reaches an agent as a picture, and a copied file as that file.
+    override func paste(_ sender: Any) {
+        let board = NSPasteboard.general
+        if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+            insertFiles(urls.map(\.path))
+            return
+        }
+        let hasText = board.string(forType: .string)?.isEmpty == false
+        if !hasText, let owner, owner.runningAgent != nil,
+           let image = NSImage(pasteboard: board), let path = owner.model.savePastedImage(image) {
+            insertFiles([path])
+            return
+        }
+        super.paste(sender)
     }
 
     override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
@@ -642,6 +678,19 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         return length > 0 ? String(cString: buffer) : "a process"
     }
 
+    /// The executable and arguments of what's in the foreground. Nothing if it's just the shell.
+    var foregroundCommandLine: [String] {
+        guard let foreground = foregroundPID, foreground != shellPID else { return [] }
+        var request = [CTL_KERN, KERN_PROCARGS2, foreground]
+        var size = 0
+        guard sysctl(&request, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&request, 3, &buffer, &size, nil, 0) == 0 else { return [] }
+        // An argument count, then the executable's path, then the arguments, split by NULs.
+        let parts = buffer[MemoryLayout<Int32>.size..<size].split(separator: 0, maxSplits: 6, omittingEmptySubsequences: true)
+        return parts.prefix(4).map { String(decoding: $0, as: UTF8.self) }
+    }
+
     private var isShellBusy: Bool {
         guard let foreground = foregroundPID, shellPID > 0 else { return false }
         return foreground != shellPID
@@ -663,9 +712,9 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             trackedCwd = directory
             model.terminalCwdChanged(item: itemID, cwd: directory)
         }
-        if let name = foregroundProcessName?.lowercased(), !hookActive {
-            if name.contains("claude") { model.offerHooksIfNeeded(.claude) }
-            if name.contains("codex") { model.offerHooksIfNeeded(.codex) }
+        if !hookActive, let agent = runningAgent {
+            if agent == .claude { model.offerHooksIfNeeded(.claude) }
+            if agent == .codex { model.offerHooksIfNeeded(.codex) }
         }
         let now = ProcessClock.now()
         let quietFor = now - activity.lastOutput
@@ -769,6 +818,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// protocol don't get Return as CR. Pressing Return is what hands an agent some work.
     func noteKeyPress(isReturn: Bool) {
         lastInputAt = ProcessClock.now()
+        if runningAgent != nil { model.lastAgentTerminal = itemID }
         guard isReturn else { return }
         agentHasWork = true
         // The user answered. Without hooks nothing else would clear the question.
@@ -794,6 +844,28 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     }
 
     // MARK: Control API
+
+    var runningAgent: AgentReference.Agent? {
+        var command: String?
+        if case .terminal(let spec)? = model.anyItem(itemID)?.content { command = spec.command }
+        return AgentReference.agent(commandLine: foregroundCommandLine, command: command)
+    }
+
+    /// Whether a process is this terminal's shell or something running under it.
+    func ownsProcess(_ pid: Int32) -> Bool {
+        var current = pid
+        for _ in 0..<32 {
+            if current == shellPID { return true }
+            var info = kinfo_proc()
+            var size = MemoryLayout<kinfo_proc>.stride
+            var request = [CTL_KERN, KERN_PROC, KERN_PROC_PID, current]
+            guard sysctl(&request, 4, &info, &size, nil, 0) == 0, size > 0 else { return false }
+            let parent = info.kp_eproc.e_ppid
+            if parent <= 1 { return false }
+            current = parent
+        }
+        return false
+    }
 
     func send(text: String) {
         noteKeyPress(isReturn: text.contains("\r"))

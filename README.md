@@ -20,6 +20,21 @@ macOS asks for permission the first time Tiri opens something in Documents, Desk
 TIRI_SIGN_IDENTITY="Apple Development: you@example.com (ABCDE12345)" ./build.sh
 ```
 
+## Give your agent lines, files and images
+
+Select lines in any file. Claude Code sees the selection the way it does in VS Code, because Tiri speaks its editor protocol: its status line shows what you've selected and it can read it. Run `/ide` in Claude if it isn't connected.
+
+⌘L adds your selection, or the whole file, to the agent's input, and moves you there. Claude Code gets a real mention. Codex gets the path and line range typed in, since it has no editor protocol.
+
+To add files and images, use whichever is closest:
+
+- ⌘V pastes a picture from the clipboard, or a file copied in Finder.
+- Drag from the explorer or Finder onto the terminal.
+- ⇧⌘L or the paperclip in the toolbar picks them.
+- Right-click in the explorer or Changes, and choose Add to Agent.
+
+In a plain shell, these insert quoted paths instead.
+
 ## Search across files
 
 ⌘⇧F searches the contents of the workspace's files and leaves out what `.gitignore` does. Results appear as you type, and lowercase ignores case. Return floats the file over what you're doing, at that line, and ⌘↩ keeps it as a tab. It starts from what you've selected, or your last search.

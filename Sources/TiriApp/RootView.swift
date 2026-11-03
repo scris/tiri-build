@@ -77,6 +77,11 @@ struct MainToolbar: ToolbarContent {
             .menuIndicator(.hidden)
             .help("New terminal or agent")
 
+            Button { model.chooseFilesForAgent() } label: {
+                Label("Add Files or Images to Agent", systemImage: "paperclip")
+            }
+            .help("Add files or images to your agent (⇧⌘L)")
+
             Button { model.splitActive(.right) } label: {
                 Label("Split Right", systemImage: "rectangle.split.2x1")
             }
@@ -476,6 +481,14 @@ struct FileActions: View {
 
     var body: some View {
         let _ = model.controllerRevision
+        Button {
+            model.addFrontToAgent()
+        } label: {
+            Image(systemName: "text.badge.plus")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("Add this file or your selection to the agent (⌘L)")
         if case .diff = item.content, let diff = model.controller(for: item.id) as? DiffController {
             if diff.diff.additions + diff.diff.deletions > 0 {
                 HStack(spacing: 4) {

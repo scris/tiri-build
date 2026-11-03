@@ -2,6 +2,113 @@ import Foundation
 import Testing
 @testable import TiriCore
 
+@Suite struct AgentReferenceTests {
+    @Test func whichAgentIsRunning() {
+        #expect(AgentReference.agent(commandLine: ["claude"], command: nil) == .claude)
+        // How Claude Code really appears once installed.
+        #expect(AgentReference.agent(commandLine: ["/Users/r/.local/share/claude/versions/2.1.317", "claude"], command: nil) == .claude)
+        #expect(AgentReference.agent(commandLine: ["/opt/node", "/lib/node_modules/@anthropic-ai/claude-code/cli.js"], command: nil) == .claude)
+        #expect(AgentReference.agent(commandLine: ["/opt/node", "/x/bin/codex"], command: nil) == .codex)
+        #expect(AgentReference.agent(commandLine: [], command: "codex resume --last") == .codex)
+        #expect(AgentReference.agent(commandLine: ["/bin/zsh"], command: nil) == nil)
+        // A program that only has the word in an argument isn't an agent.
+        #expect(AgentReference.agent(commandLine: ["/usr/bin/vim", "claude.md"], command: "vim claude.md") == nil)
+    }
+
+    @Test func claudeGetsAtMentionsAndCodexGetsPaths() {
+        #expect(AgentReference.text(path: "/p/src/a.ts", cwd: "/p", firstLine: 11, lastLine: 19, agent: .claude) == "@src/a.ts#L12-20 ")
+        #expect(AgentReference.text(path: "/p/src/a.ts", cwd: "/p", firstLine: 11, lastLine: 11, agent: .claude) == "@src/a.ts#L12 ")
+        #expect(AgentReference.text(path: "/p/src/a.ts", cwd: "/p", firstLine: 11, lastLine: 19, agent: .codex) == "src/a.ts:12-20 ")
+        #expect(AgentReference.text(path: "/p/a.ts", cwd: "/p", firstLine: nil, lastLine: nil, agent: .codex) == "a.ts ")
+    }
+
+    @Test func outsideTheFolderIsAbsoluteAndSpacesAreQuoted() {
+        #expect(AgentReference.text(path: "/q/a.ts", cwd: "/p", firstLine: nil, lastLine: nil, agent: .codex) == "/q/a.ts ")
+        #expect(AgentReference.text(path: "/p/my file.ts", cwd: "/p", firstLine: nil, lastLine: nil, agent: .claude) == "@\"my file.ts\" ")
+    }
+
+    @Test func imagesAreKnown() {
+        #expect(AgentReference.isImage(path: "/a/shot.PNG"))
+        #expect(!AgentReference.isImage(path: "/a/doc.pdf"))
+    }
+
+    @Test func aSelectionEndingAtALineStartStopsBeforeIt() {
+        let selection = EditorSelection(path: "/a", text: "x\n", startLine: 3, startCharacter: 0, endLine: 4, endCharacter: 0)
+        #expect(selection.lastLine == 3)
+    }
+}
+
+@Suite struct EditorProtocolTests {
+    func host(selection: EditorSelection? = nil, opened: @escaping (String) -> Void = { _ in }) -> EditorProtocol.Host {
+        EditorProtocol.Host(selection: { selection }, openFiles: { [("/p/a.ts", true)] }, folders: { ["/p"] },
+                            isDirty: { _ in false }, openFile: opened)
+    }
+
+    func call(_ method: String, _ params: String = "{}", host: EditorProtocol.Host) throws -> JSONValue {
+        let request = #"{"jsonrpc":"2.0","id":7,"method":"\#(method)","params":\#(params)}"#
+        let data = try #require(EditorProtocol.respond(to: Data(request.utf8), host: host))
+        return try JSONDecoder().decode(JSONValue.self, from: data)
+    }
+
+    @Test func initializeEchoesTheVersion() throws {
+        let response = try call("initialize", #"{"protocolVersion":"2025-06-18"}"#, host: host())
+        #expect(response["id"]?.intValue == 7)
+        #expect(response["result"]?["protocolVersion"]?.stringValue == "2025-06-18")
+        #expect(response["result"]?["serverInfo"]?["name"]?.stringValue == "Tiri")
+    }
+
+    @Test func notificationsGetNoAnswer() {
+        #expect(EditorProtocol.respond(to: Data(#"{"jsonrpc":"2.0","method":"ide_connected","params":{"pid":5}}"#.utf8), host: host()) == nil)
+        #expect(EditorProtocol.connectedProcess(in: Data(#"{"jsonrpc":"2.0","method":"ide_connected","params":{"pid":5}}"#.utf8)) == 5)
+    }
+
+    /// Offering openDiff would leave Claude waiting on Tiri to accept every edit.
+    @Test func openDiffIsNotOffered() throws {
+        let response = try call("tools/list", host: host())
+        let names = response["result"]?["tools"]?.arrayValue?.compactMap { $0["name"]?.stringValue } ?? []
+        #expect(names.contains("getCurrentSelection"))
+        #expect(!names.contains("openDiff"))
+    }
+
+    @Test func selectionTool() throws {
+        let selection = EditorSelection(path: "/p/a.ts", text: "hi", startLine: 2, startCharacter: 1, endLine: 2, endCharacter: 3)
+        let response = try call("tools/call", #"{"name":"getCurrentSelection","arguments":{}}"#, host: host(selection: selection))
+        let text = try #require(response["result"]?["content"]?.arrayValue?.first?["text"]?.stringValue)
+        let inner = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+        #expect(inner["success"]?.boolValue == true)
+        #expect(inner["text"]?.stringValue == "hi")
+        #expect(inner["selection"]?["start"]?["line"]?.intValue == 2)
+    }
+
+    @Test func noSelectionSaysSo() throws {
+        let response = try call("tools/call", #"{"name":"getLatestSelection","arguments":{}}"#, host: host())
+        #expect(response["result"]?["content"]?.arrayValue?.first?["text"]?.stringValue?.contains("No selection") == true)
+    }
+
+    @Test func openFileGoesToTheHost() throws {
+        final class Box: @unchecked Sendable { var path: String? }
+        let box = Box()
+        _ = try call("tools/call", #"{"name":"openFile","arguments":{"filePath":"/p/b.ts"}}"#, host: host(opened: { box.path = $0 }))
+        #expect(box.path == "/p/b.ts")
+    }
+
+    @Test func unknownThingsAreErrors() throws {
+        #expect(try call("tools/call", #"{"name":"nope"}"#, host: host())["error"] != nil)
+        #expect(try call("nope", host: host())["error"] != nil)
+    }
+
+    @Test func messagesClaudeReads() throws {
+        let mention = try JSONDecoder().decode(JSONValue.self, from: EditorProtocol.atMentioned(path: "/p/a.ts", firstLine: 3, lastLine: 5))
+        #expect(mention["method"]?.stringValue == "at_mentioned")
+        #expect(mention["params"]?["lineStart"]?.intValue == 3)
+        #expect(mention["params"]?["lineEnd"]?.intValue == 5)
+        let lock = try JSONDecoder().decode(JSONValue.self, from: EditorProtocol.lockFile(pid: 9, folders: ["/p"], token: "t"))
+        #expect(lock["ideName"]?.stringValue == "Tiri")
+        #expect(lock["transport"]?.stringValue == "ws")
+        #expect(EditorProtocol.newToken().count == 32)
+    }
+}
+
 @Suite struct ContentSearchTests {
     func find(_ text: String, _ query: String) -> [ContentMatch] {
         ContentSearch.matches(in: Data(text.utf8), path: "/a.txt", query: query)

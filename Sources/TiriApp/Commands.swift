@@ -73,6 +73,8 @@ extension AppModel {
             AppCommand(id: "webDarkOff", title: "View: Force Dark Off", category: "View") { model in
                 model.setForceDark(false, item: model.active.focused.active)
             },
+            AppCommand(id: "addToAgent", title: "Add to Agent", category: "Agent") { $0.addFrontToAgent() },
+            AppCommand(id: "attachToAgent", title: "Add Files or Images to Agent…", category: "Agent") { $0.chooseFilesForAgent() },
             AppCommand(id: "searchInFiles", title: "Search in Files", category: "Go") { $0.openSearch() },
             AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in

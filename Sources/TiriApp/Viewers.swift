@@ -289,6 +289,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     var supportsFind: Bool { true }
 
     var selectedTextForFind: String? { showingSource ? source?.selectedTextForFind : nil }
+    var agentReference: AgentSelection? { showingSource ? source?.agentReference : nil }
 
     func find(_ query: String, backwards: Bool) -> Bool {
         if showingSource { return source?.find(query, backwards: backwards) ?? false }
@@ -352,7 +353,47 @@ final class TextController: NSObject, ItemController {
         reload()
     }
 
+    @objc private func selectionDidChange(_ notification: Notification) {
+        reportSelection()
+    }
+
+    /// Tell Claude what's selected, as an editor would.
+    private func reportSelection() {
+        guard textView.window != nil, loadedOnce else { return }
+        model.editorBridge.selectionChanged(editorSelection)
+    }
+
+    private var editorSelection: EditorSelection {
+        let string = textView.string as NSString
+        let range = textView.selectedRange()
+        func position(_ location: Int) -> (Int, Int) {
+            var line = 0
+            var start = 0
+            var search = NSRange(location: 0, length: min(location, string.length))
+            while true {
+                let found = string.range(of: "\n", options: .literal, range: search)
+                if found.location == NSNotFound { break }
+                line += 1
+                start = NSMaxRange(found)
+                search = NSRange(location: start, length: min(location, string.length) - start)
+            }
+            return (line, location - start)
+        }
+        let (startLine, startCharacter) = position(range.location)
+        let (endLine, endCharacter) = position(NSMaxRange(range))
+        return EditorSelection(path: path, text: string.substring(with: range), startLine: startLine, startCharacter: startCharacter,
+                               endLine: endLine, endCharacter: endCharacter)
+    }
+
+    var agentReference: AgentSelection? {
+        let selection = editorSelection
+        guard !selection.isEmpty else { return nil }
+        return AgentSelection(path: path, firstLine: selection.startLine, lastLine: selection.lastLine)
+    }
+
     private func configure() {
+        NotificationCenter.default.addObserver(self, selector: #selector(selectionDidChange(_:)),
+                                               name: NSTextView.didChangeSelectionNotification, object: textView)
         let text = textView
         text.isEditable = false
         text.isSelectable = true
@@ -498,7 +539,10 @@ final class TextController: NSObject, ItemController {
         jump(line: line, col: col)
     }
 
-    func focus() { textView.window?.makeFirstResponder(textView) }
+    func focus() {
+        textView.window?.makeFirstResponder(textView)
+        reportSelection()
+    }
 
     func teardown() { token = nil }
 
@@ -1116,6 +1160,14 @@ final class PDFController: ForceDarkCapable {
 
     var supportsFind: Bool { true }
     var selectedTextForFind: String? { pdfView.currentSelection?.string }
+
+    /// A PDF has pages, not lines, so what's selected goes in as a quotation.
+    var agentReference: AgentSelection? {
+        guard let selection = pdfView.currentSelection, let text = selection.string, !text.isEmpty else { return nil }
+        let name = (path as NSString).lastPathComponent
+        let page = selection.pages.first.flatMap { pdfView.document?.index(for: $0) }.map { " page \($0 + 1)" } ?? ""
+        return AgentSelection(path: path, quote: "From \(name)\(page):\n\"\(text)\"\n")
+    }
 
     func find(_ query: String, backwards: Bool) -> Bool {
         var options: NSString.CompareOptions = [.caseInsensitive]
