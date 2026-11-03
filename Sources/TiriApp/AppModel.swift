@@ -383,6 +383,13 @@ final class AppModel {
             // Still running from before: what's there now is what counts, so nothing is replayed.
             if settings.terminalKeepRunning, TerminalSessions.isAlive(id) {
                 launch = nil
+            } else if restored, spec.isShell, let typed = spec.typedAgent {
+                // Typed at a prompt, so the prompt should still be there after it exits.
+                if case .run(let command) = TerminalRestore.plan(for: typed, sessionID: spec.sessionID, resume: settings.terminalResume,
+                                                                 enabled: settings.terminalRestoreWithResume) {
+                    launch = nil
+                    prefill = command + "\r"
+                }
             } else if restored {
                 switch TerminalRestore.plan(for: spec.command, sessionID: spec.sessionID,
                                             resume: settings.terminalResume,
@@ -879,6 +886,18 @@ final class AppModel {
             }
         }
         return active.folders.first ?? NSHomeDirectory()
+    }
+
+    /// What's running at a shell's prompt, so it can be picked up again after a reboot.
+    func terminalTypedAgentChanged(item: ItemID, agent: String?) {
+        guard let index = workspaces.firstIndex(where: { $0.item(item) != nil }) else { return }
+        workspaces[index].updateItem(item) { item in
+            if case .terminal(var spec) = item.content, spec.isShell, spec.typedAgent != agent {
+                spec.typedAgent = agent
+                item.content = .terminal(spec)
+            }
+        }
+        scheduleSave()
     }
 
     func terminalCwdChanged(item: ItemID, cwd: String) {

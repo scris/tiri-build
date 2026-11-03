@@ -27,6 +27,9 @@ public struct TerminalSpec: Codable, Hashable, Sendable {
     /// this conversation; `--continue` would pick the latest in the folder, so two
     /// terminals in one folder would collide.
     public var sessionID: String?
+    /// An agent typed at this shell's prompt rather than started by Tiri, while it's running.
+    /// After a reboot, when a session can't have survived, the shell types its resume command.
+    public var typedAgent: String?
     public init(command: String? = nil, cwd: String, title: String? = nil, sessionID: String? = nil) {
         self.command = command
         self.cwd = cwd

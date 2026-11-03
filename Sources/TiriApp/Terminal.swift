@@ -530,6 +530,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     // Status heuristics. Agent hooks, when installed, are authoritative.
     private var hookActive = false
+    private var lastTypedAgent: String?
     private var lastHookWorkingAt: Double = 0
     private var foregroundBusySince: Double?
     private var sawAgentOutputBurst = false
@@ -743,6 +744,11 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             persistedCwd = directory
             trackedCwd = directory
             model.terminalCwdChanged(item: itemID, cwd: directory)
+        }
+        let typed = foregroundCommandLine.isEmpty ? nil : AgentReference.agent(commandLine: foregroundCommandLine, command: nil)?.rawValue
+        if typed != lastTypedAgent {
+            lastTypedAgent = typed
+            model.terminalTypedAgentChanged(item: itemID, agent: typed)
         }
         if !hookActive, let agent = runningAgent {
             if agent == .claude { model.offerHooksIfNeeded(.claude) }
