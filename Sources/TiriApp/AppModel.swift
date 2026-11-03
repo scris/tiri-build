@@ -172,6 +172,8 @@ final class AppModel {
         guard !didFinishLaunching else { return }
         didFinishLaunching = true
         editorBridge.start()
+        // Whatever isn't in a tab any more has nothing to come back to.
+        TerminalSessions.endAll(except: Set(workspaces.flatMap { $0.items.map(\.id) }))
         router.install(model: self)
         applyTheme()
         observeSystemAppearance()
@@ -340,6 +342,7 @@ final class AppModel {
             if let peek = workspace.peek { live.insert(peek.id) }
         }
         for (id, controller) in controllers where !live.contains(id) {
+            (controller as? TerminalController)?.endSession()
             controller.teardown()
             controllers[id] = nil
             runtimes[id] = nil
@@ -373,7 +376,10 @@ final class AppModel {
             let restored = restoredItems.remove(id) != nil
             var launch = spec.command
             var prefill: String?
-            if restored {
+            // Still running from before: what's there now is what counts, so nothing is replayed.
+            if settings.terminalKeepRunning, TerminalSessions.isAlive(id) {
+                launch = nil
+            } else if restored {
                 switch TerminalRestore.plan(for: spec.command, sessionID: spec.sessionID,
                                             resume: settings.terminalResume,
                                             enabled: settings.terminalRestoreWithResume) {

@@ -253,6 +253,10 @@ public enum CLIParser {
                 throw UsageError(usage)
             }
 
+        case "quit":
+            guard args.isEmpty else { throw UsageError("usage: tiri quit") }
+            return request("quit")
+
         case "follow":
             guard args.count == 3, let row = Int(args[1]), let col = Int(args[2]) else {
                 throw UsageError("usage: tiri follow <item-id> <row> <col>   (what ⌘-click does; counts from 0)")
@@ -335,6 +339,7 @@ public enum CLIParser {
       tiri changes                 (files changed since the last commit)
       tiri diff <path> [--tab]     (what changed in one file; floats as a Peek)
       tiri follow <item-id> <row> <col>
+      tiri quit                    (terminals keep running, and Tiri comes back to them)
       tiri keys [set <command> <key> | unset <command> | reset <command>]
       tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open]
       tiri send <item-id> <text> [--enter]

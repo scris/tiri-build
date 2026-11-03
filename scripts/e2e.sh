@@ -54,6 +54,9 @@ refuses() { # name, command...
 }
 
 cleanup() {
+    # Sessions outlive the app on purpose. These ones were only ever for this test.
+    # Only this test's: your own terminals have their own folder.
+    pkill -f "tiri-session attach /tmp/tiri-$(id -u)-$(printf %s "$TIRI_HOME" | shasum -a 256 | cut -c1-12)/" 2>/dev/null
     # Only the app this script started. You may have another one open.
     kill "$APP_PID" 2>/dev/null
     rm -rf "$WORK" "$TIRI_SOCKET"
@@ -175,6 +178,30 @@ check "close the floating diff" "$CLI" close "$PEEK_DIFF"
 expect "search finds text in files" "report.md:1" "$CLI" search Report
 expect "search reaches into folders" "app.py:1" "$CLI" search 'print("hi")'
 check "search with no match succeeds" "$CLI" search nothing-has-this-text
+
+# Quitting leaves what's running in a terminal alone, and the next launch comes back to it.
+SESSION_ID=$("$CLI" term --cwd "$PROJECT")
+sleep 2.5
+"$CLI" send "$SESSION_ID" "echo before-quit; (sleep 3; echo after-quit) &" --enter
+sleep 1
+"$CLI" quit
+sleep 1
+if pgrep -f "tiri-session attach .*$SESSION_ID" >/dev/null; then passed=$((passed + 1)); echo "ok    the session outlives the app"; else failed=$((failed + 1)); echo "FAIL  the session outlives the app"; fi
+sleep 3
+"$APP/Contents/MacOS/Tiri" >/dev/null 2>&1 &
+APP_PID=$!
+for _ in $(seq 1 100); do "$CLI" ping >/dev/null 2>&1 && break; sleep 0.1; done
+sleep 1
+check "focus the terminal after relaunch" "$CLI" focus "$SESSION_ID"
+sleep 1.5
+expect "output from before the quit is back" "before-quit" "$CLI" read "$SESSION_ID"
+expect "output from while Tiri was closed is there" "after-quit" "$CLI" read "$SESSION_ID"
+"$CLI" send "$SESSION_ID" "echo still-typing-\$((40+2))" --enter
+sleep 1
+expect "the terminal still takes input" "still-typing-42" "$CLI" read "$SESSION_ID"
+check "close the session" "$CLI" close "$SESSION_ID"
+sleep 1
+if pgrep -f "tiri-session attach .*$SESSION_ID" >/dev/null; then failed=$((failed + 1)); echo "FAIL  closing the tab ends the session"; else passed=$((passed + 1)); echo "ok    closing the tab ends the session"; fi
 
 expect "keys lists commands" "toggleSidebar" "$CLI" keys
 expect "keys set takes effect" "⌘J" "$CLI" keys set toggleSidebar cmd+j

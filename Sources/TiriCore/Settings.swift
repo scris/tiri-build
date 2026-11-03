@@ -35,6 +35,7 @@ public struct TiriSettings: Equatable, Sendable {
     ]
     public var terminalResume = ["claude": "claude --continue", "codex": "codex resume --last"]
     public var terminalRestoreWithResume = true
+    public var terminalKeepRunning = true
     public var terminalLinkOpens = LinkOpenTarget.peek
     public var codeFontFamily = "SF Mono"
     public var codeFontSize = 12.0
@@ -71,6 +72,8 @@ public struct TiriSettings: Equatable, Sendable {
         "codex": "codex resume --last"
       },
       "terminal.restoreWithResume": true,
+      // Terminals keep running when Tiri quits, and it comes back to them.
+      "terminal.keepRunning": true,
       // What cmd-clicking a file in a terminal does: "peek", "tab" or "external".
       "terminal.linkOpens": "peek",
 
@@ -192,6 +195,7 @@ public struct TiriSettings: Equatable, Sendable {
         try bool("explorer.autoReveal") { settings.explorerAutoReveal = $0 }
         try bool("web.forceDark") { settings.webForceDark = $0 }
         try bool("documents.forceDark") { settings.documentsForceDark = $0 }
+        try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
         try bool("notifications.enabled") { settings.notificationsEnabled = $0 }
         return settings
     }

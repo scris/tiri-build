@@ -1,0 +1,575 @@
+// tiri-session keeps one terminal's program running when Tiri isn't.
+//
+// The first run forks a small background server that owns the real terminal and the program
+// in it. Tiri's terminal view runs `tiri-session attach`, which only relays bytes between the
+// two. Quit Tiri, or update it, and the relay ends while the server and the agent carry on. The
+// next launch attaches again and replays recent output to redraw the screen.
+//
+// It's C, and small, because this process sits under every running agent, sometimes for days.
+
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <termios.h>
+#include <time.h>
+#include <unistd.h>
+#include <util.h>
+
+// Frames from the relay to the server: type, then a 16-bit length, then that many bytes.
+//   'D' input for the program   'W' rows and columns, 16 bits each   'K' stop the program
+// Frames from the server to the relay: type, then a 32-bit length, then that many bytes.
+//   'D' the program's output    'R' the replay is over              'X' it exited, with this code
+
+#define RING_BYTES (4 * 1024 * 1024)
+#define READ_BYTES 65536
+
+static void die(const char *message) {
+    fprintf(stderr, "tiri-session: %s: %s\n", message, strerror(errno));
+    exit(70);
+}
+
+static int write_all(int fd, const void *data, size_t count) {
+    const char *cursor = data;
+    while (count > 0) {
+        ssize_t written = write(fd, cursor, count);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN) {
+                struct pollfd wait = {fd, POLLOUT, 0};
+                if (poll(&wait, 1, 2000) <= 0) return -1;
+                continue;
+            }
+            return -1;
+        }
+        cursor += written;
+        count -= (size_t)written;
+    }
+    return 0;
+}
+
+static int connect_to(const char *path) {
+    struct sockaddr_un address;
+    memset(&address, 0, sizeof address);
+    address.sun_family = AF_UNIX;
+    if (strlen(path) >= sizeof address.sun_path) return -1;
+    strcpy(address.sun_path, path);
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    if (connect(fd, (struct sockaddr *)&address, sizeof address) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+// MARK: Terminal modes
+
+// A long-running program turns modes on once. If that's fell out of the replay buffer, the new
+// view would never hear about it, so the modes that matter are remembered and said again.
+
+static const int tracked_modes[] = {1, 7, 12, 25, 47, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 1047, 1048, 1049, 2004, 2026};
+#define TRACKED_COUNT (sizeof tracked_modes / sizeof tracked_modes[0])
+static signed char mode_state[TRACKED_COUNT];  // 0 unknown, 1 set, -1 reset
+static int kitty_level = -1;                   // The keyboard flags last pushed. -1 is none.
+
+enum { S_GROUND, S_ESC, S_CSI, S_STRING, S_STRING_ESC };
+static int parse_state = S_GROUND;
+static char csi[32];
+static size_t csi_length;
+
+static void apply_csi(char final) {
+    csi[csi_length] = 0;
+    if ((final == 'h' || final == 'l') && csi[0] == '?') {
+        char *cursor = csi + 1;
+        while (*cursor) {
+            long mode = strtol(cursor, &cursor, 10);
+            for (size_t index = 0; index < TRACKED_COUNT; index++) {
+                if (tracked_modes[index] == mode) mode_state[index] = final == 'h' ? 1 : -1;
+            }
+            if (*cursor == ';') cursor++;
+            else break;
+        }
+    } else if (final == 'u' && csi[0] == '>') {
+        kitty_level = atoi(csi + 1);
+    } else if (final == 'u' && csi[0] == '<') {
+        kitty_level = -1;
+    }
+}
+
+static void track_output(const unsigned char *data, size_t count) {
+    for (size_t index = 0; index < count; index++) {
+        unsigned char byte = data[index];
+        switch (parse_state) {
+        case S_GROUND:
+            if (byte == 0x1B) parse_state = S_ESC;
+            break;
+        case S_ESC:
+            if (byte == '[') {
+                parse_state = S_CSI;
+                csi_length = 0;
+            } else if (byte == ']' || byte == 'P' || byte == '_' || byte == '^') {
+                parse_state = S_STRING;
+            } else {
+                parse_state = S_GROUND;
+            }
+            break;
+        case S_CSI:
+            if (byte >= 0x40 && byte <= 0x7E) {
+                apply_csi((char)byte);
+                parse_state = S_GROUND;
+            } else if (csi_length < sizeof csi - 1) {
+                csi[csi_length++] = (char)byte;
+            }
+            break;
+        case S_STRING:
+            if (byte == 0x07) parse_state = S_GROUND;
+            else if (byte == 0x1B) parse_state = S_STRING_ESC;
+            break;
+        case S_STRING_ESC:
+            parse_state = byte == '\\' ? S_GROUND : S_STRING;
+            break;
+        }
+    }
+}
+
+// MARK: The server
+
+static unsigned char *ring;
+static size_t ring_start, ring_count;
+
+static void ring_append(const unsigned char *data, size_t count) {
+    if (count >= RING_BYTES) {
+        data += count - RING_BYTES;
+        count = RING_BYTES;
+    }
+    for (size_t remaining = count; remaining > 0;) {
+        size_t end = (ring_start + ring_count) % RING_BYTES;
+        size_t chunk = RING_BYTES - end;
+        if (chunk > remaining) chunk = remaining;
+        memcpy(ring + end, data, chunk);
+        data += chunk;
+        remaining -= chunk;
+        if (ring_count + chunk <= RING_BYTES) {
+            ring_count += chunk;
+        } else {
+            ring_start = (ring_start + (ring_count + chunk - RING_BYTES)) % RING_BYTES;
+            ring_count = RING_BYTES;
+        }
+    }
+}
+
+static int send_frame(int fd, char type, const void *data, uint32_t count) {
+    unsigned char header[5] = {(unsigned char)type, (unsigned char)(count >> 24), (unsigned char)(count >> 16),
+                               (unsigned char)(count >> 8), (unsigned char)count};
+    if (write_all(fd, header, sizeof header) < 0) return -1;
+    return count ? write_all(fd, data, count) : 0;
+}
+
+static int send_replay(int fd) {
+    // Start at the beginning of a line if the buffer has wrapped, so nothing begins mid-sequence.
+    size_t skip = 0;
+    if (ring_count == RING_BYTES) {
+        while (skip < 4096 && skip < ring_count && ring[(ring_start + skip) % RING_BYTES] != '\n') skip++;
+        if (skip < ring_count) skip++;
+    }
+    char prefix[512];
+    size_t used = 0;
+    if (ring_count == RING_BYTES) {
+        for (size_t index = 0; index < TRACKED_COUNT; index++) {
+            if (mode_state[index] && used + 16 < sizeof prefix) {
+                used += (size_t)snprintf(prefix + used, sizeof prefix - used, "\033[?%d%c", tracked_modes[index], mode_state[index] > 0 ? 'h' : 'l');
+            }
+        }
+        if (kitty_level >= 0 && used + 16 < sizeof prefix) {
+            used += (size_t)snprintf(prefix + used, sizeof prefix - used, "\033[>%du", kitty_level);
+        }
+        if (used && send_frame(fd, 'D', prefix, (uint32_t)used) < 0) return -1;
+    }
+    size_t remaining = ring_count - skip;
+    size_t position = (ring_start + skip) % RING_BYTES;
+    while (remaining > 0) {
+        size_t chunk = RING_BYTES - position;
+        if (chunk > remaining) chunk = remaining;
+        if (chunk > READ_BYTES) chunk = READ_BYTES;
+        if (send_frame(fd, 'D', ring + position, (uint32_t)chunk) < 0) return -1;
+        position = (position + chunk) % RING_BYTES;
+        remaining -= chunk;
+    }
+    // The relay needs to know whether there was anything to replay. See relay().
+    unsigned char had_output = ring_count > 0;
+    return send_frame(fd, 'R', &had_output, 1);
+}
+
+static volatile sig_atomic_t child_changed;
+static void on_child(int signal) {
+    (void)signal;
+    child_changed = 1;
+}
+
+typedef struct {
+    const char *socket_path;
+    const char *directory;
+    const char *argv0;
+    char **command;
+    struct winsize size;
+} launch_options;
+
+static void remove_files(const char *socket_path) {
+    char pid_path[1100];
+    snprintf(pid_path, sizeof pid_path, "%s.pid", socket_path);
+    unlink(socket_path);
+    unlink(pid_path);
+}
+
+static void run_server(const launch_options *options, int listener) {
+    ring = malloc(RING_BYTES);
+    if (!ring) exit(71);
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_handler = on_child;
+    sigaction(SIGCHLD, &action, NULL);
+
+    int master = -1;
+    struct winsize size = options->size;
+    pid_t child = forkpty(&master, NULL, NULL, &size);
+    if (child < 0) die("forkpty");
+    if (child == 0) {
+        close(listener);
+        signal(SIGHUP, SIG_DFL);
+        signal(SIGPIPE, SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
+        if (options->directory && chdir(options->directory) != 0) { /* Stay where we are. */ }
+        char *path = options->command[0];
+        if (options->argv0) options->command[0] = (char *)options->argv0;
+        execv(path, options->command);
+        fprintf(stderr, "tiri-session: can't run %s: %s\r\n", path, strerror(errno));
+        _exit(127);
+    }
+
+    char pid_path[1100];
+    snprintf(pid_path, sizeof pid_path, "%s.pid", options->socket_path);
+    FILE *pid_file = fopen(pid_path, "w");
+    if (pid_file) {
+        fprintf(pid_file, "%d\n", (int)child);
+        fclose(pid_file);
+    }
+
+    int client = -1;
+    unsigned char input[READ_BYTES + 3];
+    size_t input_count = 0;
+    unsigned char buffer[READ_BYTES];
+    int exit_code = -1;
+    int program_done = 0;
+
+    while (!program_done) {
+        struct pollfd fds[3] = {{listener, POLLIN, 0}, {master, POLLIN, 0}, {client, POLLIN, 0}};
+        int count = client >= 0 ? 3 : 2;
+        int ready = poll(fds, (nfds_t)count, 500);
+        if (ready < 0 && errno != EINTR) break;
+
+        if (ready > 0 && (fds[0].revents & POLLIN)) {
+            int fresh = accept(listener, NULL, NULL);
+            if (fresh >= 0) {
+                // One view at a time. The newest is the one you're looking at.
+                if (client >= 0) close(client);
+                client = fresh;
+                input_count = 0;
+                struct timeval timeout = {2, 0};
+                setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
+                if (send_replay(client) < 0) {
+                    close(client);
+                    client = -1;
+                }
+            }
+        }
+
+        if (ready > 0 && (fds[1].revents & (POLLIN | POLLHUP))) {
+            ssize_t got = read(master, buffer, sizeof buffer);
+            if (got > 0) {
+                ring_append(buffer, (size_t)got);
+                track_output(buffer, (size_t)got);
+                if (client >= 0 && send_frame(client, 'D', buffer, (uint32_t)got) < 0) {
+                    close(client);
+                    client = -1;
+                }
+            } else if (got == 0 || (errno != EINTR && errno != EAGAIN)) {
+                program_done = 1;
+            }
+        }
+
+        if (client >= 0 && ready > 0 && count == 3 && (fds[2].revents & (POLLIN | POLLHUP))) {
+            ssize_t got = read(client, input + input_count, sizeof input - input_count);
+            if (got <= 0) {
+                close(client);
+                client = -1;
+            } else {
+                input_count += (size_t)got;
+                size_t offset = 0;
+                while (input_count - offset >= 3) {
+                    unsigned char type = input[offset];
+                    size_t length = ((size_t)input[offset + 1] << 8) | input[offset + 2];
+                    if (input_count - offset < 3 + length) break;
+                    const unsigned char *payload = input + offset + 3;
+                    if (type == 'D') {
+                        write_all(master, payload, length);
+                    } else if (type == 'W' && length == 4) {
+                        struct winsize wanted;
+                        memset(&wanted, 0, sizeof wanted);
+                        wanted.ws_row = (unsigned short)((payload[0] << 8) | payload[1]);
+                        wanted.ws_col = (unsigned short)((payload[2] << 8) | payload[3]);
+                        // The same size wouldn't tell the program to redraw for the new view.
+                        struct winsize nudge = wanted;
+                        if (nudge.ws_col > 1) nudge.ws_col--;
+                        ioctl(master, TIOCSWINSZ, &nudge);
+                        ioctl(master, TIOCSWINSZ, &wanted);
+                    } else if (type == 'K') {
+                        // An agent is usually its own process group, in the foreground.
+                        pid_t foreground = tcgetpgrp(master);
+                        if (foreground > 0) kill(-foreground, SIGHUP);
+                        kill(-child, SIGHUP);
+                        kill(child, SIGHUP);
+                        // Give it a moment to finish properly.
+                        for (int attempt = 0; attempt < 20 && waitpid(child, NULL, WNOHANG) == 0; attempt++) usleep(100000);
+                        if (foreground > 0) kill(-foreground, SIGKILL);
+                        kill(-child, SIGKILL);
+                        kill(child, SIGKILL);
+                        remove_files(options->socket_path);
+                        _exit(0);
+                    }
+                    offset += 3 + length;
+                }
+                memmove(input, input + offset, input_count - offset);
+                input_count -= offset;
+            }
+        }
+
+        if (child_changed) {
+            child_changed = 0;
+            int status;
+            if (waitpid(child, &status, WNOHANG) == child) {
+                exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+                // Whatever it printed last is still on its way out.
+                for (;;) {
+                    struct pollfd drain = {master, POLLIN, 0};
+                    if (poll(&drain, 1, 50) <= 0) break;
+                    ssize_t got = read(master, buffer, sizeof buffer);
+                    if (got <= 0) break;
+                    ring_append(buffer, (size_t)got);
+                    if (client >= 0) send_frame(client, 'D', buffer, (uint32_t)got);
+                }
+                program_done = 1;
+            }
+        }
+    }
+
+    if (exit_code < 0) {
+        int status;
+        if (waitpid(child, &status, 0) == child) exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+        else exit_code = 0;
+    }
+    remove_files(options->socket_path);
+    if (client >= 0) {
+        unsigned char code = (unsigned char)exit_code;
+        send_frame(client, 'X', &code, 1);
+        close(client);
+    }
+    _exit(0);
+}
+
+/// Leaves a server running in the background, with the socket listening before this returns.
+static void start_server(const launch_options *options) {
+    struct sockaddr_un address;
+    memset(&address, 0, sizeof address);
+    address.sun_family = AF_UNIX;
+    if (strlen(options->socket_path) >= sizeof address.sun_path) {
+        errno = ENAMETOOLONG;
+        die("socket path");
+    }
+    strcpy(address.sun_path, options->socket_path);
+    int listener = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (listener < 0) die("socket");
+    unlink(options->socket_path);
+    mode_t previous = umask(0077);
+    if (bind(listener, (struct sockaddr *)&address, sizeof address) < 0) die("bind");
+    umask(previous);
+    if (listen(listener, 4) < 0) die("listen");
+
+    pid_t first = fork();
+    if (first < 0) die("fork");
+    if (first > 0) {
+        close(listener);
+        waitpid(first, NULL, 0);
+        return;
+    }
+    setsid();
+    pid_t second = fork();
+    if (second < 0) _exit(1);
+    if (second > 0) _exit(0);
+    int null = open("/dev/null", O_RDWR);
+    if (null >= 0) {
+        dup2(null, 0);
+        dup2(null, 1);
+        dup2(null, 2);
+        if (null > 2) close(null);
+    }
+    run_server(options, listener);
+}
+
+// MARK: The relay
+
+static struct termios saved_terminal;
+static int have_saved_terminal;
+static volatile sig_atomic_t size_changed = 1;
+
+static void on_resize(int signal) {
+    (void)signal;
+    size_changed = 1;
+}
+
+static void restore_terminal(void) {
+    if (have_saved_terminal) tcsetattr(STDIN_FILENO, TCSANOW, &saved_terminal);
+}
+
+static int send_input(int fd, char type, const void *data, size_t count) {
+    unsigned char header[3] = {(unsigned char)type, (unsigned char)(count >> 8), (unsigned char)count};
+    if (write_all(fd, header, 3) < 0) return -1;
+    return count ? write_all(fd, data, count) : 0;
+}
+
+static double now_seconds(void) {
+    struct timespec time;
+    clock_gettime(CLOCK_MONOTONIC, &time);
+    return (double)time.tv_sec + (double)time.tv_nsec / 1e9;
+}
+
+static int relay(int server) {
+    signal(SIGPIPE, SIG_IGN);
+    struct sigaction action;
+    memset(&action, 0, sizeof action);
+    action.sa_handler = on_resize;
+    sigaction(SIGWINCH, &action, NULL);
+    if (tcgetattr(STDIN_FILENO, &saved_terminal) == 0) {
+        have_saved_terminal = 1;
+        atexit(restore_terminal);
+        struct termios raw = saved_terminal;
+        cfmakeraw(&raw);
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+    }
+
+    static unsigned char incoming[READ_BYTES + 8];
+    size_t incoming_count = 0;
+    unsigned char keys[32768];
+    // While old output replays, the view answers questions that were asked long ago. Those answers
+    // would land in the program as if typed, so they're dropped until the replay has settled.
+    // Anything typed before the server has said hello just waits in the terminal for it.
+    double accept_input_after = -1;
+    int size_sent_after_replay = 0;
+
+    for (;;) {
+        if (size_changed && (accept_input_after >= 0)) {
+            size_changed = 0;
+            struct winsize size;
+            if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0) {
+                unsigned char payload[4] = {(unsigned char)(size.ws_row >> 8), (unsigned char)size.ws_row,
+                                            (unsigned char)(size.ws_col >> 8), (unsigned char)size.ws_col};
+                if (send_input(server, 'W', payload, 4) < 0) return 0;
+            }
+        }
+        struct pollfd fds[2] = {{server, POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
+        int ready = poll(fds, accept_input_after >= 0 ? 2 : 1, 200);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            return 0;
+        }
+        if (accept_input_after >= 0 && (fds[1].revents & (POLLIN | POLLHUP))) {
+            ssize_t got = read(STDIN_FILENO, keys, sizeof keys);
+            if (got <= 0) return 0;  // The view went away. The server and its program carry on.
+            int accepting = accept_input_after >= 0 && now_seconds() >= accept_input_after;
+            if (accepting && send_input(server, 'D', keys, (size_t)got) < 0) return 0;
+        }
+        if (fds[0].revents & (POLLIN | POLLHUP)) {
+            ssize_t got = read(server, incoming + incoming_count, sizeof incoming - incoming_count);
+            if (got <= 0) return 1;
+            incoming_count += (size_t)got;
+            size_t offset = 0;
+            while (incoming_count - offset >= 5) {
+                unsigned char type = incoming[offset];
+                uint32_t length = ((uint32_t)incoming[offset + 1] << 24) | ((uint32_t)incoming[offset + 2] << 16)
+                    | ((uint32_t)incoming[offset + 3] << 8) | incoming[offset + 4];
+                if (incoming_count - offset < 5 + (size_t)length) break;
+                const unsigned char *payload = incoming + offset + 5;
+                if (type == 'D') {
+                    if (write_all(STDOUT_FILENO, payload, length) < 0) return 0;
+                } else if (type == 'R') {
+                    accept_input_after = length && payload[0] ? now_seconds() + 0.15 : 0;
+                    if (!size_sent_after_replay) {
+                        size_sent_after_replay = 1;
+                        size_changed = 1;
+                    }
+                } else if (type == 'X') {
+                    return length ? payload[0] : 0;
+                }
+                offset += 5 + (size_t)length;
+            }
+            memmove(incoming, incoming + offset, incoming_count - offset);
+            incoming_count -= offset;
+        }
+    }
+}
+
+int main(int argc, char **argv) {
+    // tiri-session attach <socket> [--cwd DIR] [--argv0 NAME] -- program args...
+    if (argc >= 3 && strcmp(argv[1], "attach") == 0) {
+        launch_options options;
+        memset(&options, 0, sizeof options);
+        options.socket_path = argv[2];
+        int index = 3;
+        while (index < argc) {
+            if (strcmp(argv[index], "--cwd") == 0 && index + 1 < argc) {
+                options.directory = argv[index + 1];
+                index += 2;
+            } else if (strcmp(argv[index], "--argv0") == 0 && index + 1 < argc) {
+                options.argv0 = argv[index + 1];
+                index += 2;
+            } else if (strcmp(argv[index], "--") == 0) {
+                options.command = argv + index + 1;
+                break;
+            } else {
+                break;
+            }
+        }
+        int server = connect_to(options.socket_path);
+        if (server < 0) {
+            if (!options.command || !options.command[0]) {
+                fprintf(stderr, "tiri-session: nothing is running at %s\n", options.socket_path);
+                return 3;
+            }
+            if (ioctl(STDIN_FILENO, TIOCGWINSZ, &options.size) != 0 || options.size.ws_row == 0) {
+                options.size.ws_row = 24;
+                options.size.ws_col = 80;
+            }
+            start_server(&options);
+            for (int attempt = 0; attempt < 100 && server < 0; attempt++) {
+                server = connect_to(options.socket_path);
+                if (server < 0) usleep(20000);
+            }
+            if (server < 0) die("connect");
+        }
+        return relay(server);
+    }
+    fprintf(stderr, "usage: tiri-session attach <socket> [--cwd DIR] [--argv0 NAME] -- program args...\n");
+    return 64;
+}

@@ -10,6 +10,7 @@ cd "$(dirname "$0")"
 CONFIG="${1:-release}"
 swift build -c "$CONFIG" --product TiriApp
 swift build -c "$CONFIG" --product tiri
+swift build -c "$CONFIG" --product tiri-session
 BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 
 APP="build/Tiri.app"
@@ -17,12 +18,14 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin"
 cp "$BIN_DIR/TiriApp" "$APP/Contents/MacOS/Tiri"
 cp "$BIN_DIR/tiri" "$APP/Contents/Resources/bin/tiri"
+cp "$BIN_DIR/tiri-session" "$APP/Contents/Resources/bin/tiri-session"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Ad-hoc is enough to run locally and to ask for notifications.
 IDENTITY="${TIRI_SIGN_IDENTITY:--}"
 codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Resources/bin/tiri"
+codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Resources/bin/tiri-session"
 codesign --force --sign "$IDENTITY" --timestamp=none "$APP"
 
 mkdir -p "$HOME/.local/bin"

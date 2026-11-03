@@ -86,13 +86,24 @@ struct LocalTerminalBackend: TerminalBackend {
         let directory = FileManager.default.fileExists(atPath: cwd) ? cwd : NSHomeDirectory()
 
         let name = (shellPath as NSString).lastPathComponent
+        var program: [String]
+        var execName: String
         if let command, !command.trimmingCharacters(in: .whitespaces).isEmpty {
             // An interactive login shell, so the user's aliases and PATH apply: the command
             // behaves as it does when they type it in their own terminal.
-            return TerminalLaunch(executable: shellPath, args: ["-l", "-i", "-c", command], execName: name,
-                                  environment: list, cwd: directory)
+            program = [shellPath, "-l", "-i", "-c", command]
+            execName = name
+        } else {
+            program = [shellPath, "-l"]
+            execName = "-" + name
         }
-        return TerminalLaunch(executable: shellPath, args: ["-l"], execName: "-" + name, environment: list, cwd: directory)
+        // With a session, the program runs under a small server that outlives Tiri.
+        if AppModel.shared.settings.terminalKeepRunning, let helper = TerminalSessions.helper {
+            TerminalSessions.prepareDirectory()
+            let arguments = ["attach", TerminalSessions.socketPath(for: itemID), "--cwd", directory, "--argv0", execName, "--"] + program
+            return TerminalLaunch(executable: helper, args: arguments, execName: "tiri-session", environment: list, cwd: directory)
+        }
+        return TerminalLaunch(executable: program[0], args: Array(program.dropFirst()), execName: execName, environment: list, cwd: directory)
     }
 
     private func userShell() -> String {
@@ -608,6 +619,11 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         focus()
     }
 
+    /// The tab was closed on purpose, so what's running in it stops too.
+    func endSession() {
+        if started, !exited { TerminalSessions.end(itemID) }
+    }
+
     func teardown() {
         monitor?.invalidate()
         monitor = nil
@@ -641,10 +657,17 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         return trackedCwd
     }
 
-    private var shellPID: pid_t { started && !exited ? terminalView.process.shellPid : 0 }
+    private var shellPID: pid_t {
+        if let session = TerminalSessions.shellPID(for: itemID) { return session }
+        return started && !exited ? terminalView.process.shellPid : 0
+    }
 
     private var foregroundPID: pid_t? {
         guard started, !exited else { return nil }
+        // In a session, the view's own terminal only ever has the relay in it.
+        if let session = TerminalSessions.shellPID(for: itemID) {
+            return TerminalSessions.foregroundGroup(of: session)
+        }
         let fd = terminalView.process.childfd
         guard fd >= 0 else { return nil }
         let group = tcgetpgrp(fd)

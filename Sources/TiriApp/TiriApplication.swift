@@ -44,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let working = AppModel.shared.workingTerminalCount
         guard working > 0, !AppModel.shared.skipQuitConfirmation else { return .terminateNow }
+        // They'll still be running when Tiri comes back.
+        if AppModel.shared.settings.terminalKeepRunning, TerminalSessions.helper != nil { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = working == 1 ? "1 terminal is still working" : "\(working) terminals are still working"
         alert.informativeText = "Quitting stops them. Agent terminals resume where they left off when you reopen Tiri."
