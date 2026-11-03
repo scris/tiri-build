@@ -104,6 +104,10 @@ final class AppModel {
     @ObservationIgnored let settingsStore = SettingsStore()
     @ObservationIgnored let fileIndex = FileIndexStore()
     @ObservationIgnored let terminalFolderIndex = FileIndexStore()
+    var recordingShortcutFor: String?
+    var settingsAnchor: String?
+    @ObservationIgnored private var recordedStrokes: [KeyStroke] = []
+    @ObservationIgnored private var recordingWork: DispatchWorkItem?
     @ObservationIgnored var skipQuitConfirmation = false
     @ObservationIgnored var launchMilliseconds: Double?
     @ObservationIgnored var lastOpenMilliseconds: Double?
@@ -142,9 +146,9 @@ final class AppModel {
             activeID = first.id
         }
         // A settings.json tab from before Settings had a screen becomes the screen.
-        let settingsFile = settingsStore.settingsURL.path
+        let settingsFiles = [settingsStore.settingsURL.path, settingsStore.keybindingsURL.path]
         for index in workspaces.indices {
-            for item in workspaces[index].items where item.filePath == settingsFile {
+            for item in workspaces[index].items where item.filePath.map(settingsFiles.contains) == true {
                 workspaces[index].updateItem(item.id) { $0.content = .settings }
             }
         }
@@ -1415,10 +1419,89 @@ final class AppModel {
         startTerminal(command: preset.command + " " + ShellQuote.quote(SettingsSchema.agentPrompt), named: preset.name)
     }
 
-    func openKeybindingsFile() {
-        settingsStore.ensureFilesExist()
-        open(path: settingsStore.keybindingsURL.path, intent: .pinned)
-        requestFocus()
+    func openKeyboardShortcuts() {
+        openSettings()
+        settingsAnchor = SettingsView.shortcutsAnchor
+    }
+
+    // MARK: Keyboard shortcuts
+
+    /// Saves a shortcut, or removes it if the key is nil. Returns why it couldn't, if it couldn't.
+    @discardableResult
+    func setShortcut(_ command: String, key: String?) -> String? {
+        if let key, let problem = Keymap.problem(with: key, command: command, bindings: keybindings) {
+            showToast(title: "That shortcut won't work", detail: problem, symbol: "keyboard", tint: .orange)
+            return problem
+        }
+        let strokes = key.flatMap(Keymap.parseStrokes)
+        let previous = keybindings.first { $0.strokes == strokes && $0.command != command }
+        do {
+            try settingsStore.writeKeybindings(Keymap.rebound(user: settingsStore.userKeybindings, command: command, key: key))
+        } catch {
+            return "\(error)"
+        }
+        if let previous {
+            let title = allCommands.first { $0.id == previous.command }?.title ?? previous.command
+            showToast(title: "\(previous.symbol) was \(title)", detail: "That command has no shortcut on this key now.", symbol: "keyboard", tint: .secondary)
+        }
+        return nil
+    }
+
+    @discardableResult
+    func resetShortcut(_ command: String) -> String? {
+        do {
+            try settingsStore.writeKeybindings(Keymap.reset(user: settingsStore.userKeybindings, command: command))
+            return nil
+        } catch {
+            return "\(error)"
+        }
+    }
+
+    func shortcutIsCustom(_ command: String) -> Bool {
+        settingsStore.userKeybindings.contains { $0.command == command || $0.command == "-" + command }
+    }
+
+    func beginRecordingShortcut(for command: String) {
+        recordingWork?.cancel()
+        recordedStrokes = []
+        keyResolver.reset()
+        recordingShortcutFor = command
+    }
+
+    func cancelRecordingShortcut() {
+        recordingWork?.cancel()
+        recordedStrokes = []
+        recordingShortcutFor = nil
+    }
+
+    /// One press makes a shortcut. A second within a moment makes it a chord like ⌘K ⌘S.
+    func recordKey(_ stroke: KeyStroke) {
+        guard let command = recordingShortcutFor else { return }
+        recordingWork?.cancel()
+        if stroke.modifiers.isEmpty, stroke.key == "escape" {
+            cancelRecordingShortcut()
+            return
+        }
+        if stroke.modifiers.isEmpty, stroke.key == "backspace" || stroke.key == "delete", recordedStrokes.isEmpty {
+            cancelRecordingShortcut()
+            setShortcut(command, key: nil)
+            return
+        }
+        recordedStrokes.append(stroke)
+        if recordedStrokes.count == 2 {
+            finishRecording()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in self?.finishRecording() }
+        recordingWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: work)
+    }
+
+    private func finishRecording() {
+        guard let command = recordingShortcutFor else { return }
+        let key = recordedStrokes.map(\.description).joined(separator: " ")
+        cancelRecordingShortcut()
+        if !key.isEmpty { setShortcut(command, key: key) }
     }
 
     private func applySettings() {
@@ -1706,6 +1789,12 @@ final class SettingsStore {
         let updated = SettingsFile.setting(key, toJSON: SettingsSchema.json(value), in: text)
         _ = try TiriSettings.parse(updated)
         try updated.write(to: settingsURL, atomically: true, encoding: .utf8)
+        fileChanged()
+    }
+
+    func writeKeybindings(_ list: [(key: String, command: String)]) throws {
+        ensureFilesExist()
+        try Keymap.fileContents(user: list).write(to: keybindingsURL, atomically: true, encoding: .utf8)
         fileChanged()
     }
 

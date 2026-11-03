@@ -201,6 +201,86 @@ struct LinkCase: Sendable, CustomTestStringConvertible {
     }
 }
 
+@Suite struct ToolCallPathTests {
+    /// What Claude Code actually prints above a diff.
+    @Test func theArgumentOfAToolCallIsThePath() {
+        let line = "Update(resume/opportunities.html)"
+        #expect(PathLinkDetector.candidates(in: line).map(\.path) == ["resume/opportunities.html"])
+        #expect(PathLinkDetector.candidates(atColumn: 12, in: line).first?.path == "resume/opportunities.html")
+        #expect(PathLinkDetector.candidates(atColumn: 12, in: line).first?.range == 7..<32)
+        // Clicking the word `Update` means the same thing.
+        #expect(PathLinkDetector.candidates(atColumn: 2, in: line).first?.path == "resume/opportunities.html")
+    }
+
+    @Test func aLocationInsideAToolCallIsKept() {
+        let found = PathLinkDetector.candidates(in: "⏺ Read(src/a.ts:12)")
+        #expect(found.first?.path == "src/a.ts")
+        #expect(found.first?.line == 12)
+    }
+
+    @Test func searchFindsAToolCallPath() {
+        let resolver = PathResolver(cwd: "/p", workspaceFolders: [], probe: { $0 == "/w/site/resume/opportunities.html" ? false : nil },
+                                    search: { path in path == "resume/opportunities.html" ? ["/w/site/resume/opportunities.html"] : [] })
+        let found = resolver.resolveAll(atColumn: 12, in: "Update(resume/opportunities.html)")
+        #expect(found.map(\.path) == ["/w/site/resume/opportunities.html"])
+    }
+
+    @Test func aFileWithBracketsInItsNameStillOpens() {
+        let resolver = PathResolver(cwd: "/p", workspaceFolders: [], probe: { $0 == "/p/report(final).pdf" ? false : nil })
+        #expect(resolver.resolve(atColumn: 9, in: "report(final).pdf")?.path == "/p/report(final).pdf")
+    }
+
+    @Test func plainBracketsAroundWordsAreNotPaths() {
+        #expect(PathLinkDetector.candidates(in: "Bash(ls)").allSatisfy { $0.path != "ls" })
+    }
+}
+
+@Suite struct ShortcutEditingTests {
+    func bindings(_ user: [(key: String, command: String)]) -> [Keybinding] { Keymap.build(user: user) }
+
+    @Test func reboundReplacesTheDefaults() {
+        let user = Keymap.rebound(user: [], command: "nextTab", key: "cmd+j")
+        let keys = bindings(user).filter { $0.command == "nextTab" }.map(\.symbol)
+        #expect(keys == [Keymap.parseStrokes("cmd+j")![0].symbol])
+    }
+
+    @Test func aKeyMovesToTheNewCommand() {
+        let user = Keymap.rebound(user: [], command: "splitDown", key: "cmd+b")
+        let built = bindings(user)
+        #expect(built.first { $0.strokes == Keymap.parseStrokes("cmd+b") }?.command == "splitDown")
+        #expect(!built.contains { $0.command == "toggleSidebar" })
+    }
+
+    @Test func unsetLeavesNoKey() {
+        let user = Keymap.rebound(user: [], command: "toggleSidebar", key: nil)
+        #expect(!bindings(user).contains { $0.command == "toggleSidebar" })
+    }
+
+    @Test func resetRestoresTheDefaults() {
+        var user = Keymap.rebound(user: [], command: "toggleSidebar", key: "cmd+j")
+        user = Keymap.reset(user: user, command: "toggleSidebar")
+        #expect(user.isEmpty)
+        #expect(bindings(user).contains { $0.command == "toggleSidebar" && $0.strokes == Keymap.parseStrokes("cmd+b") })
+    }
+
+    @Test func theFileParsesBack() throws {
+        let user = Keymap.rebound(user: [], command: "splitDown", key: "cmd+k cmd+d")
+        let parsed = try Keymap.parseUserFile(Keymap.fileContents(user: user))
+        #expect(bindings(parsed).contains { $0.command == "splitDown" && $0.strokes.count == 2 })
+    }
+
+    @Test func badKeysAreExplained() {
+        let all = bindings([])
+        #expect(Keymap.problem(with: "cmd+j", command: "splitDown", bindings: all) == nil)
+        #expect(Keymap.problem(with: "f5", command: "splitDown", bindings: all) == nil)
+        #expect(Keymap.problem(with: "a", command: "splitDown", bindings: all) != nil)
+        #expect(Keymap.problem(with: "shift+a", command: "splitDown", bindings: all) != nil)
+        #expect(Keymap.problem(with: "cmd+k", command: "find", bindings: all) != nil)
+        #expect(Keymap.problem(with: "cmd+b cmd+x", command: "find", bindings: all) != nil)
+        #expect(Keymap.problem(with: "not a key!!", command: "find", bindings: all) != nil)
+    }
+}
+
 @Suite struct PathSearchTests {
     let files = ["/p/web/resume/opportunities.html", "/p/old/resume/opportunities.html", "/p/docs/opportunities.html", "/p/Makefile"]
     func named(_ name: String) -> [String] { files.filter { ($0 as NSString).lastPathComponent == name } }

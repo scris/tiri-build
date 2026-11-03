@@ -109,6 +109,9 @@ case "settings.explain":
     }
 case "settings.get", "settings.set", "settings.reset":
     print(cell(response.result?["display"]))
+case "keys.set", "keys.unset", "keys.reset":
+    let key = cell(response.result?["key"])
+    print(key.isEmpty ? "no shortcut" : key)
 case "open", "preview", "term":
     if let item = response.result?["item"]?.stringValue { print(item) }
 case "focus", "close", "notify", "theme", "web-dark", "reveal", "run", "send", "workspace.switch",

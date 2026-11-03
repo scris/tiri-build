@@ -434,6 +434,54 @@ public enum Keymap {
     }
 }
 
+extension Keymap {
+    /// Why this key can't be used for this command, if there's a reason.
+    public static func problem(with key: String, command: String, bindings: [Keybinding]) -> String? {
+        guard let strokes = parseStrokes(key) else { return "Can't read the key \"\(key)\". Write it like cmd+shift+p." }
+        guard strokes.count <= 2 else { return "A shortcut can be at most two key presses." }
+        let first = strokes[0]
+        let isFunctionKey = first.key.hasPrefix("f") && first.key.count > 1 && first.key.dropFirst().allSatisfy(\.isNumber)
+        if first.modifiers.subtracting(.shift).isEmpty, !isFunctionKey {
+            return "A shortcut needs ⌘, ⌃ or ⌥, or typing that key would stop working."
+        }
+        for binding in bindings where binding.command != command {
+            if binding.strokes.count > strokes.count, Array(binding.strokes.prefix(strokes.count)) == strokes {
+                return "\(strokes.map(\.symbol).joined(separator: " ")) already starts \(binding.symbol) (\(binding.command))."
+            }
+            if strokes.count > binding.strokes.count, Array(strokes.prefix(binding.strokes.count)) == binding.strokes {
+                return "\(binding.symbol) is already \(binding.command), so it can't start a longer shortcut."
+            }
+        }
+        return nil
+    }
+
+    /// The user's list with this command on this key, or on no key if it's nil. Its default keys
+    /// are switched off, so the command ends up on exactly what was asked for.
+    public static func rebound(user: [(key: String, command: String)], command: String, key: String?) -> [(key: String, command: String)] {
+        var result = user.filter { $0.command != command && $0.command != "-" + command }
+        for (defaultKey, defaultCommand) in defaults where defaultCommand == command {
+            result.append((defaultKey, "-" + command))
+        }
+        if let key {
+            let strokes = parseStrokes(key)
+            // Whoever had this key loses it, so there's no stale entry left behind.
+            result.removeAll { !$0.command.hasPrefix("-") && parseStrokes($0.key) == strokes }
+            result.append((key, command))
+        }
+        return result
+    }
+
+    public static func reset(user: [(key: String, command: String)], command: String) -> [(key: String, command: String)] {
+        user.filter { $0.command != command && $0.command != "-" + command }
+    }
+
+    public static func fileContents(user: [(key: String, command: String)]) -> String {
+        let entries = user.map { "  " + SettingsSchema.json(.object(["key": .string($0.key), "command": .string($0.command)])) }
+        return "// Tiri saves your keyboard shortcuts here. Change them in Settings or with tiri keys.\n[\n"
+            + entries.joined(separator: ",\n") + (entries.isEmpty ? "" : "\n") + "]\n"
+    }
+}
+
 /// Resolves key presses, including two-stroke chords like ⌘K ⌘\.
 public struct KeyResolver: Sendable {
     public enum Outcome: Equatable, Sendable {

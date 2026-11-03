@@ -70,6 +70,30 @@ public enum PathLinkDetector {
     /// Characters that end an unquoted token.
     private static let tokenBreaks: Set<Character> = [" ", "\t", "|", "\"", "'", "`", "<", ">", "│", "┃", "·", "•", "❯", "›", "⎿", "→"]
 
+    /// The argument of something shaped like `Update(src/a.ts)`.
+    private static func toolCallArgument(_ line: [Character], start: Int, end: Int) -> Range<Int>? {
+        guard let open = line[start..<end].firstIndex(of: "("), open > start,
+              line[start..<open].allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }),
+              let close = line[open..<end].lastIndex(of: ")"), close > open + 1 else { return nil }
+        // Nothing but punctuation may follow the closing bracket.
+        guard line[(close + 1)..<end].allSatisfy({ trailingPunctuation.contains($0) }) else { return nil }
+        return (open + 1)..<close
+    }
+
+    /// The nearest brackets around a column, within one token.
+    private static func enclosed(_ line: [Character], start: Int, end: Int, column: Int) -> Range<Int>? {
+        let pairs: [Character: Character] = ["(": ")", "[": "]", "{": "}"]
+        var open = column
+        while open >= start {
+            if let close = pairs[line[open]], open != column,
+               let closing = line[column..<end].firstIndex(of: close), closing > open + 1 {
+                return (open + 1)..<closing
+            }
+            open -= 1
+        }
+        return nil
+    }
+
     /// Every path-looking candidate in a line, left to right. Conservative: bare words
     /// without a slash or extension are skipped. Use `candidates(atColumn:in:)` for hover.
     public static func candidates(in rawLine: String) -> [PathCandidate] {
@@ -95,7 +119,11 @@ public enum PathLinkDetector {
             }
             var end = index
             while end < line.count, !isTokenBreak(line, end) { end += 1 }
-            if let candidate = cleanToken(line, start: index, end: end), looksLikePath(candidate.path, quoted: false) {
+            // Claude Code prints what it touched as `Update(src/a.ts)`.
+            if let inner = toolCallArgument(line, start: index, end: end), let candidate = cleanToken(line, start: inner.lowerBound, end: inner.upperBound),
+               looksLikePath(candidate.path, quoted: false) {
+                results.append(candidate)
+            } else if let candidate = cleanToken(line, start: index, end: end), looksLikePath(candidate.path, quoted: false) {
                 results.append(candidate)
                 // A location after the token may have swallowed further text.
                 index = max(index, candidate.range.upperBound)
@@ -123,6 +151,14 @@ public enum PathLinkDetector {
             while start > 0, !isTokenBreak(line, start - 1) { start -= 1 }
             var end = column + 1
             while end < line.count, !isTokenBreak(line, end) { end += 1 }
+            // Whatever is in brackets around the cursor comes first. A file really named
+            // `a(b.c).txt` still opens, because what exists as written beats any search.
+            // In `Update(src/a.ts)`, the path is what's meant wherever you click.
+            if let inner = toolCallArgument(line, start: start, end: end) ?? enclosed(line, start: start, end: end, column: column),
+               let candidate = cleanToken(line, start: inner.lowerBound, end: inner.upperBound),
+               candidate.path.contains("/") || candidate.path.contains("."), !results.contains(candidate) {
+                results.insert(candidate, at: 0)
+            }
             if let candidate = cleanToken(line, start: start, end: end),
                candidate.range.contains(column) {
                 // On a diff header, `a/foo.swift` means `foo.swift`, even if `a/foo.swift` exists.

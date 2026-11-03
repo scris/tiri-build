@@ -44,7 +44,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Web:** address bar, back, forward, reload, auto-reload for local files, forced dark.
 - **Control API and CLI:** everything in spec §5, plus `send`, `read`, `layout`, `tree`, `commands`, `run`, `perf`, `hook`, `hooks`.
 - **Navigation:** quick open, command palette, all §6 keybindings, chords, breadcrumbs, find, tab drag and drop.
-- **Settings:** a screen built from one list of settings, and `tiri settings` for agents, with a one-click prompt from the screen to your agent. Nobody needs to touch JSON. The file is only where they're stored.
+- **Settings:** a screen built from one list of settings, and `tiri settings` for agents, with a one-click prompt from the screen to your agent. Keyboard shortcuts too, with `tiri keys`. Nobody needs to touch JSON. The file is only where they're stored.
 
 ## What is stubbed or thin
 
@@ -71,7 +71,6 @@ Open times run from the request until the content is showing, except for Office 
 ## Known bugs
 
 - ⌘-clicking a labelled hyperlink whose target has no scheme can still show SwiftTerm's "Link blocked" alert, because SwiftTerm doesn't expose link targets. Text that looks like a path never reaches it. Fixing it needs a patch to SwiftTerm.
-- Keyboard shortcuts are still changed in `keybindings.json`. They don't have a screen yet.
 - In dark mode, photos inside a PDF or Office file invert with the page, because the viewer can't tell them apart. The moon button shows true colors.
 - Large Office files show Quick Look's spinner for a few seconds before they appear.
 - A nested `claude -p` inside a hooked terminal can overwrite the stored session ID, so a relaunch resumes the wrong conversation.

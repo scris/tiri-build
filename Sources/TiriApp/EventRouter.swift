@@ -58,6 +58,11 @@ final class EventRouter {
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
+        // While a shortcut is being recorded, every key press is the shortcut.
+        if let model, model.recordingShortcutFor != nil {
+            if let stroke = Self.stroke(from: event) { model.recordKey(stroke) }
+            return nil
+        }
         guard let model, event.window === model.window, NSApp.modalWindow == nil, event.window?.attachedSheet == nil,
               let stroke = Self.stroke(from: event) else { return event }
         // With a web view focused, WebKit sends one key press through the app several times.

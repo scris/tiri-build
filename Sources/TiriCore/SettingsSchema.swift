@@ -199,9 +199,10 @@ public enum SettingsSchema {
 
     /// What Tiri hands you to paste into any agent. It's all the agent needs to know.
     public static let agentPrompt = """
-    Help me with my Tiri settings using the tiri CLI. Run `tiri settings explain` to see every setting, \
-    its current value and what it does. Tell me in plain words what's worth changing for how I work, \
-    and when I ask for a change, make it with `tiri settings set <key> <value>`. Don't edit any settings file.
+    Help me with my Tiri settings and keyboard shortcuts using the tiri CLI. Run `tiri settings explain` to see every \
+    setting, its current value and what it does, and `tiri keys` to see every command and its shortcut. Tell me in plain \
+    words what's worth changing for how I work. When I ask for a change, make it with `tiri settings set <key> <value>` \
+    or `tiri keys set <command> <key>`. Don't edit any settings file.
     """
 
     public static func agentPrompt(about definition: SettingDefinition) -> String {

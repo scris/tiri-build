@@ -37,7 +37,7 @@ When an agent runs `tiri open report.md` in a Tiri terminal, the file floats the
 
 ## Everyday use
 
-Shortcuts follow Cursor. All of them can be changed in `keybindings.json`.
+Shortcuts follow Cursor. All of them can be changed in Settings, or by asking your agent.
 
 | Action | Shortcut |
 |---|---|
@@ -128,7 +128,7 @@ tiri settings explain              # every setting, its value and what it does
 tiri settings set code.wordWrap on
 ```
 
-Keyboard shortcuts are still in `~/.config/tiri/keybindings.json`, in the same shape as Cursor's.
+Keyboard shortcuts work the same way. They're on that screen, where you click a shortcut and press the keys, and your agent can change them with `tiri keys`.
 
 ## Development
 

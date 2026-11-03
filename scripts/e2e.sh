@@ -133,13 +133,14 @@ printf 'a' > "$PROJECT/resume/opportunities.html"
 printf 'b' > "$WORK/other/resume/opportunities.html"
 LINK_ID=$("$CLI" term --cwd "$PROJECT")
 sleep 2.5
-"$CLI" send "$LINK_ID" "clear; printf '/only/single.md\\n/nothing/missing.html\\nplain words\\n'" --enter
+"$CLI" send "$LINK_ID" "clear; printf '/only/single.md\\n/nothing/missing.html\\nplain words\\nUpdate(only/single.md)\\n'" --enter
 for _ in $(seq 1 50); do [ "$("$CLI" read "$LINK_ID" | head -1)" = "/only/single.md" ] && break; sleep 0.2; done
 check "follow a path with one match" "$CLI" follow "$LINK_ID" 0 3
 sleep 0.6
 expect "one match opens as a peek" "single.md" "$CLI" items
 check "follow a path with no match shows a toast" "$CLI" follow "$LINK_ID" 1 3
 refuses "follow plain words" "$CLI" follow "$LINK_ID" 2 2
+check "follow a path inside a tool call" "$CLI" follow "$LINK_ID" 3 10
 check "close the link terminal" "$CLI" close "$LINK_ID"
 
 check "hook payload is accepted" "$CLI" hook claude '{"hook_event_name":"Stop"}'
@@ -156,6 +157,13 @@ check "settings open" "$CLI" settings open
 expect "settings is a tab" "settings" "$CLI" items
 SETTINGS_ID=$("$CLI" items | grep -m1 '	settings	' | cut -f1)
 check "close settings" "$CLI" close "$SETTINGS_ID"
+expect "keys lists commands" "toggleSidebar" "$CLI" keys
+expect "keys set takes effect" "⌘J" "$CLI" keys set toggleSidebar cmd+j
+expect "commands show the new key" "⌘J" bash -c "'$CLI' keys | grep toggleSidebar"
+expect "keys unset removes it" "no shortcut" "$CLI" keys unset toggleSidebar
+expect "keys reset restores it" "⌘B" "$CLI" keys reset toggleSidebar
+refuses "keys set refuses a plain letter" "$CLI" keys set toggleSidebar a
+refuses "keys set checks the command" "$CLI" keys set nope cmd+j
 check "theme dark" "$CLI" theme dark
 expect "theme written to settings" '"theme": "dark"' cat "$TIRI_CONFIG_HOME/settings.json"
 check "theme system" "$CLI" theme system

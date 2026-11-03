@@ -30,14 +30,29 @@ struct SettingsView: View {
         }
     }
 
+    static let shortcutsAnchor = "keyboard-shortcuts"
+
+    private var visibleCommands: [AppCommand] {
+        let text = query.trimmingCharacters(in: .whitespaces)
+        var seen = Set<String>()
+        return model.allCommands.filter { command in
+            guard seen.insert(command.id).inserted else { return false }
+            guard !text.isEmpty else { return true }
+            let keys = model.shortcutSymbol(for: command.id) ?? ""
+            return [command.title, command.category, command.id, keys].contains { $0.localizedCaseInsensitiveContains(text) }
+        }
+    }
+
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 AskAgentCard()
                 TextField("Search settings", text: $query)
                     .textFieldStyle(.roundedBorder)
                 let shown = visible
-                if shown.isEmpty {
+                let commands = visibleCommands
+                if shown.isEmpty, commands.isEmpty {
                     Text("No settings match \u{201C}\(query)\u{201D}.")
                         .foregroundStyle(.secondary)
                 }
@@ -57,6 +72,24 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if !commands.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Keyboard Shortcuts").font(.headline)
+                            Text("Click a shortcut, then press the keys. Esc cancels, Delete removes it.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        VStack(spacing: 0) {
+                            ForEach(Array(commands.enumerated()), id: \.element.id) { index, command in
+                                if index > 0 { Divider() }
+                                ShortcutRow(command: command)
+                            }
+                        }
+                        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
+                    }
+                    .id(Self.shortcutsAnchor)
+                }
             }
             .frame(maxWidth: 680)
             .padding(.horizontal, 24)
@@ -64,6 +97,19 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .onAppear { scrollToAnchor(proxy) }
+        .onChange(of: model.settingsAnchor) { _, _ in scrollToAnchor(proxy) }
+        .onDisappear { model.cancelRecordingShortcut() }
+        }
+    }
+
+    private func scrollToAnchor(_ proxy: ScrollViewProxy) {
+        guard let anchor = model.settingsAnchor else { return }
+        // After this tab's first layout, or there's nothing to scroll to yet.
+        DispatchQueue.main.async {
+            proxy.scrollTo(anchor, anchor: .top)
+            model.settingsAnchor = nil
+        }
     }
 }
 
@@ -75,7 +121,7 @@ struct AskAgentCard: View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Ask your AI").font(.headline)
-                Text("Your agent can explain every setting here and change it for you. Send it this prompt:")
+                Text("Your agent can explain every setting and shortcut here and change them for you. Send it this prompt:")
                     .foregroundStyle(.secondary)
             }
             Text(SettingsSchema.agentPrompt)
@@ -184,6 +230,53 @@ struct SettingRow: View {
                         pairs: value.objectValue.sorted { $0.key < $1.key }.map { ($0.key, $0.value.stringValue ?? "") }) { pairs in
                 set(.object(Dictionary(pairs.map { ($0.0, JSONValue.string($0.1)) }, uniquingKeysWith: { _, last in last })))
             }
+        }
+    }
+}
+
+struct ShortcutRow: View {
+    let command: AppCommand
+    @Environment(AppModel.self) private var model
+
+    private var isRecording: Bool { model.recordingShortcutFor == command.id }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(command.title)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if model.shortcutIsCustom(command.id), !isRecording {
+                Button {
+                    model.resetShortcut(command.id)
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Back to the default")
+            }
+            Button {
+                if isRecording {
+                    model.cancelRecordingShortcut()
+                } else {
+                    model.beginRecordingShortcut(for: command.id)
+                }
+            } label: {
+                Text(isRecording ? "Press keys…" : (model.shortcutSymbol(for: command.id) ?? "Add"))
+                    .monospacedDigit()
+                    .foregroundStyle(isRecording ? Color.accentColor : (model.shortcutSymbol(for: command.id) == nil ? .secondary : .primary))
+                    .frame(minWidth: 70)
+            }
+            .help("Click, then press the keys")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("Copy Prompt About This Shortcut") {
+                Clipboard.copy("Change the Tiri keyboard shortcut for \"\(command.title)\" (\(command.id)) to what I ask, using `tiri keys set \(command.id) <key>`. Run `tiri keys` to see what's taken. Don't edit any file.")
+            }
+            Button("Remove Shortcut") { model.setShortcut(command.id, key: nil) }
+            Button("Reset to Default") { model.resetShortcut(command.id) }
         }
     }
 }

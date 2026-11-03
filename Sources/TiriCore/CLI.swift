@@ -215,6 +215,24 @@ public enum CLIParser {
             if args.count == 2 { payload["item"] = .string(args[1]) }
             return request("web-dark", payload)
 
+        case "keys":
+            let usage = "usage: tiri keys [set <command> <key> | unset <command> | reset <command>]   (keys look like cmd+shift+p, or cmd+k cmd+s)"
+            switch args.first {
+            case nil:
+                return request("commands")
+            case "set":
+                guard args.count >= 3 else { throw UsageError(usage) }
+                return request("keys.set", ["command": .string(args[1]), "key": .string(args[2...].joined(separator: " "))])
+            case "unset":
+                guard args.count == 2 else { throw UsageError(usage) }
+                return request("keys.unset", ["command": .string(args[1])])
+            case "reset":
+                guard args.count == 2 else { throw UsageError(usage) }
+                return request("keys.reset", ["command": .string(args[1])])
+            default:
+                throw UsageError(usage)
+            }
+
         case "follow":
             guard args.count == 3, let row = Int(args[1]), let col = Int(args[2]) else {
                 throw UsageError("usage: tiri follow <item-id> <row> <col>   (what ⌘-click does; counts from 0)")
@@ -293,6 +311,7 @@ public enum CLIParser {
       tiri theme light|dark|system
       tiri web-dark on|off [<item-id>]
       tiri follow <item-id> <row> <col>
+      tiri keys [set <command> <key> | unset <command> | reset <command>]
       tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open]
       tiri send <item-id> <text> [--enter]
       tiri read <item-id> [--lines N]
@@ -503,7 +522,16 @@ public enum AgentGuide {
     tiri settings open                    # open the settings screen for the user
     ```
 
-    When someone asks about their settings, run `tiri settings explain`, describe them in plain words, and change what they ask for.
+    Keyboard shortcuts work the same way:
+
+    ```sh
+    tiri keys                             # every command and its shortcut
+    tiri keys set splitDown cmd+shift+d   # chords look like "cmd+k cmd+s"
+    tiri keys unset toggleSidebar
+    tiri keys reset splitDown
+    ```
+
+    When someone asks about their settings or shortcuts, run these, describe them in plain words, and change what they ask for.
 
     ## Anything else
 

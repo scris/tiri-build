@@ -50,7 +50,7 @@ extension AppModel {
             },
             AppCommand(id: "find", title: "Find", category: "Edit") { $0.openFind() },
             AppCommand(id: "openSettings", title: "Open Settings…", category: "Preferences") { $0.openSettings() },
-            AppCommand(id: "openKeybindings", title: "Open Keyboard Shortcuts", category: "Preferences") { $0.openKeybindingsFile() },
+            AppCommand(id: "openKeybindings", title: "Open Keyboard Shortcuts", category: "Preferences") { $0.openKeyboardShortcuts() },
             AppCommand(id: "themeSystem", title: "Theme: Follow System", category: "Preferences") { $0.setTheme(.system) },
             AppCommand(id: "themeLight", title: "Theme: Light", category: "Preferences") { $0.setTheme(.light) },
             AppCommand(id: "themeDark", title: "Theme: Dark", category: "Preferences") { $0.setTheme(.dark) },
@@ -439,6 +439,20 @@ enum ControlHandler {
         case "settings.open":
             model.openSettings()
             return .object([:])
+
+        case "keys.set", "keys.unset", "keys.reset":
+            let command = try string(request, "command")
+            guard model.allCommands.contains(where: { $0.id == command }) else {
+                throw ControlFailure("No command called \"\(command)\". Run tiri keys to see them all.")
+            }
+            let problem: String?
+            switch request.cmd {
+            case "keys.set": problem = model.setShortcut(command, key: try string(request, "key"))
+            case "keys.unset": problem = model.setShortcut(command, key: nil)
+            default: problem = model.resetShortcut(command)
+            }
+            if let problem { throw ControlFailure(problem) }
+            return .object(["command": .string(command), "key": .string(model.shortcutSymbol(for: command) ?? "")])
 
         case "theme":
             guard let mode = request.args["mode"]?.stringValue.flatMap(ThemeMode.init(rawValue:)) else {
