@@ -90,6 +90,17 @@ public enum CLIParser {
             guard !args.isEmpty else { throw UsageError("usage: tiri search <text>") }
             return request("search", ["query": .string(args.joined(separator: " "))])
 
+        case "select":
+            var options = Options(args)
+            let to = try options.value("--to")
+            guard let item = options.positional(), let text = options.positional() else {
+                throw UsageError("usage: tiri select <item-id> <text> [--to <text>]   (selects it in the file, diff or page)")
+            }
+            try options.finish()
+            var payload: [String: JSONValue] = ["item": .string(item), "text": .string(text)]
+            if let to { payload["to"] = .string(to) }
+            return request("select", payload)
+
         case "changes":
             guard args.isEmpty else { throw UsageError("usage: tiri changes") }
             return request("changes")
@@ -336,6 +347,7 @@ public enum CLIParser {
       tiri theme light|dark|system
       tiri web-dark on|off [<item-id>]
       tiri search <text>           (across the workspace's files, as ⌘⇧F does)
+      tiri select <item-id> <text> [--to <text>]   (select it in a file, diff or page, to point at it)
       tiri changes                 (files changed since the last commit)
       tiri diff <path> [--tab]     (what changed in one file; floats as a Peek)
       tiri follow <item-id> <row> <col>

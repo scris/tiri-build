@@ -126,7 +126,7 @@ case "open", "preview", "term":
     if let item = response.result?["item"]?.stringValue { print(item) }
 case "focus", "close", "notify", "theme", "web-dark", "reveal", "run", "send", "workspace.switch",
      "workspace.new", "workspace.add-folder", "workspace.remove-folder", "workspace.import",
-     "workspace.rename", "workspace.delete", "quit", "settings.open", "follow", "diff":
+     "workspace.rename", "workspace.delete", "quit", "settings.open", "follow", "diff", "select":
     break
 default:
     print(jsonString(response.result))

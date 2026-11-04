@@ -73,6 +73,13 @@ public enum AgentReference {
         imageExtensions.contains((path as NSString).pathExtension.lowercased())
     }
 
+    /// Selected text from something without lines of its own, like a web page or a PDF.
+    public static func quotation(from source: String, text: String) -> String {
+        let lines = text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: .newlines)
+        // The blank line keeps it apart from whatever is already in the input.
+        return "\nFrom \(source):\n" + lines.map { "> " + $0 }.joined(separator: "\n") + "\n"
+    }
+
     /// Pasted, agents take an image's path as the image itself. Typed, it's only text.
     public static func bracketedPaste(_ text: String) -> String {
         "\u{1B}[200~" + text + "\u{1B}[201~"

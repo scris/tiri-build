@@ -3,6 +3,7 @@ import Foundation
 import Network
 import TiriCore
 import UniformTypeIdentifiers
+import WebKit
 
 /// Claude Code connects to Tiri the way it connects to an editor, on this Mac only and with a
 /// token only it's told, so it can see your selection and take mentions into its input.
@@ -391,8 +392,20 @@ final class QuoteButton: NSButton {
     var onQuote: (() -> Void)?
 
     convenience init(textView: NSTextView, scrollView: NSScrollView, host: NSView) {
-        self.init(title: "Quote in Agent ⌘L", target: nil, action: nil)
+        self.init(host: host)
         self.textView = textView
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        let reposition: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.update() }
+        }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main, using: reposition))
+        observers.append(center.addObserver(forName: NSTextView.didChangeSelectionNotification, object: textView, queue: .main, using: reposition))
+    }
+
+    /// For a web view, which reports where its selection is rather than being asked.
+    convenience init(host: NSView) {
+        self.init(title: "", target: nil, action: nil)
         self.host = host
         target = self
         action = #selector(pressed)
@@ -409,13 +422,16 @@ final class QuoteButton: NSButton {
         setFrameSize(NSSize(width: frame.width + 18, height: 22))
         toolTip = "Add this selection to your agent's input"
         host.addSubview(self)
-        scrollView.contentView.postsBoundsChangedNotifications = true
-        let reposition: @Sendable (Notification) -> Void = { [weak self] _ in
-            MainActor.assumeIsolated { self?.update() }
-        }
-        let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main, using: reposition))
-        observers.append(center.addObserver(forName: NSTextView.didChangeSelectionNotification, object: textView, queue: .main, using: reposition))
+    }
+
+    /// A distance from the top of the host, in a view whose own coordinates are ignored.
+    func show(fromTop top: CGFloat) {
+        guard let host else { return }
+        let y = host.isFlipped ? top : host.bounds.height - top - frame.height
+        setFrameOrigin(NSPoint(x: max(host.bounds.width - frame.width - 18, 8),
+                               y: min(max(y, 4), max(host.bounds.height - frame.height - 4, 4))))
+        layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        isHidden = false
     }
 
     isolated deinit {
@@ -450,5 +466,131 @@ final class QuoteButton: NSButton {
         setFrameOrigin(NSPoint(x: max(host.bounds.width - size.width - 18, 8), y: y))
         layer?.backgroundColor = NSColor.controlAccentColor.cgColor
         isHidden = false
+    }
+}
+
+// MARK: - Selections in web views
+
+/// Tells Tiri what's selected in a web view, and where. It runs apart from the page's own
+/// scripts, which can't see it or pretend to be it, and it works with page scripts turned off.
+enum WebSelectionScript {
+    static let handlerName = "tiriSelection"
+
+    static let source = """
+    (function () {
+      let pending = null;
+      function report() {
+        pending = null;
+        const selection = window.getSelection();
+        const text = selection ? selection.toString() : '';
+        if (!selection || selection.rangeCount === 0 || !text.trim()) {
+          window.webkit.messageHandlers.tiriSelection.postMessage({ empty: true });
+          return;
+        }
+        const range = selection.getRangeAt(0);
+        const box = range.getBoundingClientRect();
+        function block(node) {
+          let element = node.nodeType === 1 ? node : node.parentElement;
+          while (element && !(element.dataset && element.dataset.line !== undefined)) element = element.parentElement;
+          return element;
+        }
+        const first = block(range.startContainer);
+        const last = block(range.endContainer);
+        window.webkit.messageHandlers.tiriSelection.postMessage({
+          text: text.slice(0, 20000), top: box.top, bottom: box.bottom, height: window.innerHeight,
+          line: first ? Number(first.dataset.line) : -1,
+          lineEnd: last ? Number(last.dataset.lineEnd) : -1
+        });
+      }
+      function soon() { if (pending === null) pending = setTimeout(report, 60); }
+      document.addEventListener('selectionchange', soon);
+      window.addEventListener('scroll', soon, { passive: true, capture: true });
+      window.addEventListener('resize', soon);
+    })();
+    """
+
+    /// Selects from one piece of text to the end of another, from the top of the page.
+    static func selecting(_ start: String, to end: String?) -> String {
+        func quoted(_ text: String) -> String {
+            let data = (try? JSONEncoder().encode(text)) ?? Data("\"\"".utf8)
+            return String(decoding: data, as: UTF8.self)
+        }
+        return """
+        (function () {
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          if (!window.find(\(quoted(start)), false, false, true)) return false;
+          const endText = \(end.map(quoted) ?? "null");
+          if (endText === null) return true;
+          const first = selection.getRangeAt(0).cloneRange();
+          if (!window.find(endText, false, false, true)) return false;
+          const last = selection.getRangeAt(0);
+          const whole = document.createRange();
+          whole.setStart(first.startContainer, first.startOffset);
+          whole.setEnd(last.endContainer, last.endOffset);
+          selection.removeAllRanges();
+          selection.addRange(whole);
+          return true;
+        })();
+        """
+    }
+}
+
+struct WebSelection {
+    var text: String
+    var line: Int
+    var lineEnd: Int
+}
+
+/// A web view that tells its owner about selections, and offers to quote them on right-click.
+final class TiriWebView: WKWebView, WKScriptMessageHandler {
+    var selection: WebSelection?
+    var onSelectionChange: ((WebSelection?, _ top: CGFloat?) -> Void)?
+    var onQuote: (() -> Void)?
+
+    static func makeConfigured(_ configuration: WKWebViewConfiguration) -> TiriWebView {
+        let controller = configuration.userContentController
+        controller.addUserScript(WKUserScript(source: WebSelectionScript.source, injectionTime: .atDocumentEnd,
+                                              forMainFrameOnly: true, in: .defaultClient))
+        let view = TiriWebView(frame: .zero, configuration: configuration)
+        controller.add(WeakMessageHandler(view), contentWorld: .defaultClient, name: WebSelectionScript.handlerName)
+        return view
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any] else { return }
+        guard let text = body["text"] as? String, !text.isEmpty else {
+            selection = nil
+            onSelectionChange?(nil, nil)
+            return
+        }
+        selection = WebSelection(text: text, line: (body["line"] as? NSNumber)?.intValue ?? -1,
+                                 lineEnd: (body["lineEnd"] as? NSNumber)?.intValue ?? -1)
+        let top = (body["top"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 0
+        let bottom = (body["bottom"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? top
+        // Scrolled away with its selection, the button goes too.
+        let onScreen = bottom > 0 && top < bounds.height
+        onSelectionChange?(selection, onScreen ? max(top, 4) : nil)
+    }
+
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        guard selection != nil else { return }
+        let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteFromMenu), keyEquivalent: "")
+        item.target = self
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+    }
+
+    @objc private func quoteFromMenu() { onQuote?() }
+}
+
+/// The content controller keeps its handlers alive, so this keeps it from keeping the view alive.
+final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
+    private weak var target: (any WKScriptMessageHandler)?
+    init(_ target: any WKScriptMessageHandler) { self.target = target }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.userContentController(userContentController, didReceive: message)
     }
 }

@@ -551,6 +551,13 @@ enum ControlHandler {
             }
             return .object([:])
 
+        case "select":
+            let id = try requireItem(request, model: model)
+            guard let controller = model.controller(for: id), controller.select(text: try string(request, "text"), to: request.args["to"]?.stringValue) else {
+                throw ControlFailure("That isn't in \(id)")
+            }
+            return .object([:])
+
         case "follow":
             let id = try requireItem(request, model: model)
             guard let terminal = model.controller(for: id) as? TerminalController else { throw ControlFailure("\(id) isn't a terminal") }

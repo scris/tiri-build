@@ -6,7 +6,14 @@ public enum MarkdownRenderer {
     public static func page(markdown source: String, baseHref: String?, title: String = "") -> String {
         let (frontMatter, body) = splitFrontMatter(source)
         let document = Document(parsing: body)
-        var html = HTMLFormatter.format(document)
+        // Each block says which source lines it came from, so a selection in the rendered page
+        // can name them. `display: contents` keeps these wrappers out of the layout.
+        let offset = frontMatterLineCount(frontMatter)
+        var html = document.children.map { block -> String in
+            let inner = HTMLFormatter.format(block)
+            guard let range = block.range else { return inner }
+            return "<div class=\"src\" data-line=\"\(range.lowerBound.line - 1 + offset)\" data-line-end=\"\(range.upperBound.line - 1 + offset)\">\(inner)</div>\n"
+        }.joined()
         html = addHeadingAnchors(html)
         html = convertTaskLists(html)
         // Documents can contain raw HTML. Nothing but local files and secure images gets to load.
@@ -24,6 +31,33 @@ public enum MarkdownRenderer {
     }
 
     static let contentSecurityPolicy = "default-src 'none'; img-src tiri-file: data: https:; media-src tiri-file:; style-src 'unsafe-inline'; font-src tiri-file: data:"
+
+    private static func frontMatterLineCount(_ frontMatter: String?) -> Int {
+        frontMatter.map { $0.components(separatedBy: "\n").count + 2 } ?? 0
+    }
+
+    /// Narrows a selection in the rendered page from the blocks it touched to the source lines it
+    /// really covers, as far as the text can be found there. Lines count from zero.
+    public static func sourceLines(blockStart: Int, blockEnd: Int, selected: String, source: String) -> (first: Int, last: Int) {
+        let lines = source.components(separatedBy: "\n")
+        guard blockStart >= 0, blockEnd >= blockStart, blockStart < lines.count else { return (blockStart, blockEnd) }
+        let end = min(blockEnd, lines.count - 1)
+        func plain(_ text: String) -> String {
+            text.lowercased().filter { !"*_`~[]()#>|-".contains($0) && !$0.isWhitespace }
+        }
+        let pieces = selected.components(separatedBy: .newlines).map(plain).filter { !$0.isEmpty }
+        guard let firstPiece = pieces.first, let lastPiece = pieces.last else { return (blockStart, end) }
+        let searchable = lines[blockStart...end].map(plain)
+        func locate(_ piece: String, fromEnd: Bool) -> Int? {
+            // Long enough to be sure, short enough to survive wrapping and links.
+            let probe = String(piece.prefix(24))
+            let indices = fromEnd ? Array(searchable.indices.reversed()) : Array(searchable.indices)
+            return indices.first { searchable[$0].contains(probe) }.map { $0 - searchable.startIndex + blockStart }
+        }
+        let first = locate(firstPiece, fromEnd: false) ?? blockStart
+        let last = locate(lastPiece, fromEnd: true) ?? end
+        return first <= last ? (first, last) : (blockStart, end)
+    }
 
     /// The anchor of the section containing a source line, so `report.md:40` can land in the
     /// right place in the rendered view. nil when the line comes before any heading.
@@ -97,6 +131,7 @@ public enum MarkdownRenderer {
     }
 
     static let stylesheet = """
+    .src { display: contents; }
     :root { color-scheme: light dark; --fg:#1d1d1f; --muted:#6e6e73; --line:#d9d9de; --code:#f4f4f6; --link:#0a66d6; --bg:#ffffff; --quote:#55555a; }
     @media (prefers-color-scheme: dark) { :root { --fg:#e8e8ed; --muted:#a1a1a6; --line:#3a3a3e; --code:#2a2a2d; --link:#5aa5ff; --bg:#1c1c1e; --quote:#b0b0b5; } }
     html { background: var(--bg); }

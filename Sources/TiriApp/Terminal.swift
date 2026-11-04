@@ -25,6 +25,8 @@ protocol ItemController: AnyObject {
     var selectedTextForFind: String? { get }
     /// What ⌘L adds to an agent, if this item has something more specific than its whole file.
     var agentReference: AgentSelection? { get }
+    /// Selects text, as someone could with the mouse. For agents pointing at something.
+    func select(text: String, to end: String?) -> Bool
     var isDirty: Bool { get }
     func save(overwriting: Bool) -> SaveResult
     /// Returns false when nothing matches.
@@ -40,6 +42,7 @@ extension ItemController {
     var supportsFind: Bool { false }
     var selectedTextForFind: String? { nil }
     var agentReference: AgentSelection? { nil }
+    func select(text: String, to end: String?) -> Bool { false }
     var isDirty: Bool { false }
     func save(overwriting: Bool) -> SaveResult { .saved }
     func find(_ query: String, backwards: Bool) -> Bool { false }

@@ -203,6 +203,13 @@ check "close the session" "$CLI" close "$SESSION_ID"
 sleep 1
 if pgrep -f "tiri-session attach .*$SESSION_ID" >/dev/null; then failed=$((failed + 1)); echo "FAIL  closing the tab ends the session"; else passed=$((passed + 1)); echo "ok    closing the tab ends the session"; fi
 
+printf 'first line\nsecond line\n' > "$PROJECT/select.txt"
+SELECT_ID=$("$CLI" open "$PROJECT/select.txt" --tab)
+sleep 0.5
+check "select text in a file" "$CLI" select "$SELECT_ID" "second"
+refuses "select text that isn't there" "$CLI" select "$SELECT_ID" "not in this file"
+check "close the selected file" "$CLI" close "$SELECT_ID"
+
 expect "keys lists commands" "toggleSidebar" "$CLI" keys
 expect "keys set takes effect" "⌘J" "$CLI" keys set toggleSidebar cmd+j
 expect "commands show the new key" "⌘J" bash -c "'$CLI' keys | grep toggleSidebar"

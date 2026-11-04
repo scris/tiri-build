@@ -15,7 +15,8 @@ final class HostContainer: NSView {
         hosted?.removeFromSuperview()
         hosted = view
         view.frame = bounds
-        addSubview(view)
+        // Underneath anything floating over it.
+        addSubview(view, positioned: .below, relativeTo: nil)
         needsLayout = true
     }
 
@@ -97,13 +98,13 @@ enum ViewerFactory {
 /// Creating a WKWebView (and its web process) is most of the cost of opening a markdown file.
 /// One is kept warm, so the next open only has to render.
 enum MarkdownWebViews {
-    private static var spare: WKWebView?
+    private static var spare: TiriWebView?
 
-    private static func make() -> WKWebView {
+    private static func make() -> TiriWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.setURLSchemeHandler(LocalFileSchemeHandler(), forURLScheme: LocalFileSchemeHandler.scheme)
-        let view = WKWebView(frame: .zero, configuration: configuration)
+        let view = TiriWebView.makeConfigured(configuration)
         view.setValue(false, forKey: "drawsBackground")
         return view
     }
@@ -115,7 +116,7 @@ enum MarkdownWebViews {
         spare = view
     }
 
-    static func take() -> WKWebView {
+    static func take() -> TiriWebView {
         let view = spare ?? make()
         spare = nil
         // Replace it once things are quiet, not during the open it's serving.
@@ -129,7 +130,12 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     let path: String
     unowned let model: AppModel
     private let container = HostContainer()
-    private lazy var webView: WKWebView = makeWebView()
+    private lazy var webView: TiriWebView = makeWebView()
+    private lazy var quoteButton: QuoteButton = {
+        let button = QuoteButton(host: container)
+        button.onQuote = { [weak self] in self?.model.addFrontToAgent() }
+        return button
+    }()
     private var source: TextController?
     private(set) var showingSource: Bool
     private var token: FileWatchHub.Token?
@@ -150,10 +156,37 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         render(keepScroll: false)
     }
 
-    private func makeWebView() -> WKWebView {
+    private func makeWebView() -> TiriWebView {
         let view = MarkdownWebViews.take()
         view.navigationDelegate = self
+        view.onQuote = { [weak self] in self?.model.addFrontToAgent() }
+        view.onSelectionChange = { [weak self] selection, top in self?.renderedSelectionChanged(selection, top: top) }
         return view
+    }
+
+    /// Selecting in the rendered page is selecting those lines of the file.
+    private func renderedSelectionChanged(_ selection: WebSelection?, top: CGFloat?) {
+        guard let selection, let top else {
+            quoteButton.isHidden = true
+            return
+        }
+        quoteButton.show(fromTop: top)
+        if let lines = renderedLines(selection) {
+            model.editorBridge.selectionChanged(EditorSelection(path: path, text: selection.text, startLine: lines.first, startCharacter: 0,
+                                                                endLine: lines.last, endCharacter: 1))
+        }
+    }
+
+    private func renderedLines(_ selection: WebSelection) -> (first: Int, last: Int)? {
+        guard selection.line >= 0, selection.lineEnd >= selection.line else { return nil }
+        let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        return MarkdownRenderer.sourceLines(blockStart: selection.line, blockEnd: selection.lineEnd, selected: selection.text, source: text)
+    }
+
+    func select(text: String, to end: String?) -> Bool {
+        if showingSource { return source?.select(text: text, to: end) ?? false }
+        webView.evaluateJavaScript(WebSelectionScript.selecting(text, to: end), in: nil, in: .defaultClient) { _ in }
+        return true
     }
 
     private func sourceController() -> TextController {
@@ -210,6 +243,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
 
     func toggleSource() {
         showingSource.toggle()
+        // The rendered page's selection isn't what's showing any more.
+        quoteButton.isHidden = true
         if showingSource {
             sourceController().reload()
         }
@@ -290,7 +325,14 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     var supportsFind: Bool { true }
 
     var selectedTextForFind: String? { showingSource ? source?.selectedTextForFind : nil }
-    var agentReference: AgentSelection? { showingSource ? source?.agentReference : nil }
+    var agentReference: AgentSelection? {
+        if showingSource { return source?.agentReference }
+        guard let selection = webView.selection else { return nil }
+        if let lines = renderedLines(selection) {
+            return AgentSelection(path: path, firstLine: lines.first, lastLine: lines.last)
+        }
+        return AgentSelection(path: path, quote: AgentReference.quotation(from: (path as NSString).lastPathComponent, text: selection.text))
+    }
     var isDirty: Bool { source?.isDirty ?? false }
     func save(overwriting: Bool) -> SaveResult { source?.save(overwriting: overwriting) ?? .saved }
 
@@ -400,6 +442,22 @@ final class TextController: NSObject, ItemController, NSTextViewDelegate {
         let selection = editorSelection
         guard !selection.isEmpty else { return nil }
         return AgentSelection(path: path, firstLine: selection.startLine, lastLine: selection.lastLine)
+    }
+
+    func select(text: String, to end: String?) -> Bool {
+        let string = textView.string as NSString
+        let start = string.range(of: text)
+        guard start.location != NSNotFound else { return false }
+        var range = start
+        if let end {
+            let rest = NSRange(location: NSMaxRange(start), length: string.length - NSMaxRange(start))
+            let found = string.range(of: end, options: [], range: rest)
+            guard found.location != NSNotFound else { return false }
+            range = NSRange(location: start.location, length: NSMaxRange(found) - start.location)
+        }
+        textView.setSelectedRange(range)
+        textView.scrollRangeToVisible(range)
+        return true
     }
 
     private func configure() {
@@ -1317,7 +1375,7 @@ final class PDFController: ForceDarkCapable {
         guard let selection = pdfView.currentSelection, let text = selection.string, !text.isEmpty else { return nil }
         let name = (path as NSString).lastPathComponent
         let page = selection.pages.first.flatMap { pdfView.document?.index(for: $0) }.map { " page \($0 + 1)" } ?? ""
-        return AgentSelection(path: path, quote: "From \(name)\(page):\n\"\(text)\"\n")
+        return AgentSelection(path: path, quote: AgentReference.quotation(from: name + page, text: text))
     }
 
     func find(_ query: String, backwards: Bool) -> Bool {

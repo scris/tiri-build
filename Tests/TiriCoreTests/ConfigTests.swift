@@ -2,6 +2,36 @@ import Foundation
 import Testing
 @testable import TiriCore
 
+@Suite struct RenderedSelectionTests {
+    @Test func blocksSayWhichLinesTheyCameFrom() {
+        let page = MarkdownRenderer.page(markdown: "# Title\n\nFirst paragraph\nstill first.\n\n- one\n- two\n", baseHref: nil)
+        #expect(page.contains("data-line=\"0\" data-line-end=\"0\""))
+        #expect(page.contains("data-line=\"2\" data-line-end=\"3\""))
+        #expect(page.contains("data-line=\"5\" data-line-end=\"6\""))
+        #expect(page.contains("<h1 id=\"title\">Title</h1>"))
+    }
+
+    @Test func frontMatterIsCounted() {
+        let page = MarkdownRenderer.page(markdown: "---\na: 1\n---\n\nBody\n", baseHref: nil)
+        #expect(page.contains("data-line=\"4\" data-line-end=\"4\""))
+    }
+
+    @Test func aSelectionNarrowsToTheLinesItCovers() {
+        let source = "# Title\n\n- first item\n- **second** item\n- third item\n- fourth item\n"
+        let lines = MarkdownRenderer.sourceLines(blockStart: 2, blockEnd: 5, selected: "second item\nthird item", source: source)
+        #expect(lines.first == 3 && lines.last == 4)
+    }
+
+    @Test func textThatCantBeFoundKeepsTheWholeBlock() {
+        let lines = MarkdownRenderer.sourceLines(blockStart: 0, blockEnd: 1, selected: "nothing like it", source: "a\nb\n")
+        #expect(lines.first == 0 && lines.last == 1)
+    }
+
+    @Test func quotationsAreMarkedAsQuotes() {
+        #expect(AgentReference.quotation(from: "page.html", text: " one\ntwo\n") == "\nFrom page.html:\n> one\n> two\n")
+    }
+}
+
 @Suite struct AgentReferenceTests {
     @Test func whichAgentIsRunning() {
         #expect(AgentReference.agent(commandLine: ["claude"], command: nil) == .claude)

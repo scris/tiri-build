@@ -9,7 +9,13 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
     let itemID: ItemID
     let isFile: Bool
     @ObservationIgnored unowned let model: AppModel
-    @ObservationIgnored let webView: WKWebView
+    @ObservationIgnored let webView: TiriWebView
+    @ObservationIgnored private let container = HostContainer()
+    @ObservationIgnored private lazy var quoteButton: QuoteButton = {
+        let button = QuoteButton(host: container)
+        button.onQuote = { [weak self] in self?.model.addFrontToAgent() }
+        return button
+    }()
     @ObservationIgnored private var token: FileWatchHub.Token?
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var appearanceObserver: NSObjectProtocol?
@@ -25,7 +31,19 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
     /// nil follows the `web.forceDark` setting.
     var forceDarkOverride: Bool?
 
-    var view: NSView { webView }
+    var view: NSView { container }
+
+    /// A web page has no lines to point at, so what's selected goes in as a quotation.
+    var agentReference: AgentSelection? {
+        guard let selection = webView.selection else { return nil }
+        let source = isFile ? (requested.path as NSString).lastPathComponent : currentURLString
+        return AgentSelection(path: requested.path, quote: AgentReference.quotation(from: source, text: selection.text))
+    }
+
+    func select(text: String, to end: String?) -> Bool {
+        webView.evaluateJavaScript(WebSelectionScript.selecting(text, to: end), in: nil, in: .defaultClient) { _ in }
+        return true
+    }
 
     /// What this item is showing: the page asked for, even while its error page is up.
     var currentURLString: String {
@@ -46,12 +64,22 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         self.addressText = url.isFileURL ? url.path : url.absoluteString
         let configuration = WKWebViewConfiguration()
         configuration.preferences.isElementFullscreenEnabled = true
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView = TiriWebView.makeConfigured(configuration)
         webView.isInspectable = true
         webView.allowsBackForwardNavigationGestures = true
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        container.show(webView)
+        webView.onQuote = { [weak self] in self?.model.addFrontToAgent() }
+        webView.onSelectionChange = { [weak self] selection, top in
+            guard let self else { return }
+            if selection != nil, let top {
+                self.quoteButton.show(fromTop: top)
+            } else {
+                self.quoteButton.isHidden = true
+            }
+        }
         observations = [
             webView.observe(\.canGoBack, options: [.new]) { [weak self] view, _ in
                 let value = view.canGoBack

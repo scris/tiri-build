@@ -126,6 +126,22 @@ final class DiffController: NSObject, ItemController, NSTextViewDelegate {
     func focus() { textView.window?.makeFirstResponder(textView) }
     func teardown() { token = nil }
 
+    func select(text: String, to end: String?) -> Bool {
+        let string = textView.string as NSString
+        let start = string.range(of: text)
+        guard start.location != NSNotFound else { return false }
+        var range = start
+        if let end {
+            let rest = NSRange(location: NSMaxRange(start), length: string.length - NSMaxRange(start))
+            let found = string.range(of: end, options: [], range: rest)
+            guard found.location != NSNotFound else { return false }
+            range = NSRange(location: start.location, length: NSMaxRange(found) - start.location)
+        }
+        textView.setSelectedRange(range)
+        textView.scrollRangeToVisible(range)
+        return true
+    }
+
     /// The selected rows, as they appear in the diff. Removed lines aren't in the file any more,
     /// so a line number couldn't point at them: the agent gets the change itself.
     var agentReference: AgentSelection? {

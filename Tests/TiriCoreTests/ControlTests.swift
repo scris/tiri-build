@@ -269,6 +269,13 @@ import Testing
         #expect(throws: CLIParser.UsageError.self) { try request("theme", "blue") }
     }
 
+    @Test func select() throws {
+        let parsed = try request("select", "i-1", "from here", "--to", "to there")
+        #expect(parsed.args["text"]?.stringValue == "from here")
+        #expect(parsed.args["to"]?.stringValue == "to there")
+        #expect(throws: (any Error).self) { try request("select", "i-1") }
+    }
+
     @Test func follow() throws {
         let parsed = try request("follow", "i-1", "2", "5")
         #expect(parsed.args["row"]?.intValue == 2)
