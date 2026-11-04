@@ -121,6 +121,9 @@ struct TiriMenus: Commands {
             item("previousTab")
             item("nextAttention")
             Divider()
+            item("nextChange")
+            item("previousChange")
+            Divider()
             item("focusExplorer")
             item("revealActive")
         }

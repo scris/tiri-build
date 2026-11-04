@@ -113,6 +113,10 @@ final class AppModel {
     var changesScope: ChangesScope = .sinceCommit
     var turnChanges: [ChangedFile] = []
     @ObservationIgnored var turnChangesInFlight = false
+    /// For the scopes that aren't a turn: what each repository is compared with, and the commit list.
+    var branchBases: [BranchBase] = []
+    var recentCommits: [CommitSummary] = []
+    var scopeIsLoading = false
     @ObservationIgnored let snapshots = TurnSnapshots()
     @ObservationIgnored let turnStore = TurnStore()
     var navigationStops: [NavigationStop] = []
@@ -127,7 +131,9 @@ final class AppModel {
     @ObservationIgnored var hoverWork: DispatchWorkItem?
     @ObservationIgnored var reviewPopover: NSPopover?
     @ObservationIgnored var reviewPopoverCloser: NSObjectProtocol?
-    var changes: [ChangedFile] = []
+    var changes: [ChangedFile] = [] {
+        didSet { fileTree.changesUpdated(changes) }
+    }
     /// Each repository the active workspace's folders are in, for the status bar.
     var repositories: [RepositoryStatus] = []
     /// Fetches and pushes under way, by repository.
@@ -455,7 +461,7 @@ final class AppModel {
         case .settings:
             controller = SettingsController(itemID: id, model: self)
         case .diff(let spec):
-            controller = DiffController(itemID: id, path: spec.path, turn: spec.turn, model: self)
+            controller = DiffController(itemID: id, spec: spec, model: self)
         case .web(let spec):
             guard let url = URL(string: spec.url) else { return nil }
             controller = WebController(itemID: id, url: url, forceDark: spec.forceDark, isFile: false, model: self)
@@ -585,6 +591,7 @@ final class AppModel {
         case "webReload": return frontWebController != nil
         case "goBack": return canGoBack
         case "goToDefinition", "findReferences", "showHover": return canAskAboutSymbols()
+        case "nextChange", "previousChange": return canGoToChange
         default: return true
         }
     }
@@ -1751,6 +1758,7 @@ final class AppModel {
             changesWorkspace = activeID
             changes = []
             turnChanges = []
+            recentCommits = []
             changesScope = .sinceCommit
             repositories = []
             repositoryTokens = [:]
@@ -1785,12 +1793,14 @@ final class AppModel {
                 guard let self else { return }
                 self.changesInFlight = false
                 self.refreshReviewLines()
-                self.refreshTurnChanges()
+                self.refreshScopedChanges()
                 if self.activeID == workspace { self.barHasRepositories = !repositories.isEmpty }
                 if self.activeID == workspace, self.changes != found { self.changes = found }
                 if self.activeID == workspace, self.repositories != repositories {
+                    let headsMoved = self.repositories.map(\.head) != repositories.map(\.head)
                     self.repositories = repositories
                     self.watchGitDirectories(of: repositories, folders: folders)
+                    if headsMoved { self.refreshChangeMarks() }
                 }
                 // Whatever's on screen compares against the same new state.
                 for item in self.active.items + (self.active.peek.map { [$0] } ?? []) {
@@ -1910,14 +1920,14 @@ final class AppModel {
         }
     }
 
-    func openDiff(path: String, preview: Bool, turn: String? = nil) {
-        updateActive { $0.dismissPeek(); $0.openDiff(path: path, preview: preview, turn: turn) }
+    func openDiff(_ spec: DiffSpec, preview: Bool) {
+        updateActive { $0.dismissPeek(); $0.openDiff(spec, preview: preview) }
         requestFocus()
     }
 
     /// Takes the Peek's place. With `takeFocus`, a person asked. Without it, an agent is showing something.
-    func peekDiff(path: String, takeFocus: Bool, turn: String? = nil) {
-        updateActive { $0.peekDiff(path: path, turn: turn) }
+    func peekDiff(_ spec: DiffSpec, takeFocus: Bool) {
+        updateActive { $0.peekDiff(spec) }
         peekHasKeyboard = takeFocus
         requestFocus()
     }
@@ -1928,7 +1938,7 @@ final class AppModel {
         let isPeek = active.peek?.id == item.id
         switch item.content {
         case .file(let spec):
-            if isPeek { peekDiff(path: spec.path, takeFocus: true) } else { openDiff(path: spec.path, preview: false) }
+            if isPeek { peekDiff(DiffSpec(path: spec.path), takeFocus: true) } else { openDiff(DiffSpec(path: spec.path), preview: false) }
         case .diff(let spec):
             if isPeek {
                 updateActive { $0.peekFile(path: spec.path, revealExisting: false) }

@@ -143,6 +143,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     }()
     private var source: TextController?
     private(set) var showingSource: Bool
+    /// The text viewer in front, when it's the source that's showing.
+    var shownSource: TextController? { showingSource ? source : nil }
     private var token: FileWatchHub.Token?
     private var pendingScrollY: Double?
     private var pendingAnchor: String?
@@ -641,6 +643,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         didSet { if isDirty != oldValue { model.controllerRevision += 1 } }
     }
     nonisolated static let maximumBytes = 32 * 1024 * 1024
+    /// Past this, a file gets no marks beside its lines.
+    private static let largestWithMarks = 4 * 1024 * 1024
+    private var marksGeneration = 0
 
     var view: NSView { container }
 
@@ -790,6 +795,10 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         ruler.attach(to: scrollView, textView: text)
+        ruler.onChangeClicked = { [weak self] line in
+            guard let self else { return }
+            self.model.peekChange(path: self.path, line: line)
+        }
         applySettings()
     }
 
@@ -861,6 +870,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         textView.isEditable = editable
         guard text != textView.string || !loadedOnce else {
             applyPendingLocation()
+            refreshChangeMarks()
             return
         }
         let origin = scrollView.contentView.bounds.origin
@@ -879,6 +889,40 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         scheduleHighlight()
         diagnosticsChanged()
         model.languageServers.fileMayHaveChanged(path)
+        refreshChangeMarks()
+    }
+
+    // MARK: Marks beside the lines
+
+    /// What differs from the last commit. A file outside the workspace's repositories, or a very
+    /// large one, never gets as far as asking git. Your own edits aren't on disk yet, so while
+    /// there are any the marks wouldn't line up, and they wait until you save.
+    func refreshChangeMarks() {
+        marksGeneration += 1
+        ruler.changesHidden = isDirty
+        guard (textView.string as NSString).length <= Self.largestWithMarks, let place = model.repositoryPlace(of: path) else {
+            ruler.changes = LineChanges()
+            return
+        }
+        let current = marksGeneration
+        Task.detached(priority: .utility) { [weak self] in
+            let changes = Git.lineChanges(relative: place.relative, root: place.root)
+            await MainActor.run {
+                guard let self, self.marksGeneration == current else { return }
+                self.ruler.changes = changes
+            }
+        }
+    }
+
+    var hasChangeMarks: Bool { !isDirty && !ruler.changes.starts.isEmpty }
+
+    /// F7 and ⇧F7, round and round.
+    func goToChange(forward: Bool) {
+        let starts = ruler.changes.starts
+        guard !starts.isEmpty, !isDirty else { return }
+        let here = editorSelection.startLine + 1
+        let target = forward ? (starts.first { $0 > here } ?? starts[0]) : (starts.last { $0 < here } ?? starts[starts.count - 1])
+        jump(line: target, col: 1)
     }
 
     // MARK: Editing
@@ -919,6 +963,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     func textDidChange(_ notification: Notification) {
         isDirty = textView.string != savedText
+        ruler.changesHidden = isDirty
         if isDirty { model.fileWasEdited(itemID) }
         ruler.invalidateLineStarts()
         reviewChanged()
@@ -1092,9 +1137,18 @@ final class LineGutter: NSView {
     var problemLines: [Int: LSPDiagnostic.Severity] = [:] {
         didSet { needsDisplay = true }
     }
+    /// What differs from the last commit: thin bars at the edge, nearest the text.
+    var changes = LineChanges() {
+        didSet { if changes != oldValue { needsDisplay = true } }
+    }
+    var changesHidden = false {
+        didSet { if changesHidden != oldValue { needsDisplay = true } }
+    }
+    var onChangeClicked: ((Int) -> Void)?
+    private var changeHits: [(rect: NSRect, line: Int)] = []
     private var lineStarts: [Int] = [0]
     private var observers: [NSObjectProtocol] = []
-    private(set) var thickness: CGFloat = 44
+    private(set) var thickness: CGFloat = 48
     var onThicknessChange: (() -> Void)?
 
     override var isFlipped: Bool { true }
@@ -1132,7 +1186,7 @@ final class LineGutter: NSView {
         }
         lineStarts = starts
         let digits = max(String(starts.count).count, 3)
-        let width = CGFloat(digits) * 8 + 18
+        let width = CGFloat(digits) * 8 + 24
         if width != thickness {
             thickness = width
             onThicknessChange?()
@@ -1159,6 +1213,7 @@ final class LineGutter: NSView {
         let characters = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
         let selectedLine = lineNumber(forCharacter: text.selectedRange().location)
         markerHits = []
+        changeHits = []
         var index = lineNumber(forCharacter: characters.location) - 1
         while index < lineStarts.count {
             let start = lineStarts[index]
@@ -1175,21 +1230,65 @@ final class LineGutter: NSView {
             let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
             let label = "\(index + 1)" as NSString
             let size = label.size(withAttributes: attributes)
-            label.draw(at: NSPoint(x: thickness - size.width - 8, y: y + (line.height - size.height) / 2), withAttributes: attributes)
+            label.draw(at: NSPoint(x: thickness - size.width - 12, y: y + (line.height - size.height) / 2), withAttributes: attributes)
+            if !changesHidden { drawChanges(forLine: index + 1, y: y, height: line.height) }
             if let comments = commentMarkers[index + 1] {
                 markerHits.append((ReviewMarker.draw(atY: y, lineHeight: line.height), comments))
             }
             if let severity = problemLines[index + 1] {
-                ProblemMarks.drawDot(severity: severity, x: thickness - 6, y: y, lineHeight: line.height)
+                ProblemMarks.drawDot(severity: severity, x: thickness - 10, y: y, lineHeight: line.height)
             }
             index += 1
         }
     }
 
+    private func drawChanges(forLine line: Int, y: CGFloat, height: CGFloat) {
+        let width: CGFloat = 3
+        // A wide target, for a thin mark.
+        let hitX = thickness - 9
+        if let kind = changes.lines[line] {
+            (kind == .added ? NSColor.systemGreen : NSColor.systemBlue).setFill()
+            NSRect(x: thickness - width, y: y, width: width, height: height).fill()
+            changeHits.append((NSRect(x: hitX, y: y, width: 9, height: height), line))
+        }
+        // Lines deleted here have no row of their own, so a small wedge sits between the rows.
+        if changes.deletions.contains(line) { drawDeletion(atY: y, line: line) }
+        if changes.deletions.contains(line + 1), line == lineStarts.count { drawDeletion(atY: y + height, line: line + 1) }
+    }
+
+    private func drawDeletion(atY y: CGFloat, line: Int) {
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: thickness, y: y - 4))
+        path.line(to: NSPoint(x: thickness - 6, y: y))
+        path.line(to: NSPoint(x: thickness, y: y + 4))
+        path.close()
+        NSColor.systemRed.setFill()
+        path.fill()
+        // First, so it wins over a bar it sits on.
+        changeHits.insert((NSRect(x: thickness - 9, y: y - 5, width: 9, height: 10), line), at: 0)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        (changeHits.contains { $0.rect.contains(point) } ? NSCursor.pointingHand : NSCursor.arrow).set()
+    }
+
+    override func mouseExited(with event: NSEvent) { NSCursor.arrow.set() }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if let hit = markerHits.first(where: { $0.rect.insetBy(dx: -3, dy: -2).contains(point) }) {
             AppModel.shared.editReviewComment(hit.comments[0], from: self, rect: hit.rect)
+            return
+        }
+        if let hit = changeHits.first(where: { $0.rect.contains(point) }) {
+            onChangeClicked?(hit.line)
             return
         }
         super.mouseDown(with: event)
@@ -1518,15 +1617,25 @@ nonisolated enum ImageDecoding {
     private static let maximumPixels = 6000
 
     static func decode(path: String, scale: CGFloat) -> Decoded? {
-        let url = URL(fileURLWithPath: path) as CFURL
-        guard let source = CGImageSourceCreateWithURL(url, nil), CGImageSourceGetCount(source) > 0 else { return nil }
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }
+        return decode(source: source, scale: scale) { FileManager.default.contents(atPath: path) }
+    }
+
+    /// An image that isn't a file, like an old version from git.
+    static func decode(data: Data, scale: CGFloat) -> Decoded? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return decode(source: source, scale: scale) { data }
+    }
+
+    private static func decode(source: CGImageSource, scale: CGFloat, contents: () -> Data?) -> Decoded? {
+        guard CGImageSourceGetCount(source) > 0 else { return nil }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         var width = (properties[kCGImagePropertyPixelWidth] as? Int) ?? 0
         var height = (properties[kCGImagePropertyPixelHeight] as? Int) ?? 0
         // Sideways phone photos report their unrotated size.
         if let orientation = properties[kCGImagePropertyOrientation] as? Int, orientation >= 5 { swap(&width, &height) }
         let size = NSSize(width: CGFloat(width) / scale, height: CGFloat(height) / scale)
-        if CGImageSourceGetCount(source) > 1, let data = FileManager.default.contents(atPath: path) {
+        if CGImageSourceGetCount(source) > 1, let data = contents() {
             let first = CGImageSourceCreateImageAtIndex(source, 0, nil)
             return Decoded(cgImage: nil, animatedData: data, size: size, darkOnClear: first.map(ClearArt.isDarkOnClear) ?? false)
         }

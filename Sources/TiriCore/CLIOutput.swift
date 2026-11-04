@@ -17,6 +17,14 @@ public enum CLIOutput {
     public static func text(request: ControlRequest, response: ControlResponse) -> String {
         var lines: [String] = []
         func say(_ line: String) { lines.append(line) }
+        // A renamed file says where it came from, after a tab, so the first two columns stay the same.
+        func sayChanges(_ value: JSONValue?) {
+            for entry in value?.arrayValue ?? [] {
+                var row = [cell(entry["status"]), cell(entry["path"])]
+                if entry["old"] != nil { row.append("from " + cell(entry["old"])) }
+                say(row.joined(separator: "\t"))
+            }
+        }
         switch request.cmd {
         case "items":
             for item in response.result?.arrayValue ?? [] {
@@ -69,8 +77,18 @@ public enum CLIOutput {
                 say("\(cell(entry["path"])):\(entry["line"]?.intValue ?? 0): \(cell(entry["text"]))")
             }
         case "changes":
+            sayChanges(response.result)
+        case "changes.branch":
+            for base in response.result?["bases"]?.arrayValue ?? [] {
+                say(cell(base["description"]))
+            }
+            sayChanges(response.result?["changes"])
+        case "changes.commit":
+            say([cell(response.result?["commit"]?["short"]), cell(response.result?["commit"]?["subject"])].joined(separator: " "))
+            sayChanges(response.result?["changes"])
+        case "log":
             for entry in response.result?.arrayValue ?? [] {
-                say([cell(entry["status"]), cell(entry["path"])].joined(separator: "\t"))
+                say([cell(entry["short"]), cell(entry["when"]), cell(entry["subject"])].joined(separator: "\t"))
             }
         case "diagnostics":
             for entry in response.result?["problems"]?.arrayValue ?? [] {

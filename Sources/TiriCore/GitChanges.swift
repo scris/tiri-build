@@ -79,6 +79,10 @@ public struct DiffLine: Sendable, Equatable {
 public struct FileDiff: Sendable, Equatable {
     public var lines: [DiffLine]
     public var isBinary: Bool
+    /// Where the file was before, if it was renamed.
+    public var oldRelative: String?
+    /// What git says about a file with no lines to compare: new and empty, or only its mode changed.
+    public var note: String?
     public var additions: Int { lines.filter { $0.kind == .added }.count }
     public var deletions: Int { lines.filter { $0.kind == .removed }.count }
     public var isEmpty: Bool { lines.isEmpty && !isBinary }
@@ -102,11 +106,18 @@ public enum DiffParser {
         var oldLine = 0
         var newLine = 0
         var inHunk = false
+        var oldMode: String?
         for raw in output.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = String(raw)
             if line.hasPrefix("Binary files ") || line.hasPrefix("GIT binary patch") {
                 diff.isBinary = true
                 continue
+            }
+            if !inHunk {
+                if line.hasPrefix("new file mode") { diff.note = "This new file is empty." }
+                if line.hasPrefix("deleted file mode") { diff.note = "This deleted file was empty." }
+                if line.hasPrefix("old mode ") { oldMode = String(line.dropFirst(9)) }
+                if line.hasPrefix("new mode "), let oldMode { diff.note = "Only its mode changed, from \(oldMode) to \(line.dropFirst(9))." }
             }
             if line.hasPrefix("@@") {
                 if let (old, new) = hunkStart(line) {
@@ -171,6 +182,8 @@ public struct RepositoryStatus: Sendable, Equatable, Identifiable {
     public init(root: String) { self.root = root }
 
     public var name: String { (root as NSString).lastPathComponent }
+    /// Which repository, at which commit.
+    public var head: String { root + "@" + (shortOID ?? "") }
     public var title: String { branch ?? shortOID ?? "No commits" }
     /// Pushing needs a branch with something on it, and somewhere to send it.
     public var canPublish: Bool { branch != nil && upstream == nil && remote != nil && shortOID != nil }
@@ -420,8 +433,13 @@ public enum Git {
            String(decoding: status.output, as: UTF8.self).hasPrefix("??") {
             return untrackedDiff(path)
         }
-        if let result = run(["diff", "HEAD", "--no-color", "--no-ext-diff", "-U3", "--", relative], in: root), result.status == 0 {
-            return DiffParser.parse(String(decoding: result.output, as: UTF8.self))
+        // git only sees a rename when it's asked about both names.
+        let old = renameSource(of: relative, revisions: ["HEAD"], in: root)
+        let paths = [relative] + (old.map { [$0] } ?? [])
+        if let result = run(["diff", "HEAD", "-M", "--no-color", "--no-ext-diff", "-U3", "--"] + paths, in: root), result.status == 0 {
+            var diff = DiffParser.parse(String(decoding: result.output, as: UTF8.self))
+            diff.oldRelative = old
+            return diff
         }
         // A repository with no commits yet has no HEAD to compare with.
         return untrackedDiff(path)
@@ -466,9 +484,11 @@ public enum Git {
 
 /// Selected rows of a diff, written out for an agent to read.
 public enum DiffQuote {
-    public static func text<Rows: Sequence>(path: String, rows: Rows) -> String where Rows.Element == DiffLine {
+    /// `commit` names the commit the rows are from, if they're from one.
+    public static func text<Rows: Sequence>(path: String, rows: Rows, commit: String? = nil) -> String where Rows.Element == DiffLine {
         let name = (path as NSString).lastPathComponent
-        return "From the changes in \(name):\n```diff\n\(self.rows(rows))\n```\n"
+        let origin = commit.map { "the changes in \(name), in commit \($0)" } ?? "the changes in \(name)"
+        return "From \(origin):\n```diff\n\(self.rows(rows))\n```\n"
     }
 
     /// The rows themselves, with their marks.

@@ -63,14 +63,33 @@ public struct FileSpec: Codable, Hashable, Sendable {
     }
 }
 
-/// What changed in a file, compared with the last commit.
+/// What changed in a file: since the last commit, unless it says otherwise.
 public struct DiffSpec: Codable, Hashable, Sendable {
     public var path: String
     /// One agent's turn, rather than everything since the last commit.
     public var turn: String?
-    public init(path: String, turn: String? = nil) {
+    /// One commit, by its full hash.
+    public var commit: String?
+    /// Since the branch left its base.
+    public var branch: Bool?
+    public init(path: String, turn: String? = nil, commit: String? = nil, branch: Bool? = nil) {
         self.path = path
         self.turn = turn
+        self.commit = commit
+        self.branch = branch == true ? true : nil
+    }
+
+    /// What it compares, unless that's a turn: those have their own snapshots.
+    public var target: DiffTarget {
+        if let commit { return .commit(commit) }
+        return branch == true ? .branch : .head
+    }
+
+    /// Goes after the name in a tab.
+    public var scopeWord: String {
+        if let commit { return String(commit.prefix(7)) }
+        if turn != nil { return "turn" }
+        return branch == true ? "branch" : "changes"
     }
 }
 
@@ -134,7 +153,7 @@ public struct Item: Codable, Hashable, Identifiable, Sendable {
         case .settings:
             return "Settings"
         case .diff(let spec):
-            return (spec.path as NSString).lastPathComponent + (spec.turn == nil ? " (changes)" : " (turn)")
+            return (spec.path as NSString).lastPathComponent + " (\(spec.scopeWord))"
         }
     }
 }
@@ -422,25 +441,25 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
         items.first { $0.filePath == path }
     }
 
-    public func diffItem(path: String, turn: String? = nil) -> Item? {
-        items.first { $0.content == .diff(DiffSpec(path: path, turn: turn)) }
+    public func diffItem(_ spec: DiffSpec) -> Item? {
+        items.first { $0.content == .diff(spec) }
     }
 
     @discardableResult
-    public mutating func openDiff(path: String, preview: Bool, turn: String? = nil) -> ItemID {
-        if let existing = diffItem(path: path, turn: turn) {
+    public mutating func openDiff(_ spec: DiffSpec, preview: Bool) -> ItemID {
+        if let existing = diffItem(spec) {
             if !preview { pin(existing.id) }
             activate(existing.id)
             return existing.id
         }
-        let item = Item(content: .diff(DiffSpec(path: path, turn: turn)), isPreview: preview)
+        let item = Item(content: .diff(spec), isPreview: preview)
         addItem(item, split: nil)
         return item.id
     }
 
     @discardableResult
-    public mutating func peekDiff(path: String, turn: String? = nil) -> ItemID {
-        let item = Item(content: .diff(DiffSpec(path: path, turn: turn)))
+    public mutating func peekDiff(_ spec: DiffSpec) -> ItemID {
+        let item = Item(content: .diff(spec))
         peek = item
         return item.id
     }

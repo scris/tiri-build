@@ -44,7 +44,7 @@ extension AppModel {
         popover.behavior = .transient
         let restore = position.view.window?.firstResponder
         let editor = ReviewCommentEditor(title: title, text: initial, isEditing: onDelete != nil, commit: { [weak popover] text in
-            commit(text)
+            commit(popover.flatMap(Self.typedText(in:)) ?? text)
             popover?.close()
         }, delete: onDelete.map { delete in
             { [weak popover] in
@@ -57,12 +57,43 @@ extension AppModel {
         popover.contentViewController = host
         popover.show(relativeTo: position.rect, of: position.view, preferredEdge: .maxY)
         reviewPopover = popover
+        // Return finishes, as it does in a chat, and Shift+Return makes a new line. Asked of the
+        // keys themselves: a box opened on a selection doesn't always become the key window, so
+        // SwiftUI's key handling misses them there and Return quietly becomes a new line.
+        nonisolated(unsafe) let keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak popover] event in
+            guard let popover, popover.isShown else { return event }
+            let held = event.modifierFlags.intersection([.shift, .command, .option, .control])
+            switch event.keyCode {
+            case 36, 76 where held.isEmpty:
+                if let typed = Self.typedText(in: popover) {
+                    commit(typed)
+                    popover.close()
+                }
+                return nil
+            case 53 where held.isEmpty:
+                popover.close()
+                return nil
+            default:
+                return event
+            }
+        }
         reviewPopoverCloser = NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { [weak self, weak restore, weak window = position.view.window] _ in
             MainActor.assumeIsolated {
+                if let keys { NSEvent.removeMonitor(keys) }
                 if let restore { window?.makeFirstResponder(restore) }
                 self?.reviewPopover = nil
             }
         }
+    }
+
+    /// What's in the box itself: its binding can be a few keys behind what's been typed.
+    private static func typedText(in popover: NSPopover) -> String? {
+        func textView(in view: NSView?) -> NSTextView? {
+            guard let view else { return nil }
+            return view as? NSTextView ?? view.subviews.lazy.compactMap(textView(in:)).first
+        }
+        let typed = textView(in: popover.contentViewController?.view)?.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return typed?.isEmpty == false ? typed : nil
     }
 
     func addReviewComment(_ comment: ReviewComment, in workspaceID: WorkspaceID? = nil) {
@@ -193,9 +224,10 @@ extension AppModel {
     }
 
     /// A diff's rows are found by their line in the file, or for removed rows, by their own text.
-    func reviewMarkers(for path: String, rows: [DiffLine]) -> [Int: [ReviewComment]] {
+    /// A comment on one commit's diff stays there, since another's line 12 is a different line.
+    func reviewMarkers(for path: String, rows: [DiffLine], commit: String?) -> [Int: [ReviewComment]] {
         var markers: [Int: [ReviewComment]] = [:]
-        for comment in reviewComments(on: path) {
+        for comment in reviewComments(on: path) where comment.commit == commit {
             let row: Int?
             if let first = comment.firstLine {
                 row = rows.firstIndex { $0.newLine == first }
@@ -220,8 +252,12 @@ extension AppModel {
             if case .lines(let range) = ReviewLocator.place(of: comment, in: text) { return range.lowerBound }
             return nil
         }
+        if let commit = comment.commit {
+            peekDiff(DiffSpec(path: comment.path, commit: commit), takeFocus: true)
+            return
+        }
         if comment.quoteIsDiff, hasChanges(comment.path) {
-            peekDiff(path: comment.path, takeFocus: true)
+            peekDiff(DiffSpec(path: comment.path), takeFocus: true)
             return
         }
         open(path: comment.path, line: line, intent: .peek(takeFocus: true))
@@ -285,16 +321,6 @@ struct ReviewCommentEditor: View {
                 .frame(width: 320, height: 76)
                 .padding(4)
                 .background(Color(nsColor: .textBackgroundColor), in: .rect(cornerRadius: 6))
-                .onKeyPress(keys: [.return]) { press in
-                    // Return finishes, as it does in a chat. Shift+Return makes a new line.
-                    if press.modifiers.contains(.shift) { return .ignored }
-                    finish()
-                    return .handled
-                }
-                .onKeyPress(.escape) {
-                    cancel()
-                    return .handled
-                }
             HStack(spacing: 8) {
                 if let delete {
                     Button("Delete", role: .destructive, action: delete)

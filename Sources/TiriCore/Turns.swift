@@ -54,13 +54,19 @@ public enum ChangesScope: Hashable, Sendable {
     /// Whichever turn is newest, as they come.
     case latestTurn
     case turn(String)
+    /// Everything since the branch left its base, uncommitted work included.
+    case branch
+    /// The list of recent commits.
+    case recentCommits
+    /// What one commit changed.
+    case commit(CommitSummary)
 }
 
 extension Array where Element == AgentTurn {
     /// The turn a scope means, among one workspace's turns.
     public func resolving(_ scope: ChangesScope, in workspace: WorkspaceID) -> AgentTurn? {
         switch scope {
-        case .sinceCommit:
+        case .sinceCommit, .branch, .recentCommits, .commit:
             return nil
         case .latestTurn:
             return last { $0.workspace == workspace && !$0.changedNothing }
@@ -186,6 +192,20 @@ public final class TurnSnapshots: Sendable {
                                       in: root, environment: environment),
               result.status == 0 else { return FileDiff() }
         return DiffParser.parse(String(decoding: result.output, as: UTF8.self))
+    }
+
+    /// A file before and after a turn, as bytes. For what can't be compared line by line.
+    public func versions(path: String, in turn: AgentTurn) -> FileVersions? {
+        let real = Git.real(path)
+        guard let root = turn.startTrees.keys.first(where: { real.hasPrefix($0 + "/") }), let start = turn.startTrees[root],
+              let end = turn.endTrees[root] ?? (turn.isOpen ? snapshot(root: root) : nil),
+              let environment = environment(root: root, store: storeDirectory(for: root)) else { return nil }
+        let relative = String(real.dropFirst(root.count + 1))
+        func blob(_ tree: String) -> Data? {
+            guard let result = Git.runGit(["show", tree + ":" + relative], in: root, environment: environment), result.status == 0 else { return nil }
+            return result.output
+        }
+        return FileVersions(old: blob(start), new: blob(end))
     }
 
     /// What a turn changed so far, or in all. An open turn compares against the files as they are now.

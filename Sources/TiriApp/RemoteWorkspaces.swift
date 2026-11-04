@@ -700,11 +700,11 @@ enum RemoteRelay {
     /// Commands that act on one item, which has to belong to this server.
     private static let allowed: Set<String> = [
         "ping", "items", "open", "reveal", "preview", "term", "focus", "close", "notify", "send", "read", "follow", "select",
-        "layout", "tree", "changes", "diff", "turns", "git", "search", "diagnostics", "languages", "theme",
+        "layout", "tree", "changes", "changes.branch", "changes.commit", "log", "diff", "turns", "git", "search", "diagnostics", "languages", "theme",
         "review.list", "review.add", "review.remove", "review.clear", "review.send", "remote.forward", "remote.ports",
     ]
     /// These answer about the workspace in front, so that has to be this server's.
-    private static let aboutFront: Set<String> = ["layout", "tree", "changes", "diff", "turns", "git", "search", "diagnostics", "languages",
+    private static let aboutFront: Set<String> = ["layout", "tree", "changes", "changes.branch", "changes.commit", "log", "diff", "turns", "git", "search", "diagnostics", "languages",
                                                   "review.list", "review.add", "review.remove", "review.clear", "review.send", "reveal"]
 
     static func handle(_ request: RemoteRelayMessage.Request, from destination: String) async -> RemoteRelayMessage.Reply {

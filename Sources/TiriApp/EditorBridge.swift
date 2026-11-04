@@ -584,7 +584,9 @@ final class QuoteButton: NSButton {
         let size = frame.size
         var y = host.isFlipped ? anchor.y : anchor.y - size.height
         y = min(max(y, 4), max(host.bounds.height - size.height - 4, 4))
-        setFrameOrigin(NSPoint(x: max(host.bounds.width - size.width - 18, 8), y: y))
+        // At the right of its own column, when there are two, and not over the other one.
+        let right = textView.enclosingScrollView.map { $0.convert($0.bounds, to: host).maxX } ?? host.bounds.width
+        setFrameOrigin(NSPoint(x: max(right - size.width - 18, 8), y: y))
         applyColors()
         isHidden = false
     }

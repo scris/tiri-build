@@ -127,7 +127,7 @@ struct PeekView: View {
         case .diff(let spec):
             let relative = model.active.relativePath(spec.path)
             let directory = (relative as NSString).deletingLastPathComponent
-            return directory.isEmpty ? "changes" : directory + " · changes"
+            return directory.isEmpty ? spec.scopeWord : directory + " · " + spec.scopeWord
         case .terminal, .settings:
             return nil
         }

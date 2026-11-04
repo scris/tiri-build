@@ -111,6 +111,13 @@ extension AppModel {
             AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
             AppCommand(id: "changesSinceCommit", title: "Changes: Since Last Commit", category: "View") { $0.setChangesScope(.sinceCommit) },
             AppCommand(id: "changesLatestTurn", title: "Changes: Latest Turn", category: "View") { $0.setChangesScope(.latestTurn) },
+            AppCommand(id: "changesBranch", title: "Changes: This Branch", category: "View") { $0.setChangesScope(.branch) },
+            AppCommand(id: "changesRecentCommits", title: "Changes: Recent Commits", category: "View") { $0.setChangesScope(.recentCommits) },
+            AppCommand(id: "nextChange", title: "Go to Next Change", category: "Go") { $0.goToChange(forward: true) },
+            AppCommand(id: "previousChange", title: "Go to Previous Change", category: "Go") { $0.goToChange(forward: false) },
+            AppCommand(id: "toggleDiffSideBySide", title: "Diff: Side by Side", category: "View") { model in
+                _ = model.setSetting("diff.sideBySide", to: .bool(!model.settings.diffSideBySide))
+            },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 model.frontWebController?.reload()
             },
@@ -225,6 +232,7 @@ enum ControlHandler {
         if request.cmd == "languages" {
             await AppModel.shared.languageServers.waitForLocations()
         }
+        if let response = await history(request) { return response }
         // Looking at a turn can mean snapshotting the files. The app keeps responding while it does.
         if request.cmd == "changes", let wanted = request.args["turn"]?.stringValue {
             let (turn, folders, snapshots) = await MainActor.run { () -> (AgentTurn?, [String], TurnSnapshots) in
@@ -335,6 +343,8 @@ enum ControlHandler {
             object["url"] = .string((model.existingController(for: item.id) as? WebController)?.currentURLString ?? spec.url)
         case .diff(let spec):
             object["path"] = .string(spec.path)
+            if let commit = spec.commit { object["commit"] = .string(commit) }
+            if spec.branch == true { object["branch"] = true }
         case .settings:
             break
         }
@@ -777,9 +787,9 @@ enum ControlHandler {
                 turn = found.id
             }
             if request.args["mode"]?.stringValue == "tab" {
-                model.openDiff(path: path, preview: false, turn: turn)
+                model.openDiff(DiffSpec(path: path, turn: turn), preview: false)
             } else {
-                model.peekDiff(path: path, takeFocus: false, turn: turn)
+                model.peekDiff(DiffSpec(path: path, turn: turn), takeFocus: false)
             }
             return .object([:])
 

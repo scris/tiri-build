@@ -6,11 +6,20 @@ import TiriCore
 protocol SymbolViewing: ItemController {
     var path: String { get }
     var symbolTextView: NSTextView { get }
+    /// All of them, when there's more than one, as with a diff's two columns.
+    var symbolTextViews: [NSTextView] { get }
+    /// What's about to be asked about is in this one. Nil means the one with the cursor in it.
+    func willAsk(about view: NSTextView?)
     /// Where a character is in the file itself, counting from 0, if it's in the file at all.
     /// A row removed in a diff isn't.
     func fileLocation(ofCharacter index: Int) -> (line: Int, character: Int)?
     /// A language server has something new to say about this file.
     func diagnosticsChanged()
+}
+
+extension SymbolViewing {
+    var symbolTextViews: [NSTextView] { [symbolTextView] }
+    func willAsk(about view: NSTextView?) {}
 }
 
 /// Where lines start, for turning a server's positions into ranges of text.
@@ -82,13 +91,17 @@ struct NavigationStop {
 
 extension AppModel {
     private var frontSymbolViewer: SymbolViewing? {
-        (active.peek ?? active.activeItem).flatMap { existingController(for: $0.id) as? SymbolViewing }
+        let viewer = (active.peek ?? active.activeItem).flatMap { existingController(for: $0.id) as? SymbolViewing }
+        viewer?.willAsk(about: nil)
+        return viewer
     }
 
     private func symbolViewer(showing view: NSView?) -> SymbolViewing? {
         guard let view else { return nil }
         for item in active.items + (active.peek.map { [$0] } ?? []) {
-            if let viewer = existingController(for: item.id) as? SymbolViewing, view === viewer.symbolTextView || view.isDescendant(of: viewer.symbolTextView) {
+            guard let viewer = existingController(for: item.id) as? SymbolViewing else { continue }
+            if let shown = viewer.symbolTextViews.first(where: { view === $0 || view.isDescendant(of: $0) }) {
+                viewer.willAsk(about: shown)
                 return viewer
             }
         }
@@ -375,10 +388,10 @@ extension AppModel {
             requestFocus()
         case .diff(let spec):
             if stop.inPeek {
-                peekDiff(path: spec.path, takeFocus: true, turn: spec.turn)
+                peekDiff(spec, takeFocus: true)
             } else {
                 dismissPeek(restoreFocus: false, keepStops: true)
-                openDiff(path: spec.path, preview: false, turn: spec.turn)
+                openDiff(spec, preview: false)
             }
         default:
             break

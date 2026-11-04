@@ -47,6 +47,7 @@ public struct TiriSettings: Equatable, Sendable {
     public var terminalRestoreWithResume = true
     public var terminalKeepRunning = true
     public var perTurnDiffs = true
+    public var diffSideBySide = false
     public var languageServers = true
     public var terminalLinkOpens = LinkOpenTarget.peek
     public var codeFontFamily = "SF Mono"
@@ -89,6 +90,8 @@ public struct TiriSettings: Equatable, Sendable {
       // Terminals keep running when Tiri quits, and it comes back to them.
       "terminal.keepRunning": true,
       "changes.perTurn": true,
+      // Show diffs as old and new side by side, rather than in one column.
+      "diff.sideBySide": false,
       "code.languageServers": true,
       // What cmd-clicking a file in a terminal does: "peek", "tab" or "external".
       "terminal.linkOpens": "peek",
@@ -213,6 +216,7 @@ public struct TiriSettings: Equatable, Sendable {
         try bool("documents.forceDark") { settings.documentsForceDark = $0 }
         try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
         try bool("changes.perTurn") { settings.perTurnDiffs = $0 }
+        try bool("diff.sideBySide") { settings.diffSideBySide = $0 }
         try bool("code.languageServers") { settings.languageServers = $0 }
         try bool("notifications.enabled") { settings.notificationsEnabled = $0 }
         return settings
@@ -375,6 +379,8 @@ public enum Keymap {
             ("cmd+l", "addToAgent"),
             ("cmd+shift+l", "attachToAgent"),
             ("cmd+alt+l", "addReviewComment"),
+            ("f7", "nextChange"),
+            ("shift+f7", "previousChange"),
             ("f12", "goToDefinition"),
             ("cmd+k cmd+i", "showHover"),
             ("shift+f12", "findReferences"),
