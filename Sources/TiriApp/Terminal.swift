@@ -1381,11 +1381,18 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// A real key press, seen by the router. Bytes to the process wouldn't do: terminals answer
     /// focus and capability queries by themselves, and agents using the enhanced keyboard
     /// protocol don't get Return as CR. Pressing Return is what hands an agent some work.
+    private var hooksReportStarts = false
+    func heardTurnStart() { hooksReportStarts = true }
+
     func noteKeyPress(isReturn: Bool) {
         lastInputAt = ProcessClock.now()
         if runningAgent != nil { model.lastAgentTerminal = itemID }
         guard isReturn else { return }
         agentHasWork = true
+        // An agent that only reports when it's finished would look finished the whole time it works.
+        if hookActive, !hooksReportStarts, runningAgent != nil, let status = model.runtimes[itemID]?.status, status == .done || status == .idle {
+            model.setStatus(itemID, .working, notify: false)
+        }
         // The user answered. Without hooks nothing else would clear the question.
         if !hookActive, model.runtimes[itemID]?.status == .needsInput {
             model.setStatus(itemID, .working, notify: false)

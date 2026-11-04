@@ -449,7 +449,7 @@ public enum CLIParser {
             if let turn = event.turn { body["turn"] = .string(turn.rawValue) }
             if let prompt = event.prompt { body["prompt"] = .string(prompt) }
             if let activity = event.activity { body["activity"] = .string(activity) }
-            if let file = event.file { body["file"] = .string(file) }
+            if !event.files.isEmpty { body["files"] = .array(event.files.map(JSONValue.string)) }
             body["hook"] = true
             return request("notify", body)
 
@@ -728,6 +728,22 @@ public enum AgentGuide {
     public static let codexHooks = #"""
     # ~/.codex/config.toml
     notify = ["tiri", "hook", "codex"]
+
+    # Codex asks you to trust these the first time it sees them.
+    [[hooks.SessionStart]]
+    [[hooks.SessionStart.hooks]]
+    type = "command"
+    command = "tiri hook codex"
+
+    [[hooks.UserPromptSubmit]]
+    [[hooks.UserPromptSubmit.hooks]]
+    type = "command"
+    command = "tiri hook codex"
+
+    [[hooks.PostToolUse]]
+    [[hooks.PostToolUse.hooks]]
+    type = "command"
+    command = "tiri hook codex"
 
     [[hooks.PermissionRequest]]
     [[hooks.PermissionRequest.hooks]]

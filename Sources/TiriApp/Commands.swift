@@ -773,7 +773,7 @@ enum ControlHandler {
                                    turn: request.args["turn"]?.stringValue,
                                    prompt: request.args["prompt"]?.stringValue,
                                    activity: request.args["activity"]?.stringValue,
-                                   file: request.args["file"]?.stringValue)
+                                   files: request.args["files"]?.arrayValue?.compactMap(\.stringValue) ?? [])
             return .object(["item": .string(id), "status": .string(model.runtimes[id]?.status.rawValue ?? "idle")])
 
         case "settings.list", "settings.explain":

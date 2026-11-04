@@ -370,15 +370,15 @@ public struct AgentHookEvent: Equatable, Sendable {
     public var prompt: String?
     /// What it just did, in words: "Edited auth.ts".
     public var activity: String?
-    /// A file it just changed.
-    public var file: String?
+    /// Files it just changed.
+    public var files: [String]
 
     public enum Turn: String, Sendable { case start, end }
 
     public init(state: String? = nil, message: String? = nil, sessionID: String? = nil, turn: Turn? = nil, prompt: String? = nil,
-                activity: String? = nil, file: String? = nil) {
+                activity: String? = nil, files: [String] = []) {
         self.activity = activity
-        self.file = file
+        self.files = files
         self.state = state
         self.message = message
         self.sessionID = sessionID
@@ -388,36 +388,67 @@ public struct AgentHookEvent: Equatable, Sendable {
 
     /// What a tool call amounts to. Agents name their tools differently, so this goes by what they
     /// have in common, and a tool it doesn't know is still named.
-    public static func describe(tool: String?, input: [String: Any]?) -> (activity: String?, file: String?) {
-        guard let tool, !tool.isEmpty else { return (nil, nil) }
+    public static func describe(tool: String?, input: [String: Any]?) -> (activity: String?, files: [String]) {
+        guard let tool, !tool.isEmpty else { return (nil, []) }
         let path = (input?["file_path"] ?? input?["notebook_path"] ?? input?["path"]) as? String
         let name = path.map { ($0 as NSString).lastPathComponent }
         switch tool.lowercased() {
-        case "edit", "multiedit", "notebookedit", "edit_file", "search_replace", "apply_patch":
-            return (name.map { "Edited \($0)" } ?? "Edited a file", path)
+        case "apply_patch":
+            // Codex's one tool for edits names its files inside the patch.
+            let files = patchFiles((input?["command"] ?? input?["patch"] ?? input?["input"]) as? String ?? "")
+            guard let first = files.first else { return ("Edited a file", []) }
+            let shown = (first as NSString).lastPathComponent
+            return (files.count == 1 ? "Edited \(shown)" : "Edited \(shown) and \(files.count - 1) more", files)
+        case "edit", "multiedit", "notebookedit", "edit_file", "search_replace":
+            return (name.map { "Edited \($0)" } ?? "Edited a file", path.map { [$0] } ?? [])
         case "write", "write_file", "create_file":
-            return (name.map { "Wrote \($0)" } ?? "Wrote a file", path)
+            return (name.map { "Wrote \($0)" } ?? "Wrote a file", path.map { [$0] } ?? [])
         case "read", "read_file", "view":
-            return (name.map { "Read \($0)" } ?? "Read a file", nil)
+            return (name.map { "Read \($0)" } ?? "Read a file", [])
         case "bash", "shell", "run_terminal_cmd", "run_command", "exec", "execute":
             let command = (input?["command"] ?? input?["cmd"]) as? String
             let first = command?.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmingCharacters(in: .whitespaces)
-            guard let first, !first.isEmpty else { return ("Ran a command", nil) }
-            return ("Ran " + (first.count > 60 ? String(first.prefix(59)) + "…" : first), nil)
+            guard let first, !first.isEmpty else { return ("Ran a command", []) }
+            return ("Ran " + (first.count > 60 ? String(first.prefix(59)) + "…" : first), [])
         case "grep", "glob", "search", "ls", "list_dir", "grep_search", "file_search":
-            return ("Searched the project", nil)
+            return ("Searched the project", [])
         case "webfetch", "websearch", "web_search", "web_fetch":
-            return ("Looked something up online", nil)
+            return ("Looked something up online", [])
         case "task", "agent":
-            return ("Started a helper", nil)
+            return ("Started a helper", [])
         default:
-            return ("Used \(tool)", nil)
+            return ("Used \(tool)", [])
         }
+    }
+
+    /// `*** Add File: a.txt`, `*** Update File: b.txt`, `*** Delete File: c.txt`.
+    static func patchFiles(_ patch: String) -> [String] {
+        var files: [String] = []
+        for line in patch.split(whereSeparator: \.isNewline) {
+            for marker in ["*** Add File: ", "*** Update File: ", "*** Delete File: ", "*** Move to: "] where line.hasPrefix(marker) {
+                let name = String(line.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty, !files.contains(name) { files.append(name) }
+            }
+        }
+        return files
     }
 
     private static func toolEvent(_ object: [String: Any], session: String?) -> AgentHookEvent {
         let what = describe(tool: object["tool_name"] as? String, input: object["tool_input"] as? [String: Any])
-        return AgentHookEvent(state: "working", sessionID: session, activity: what.activity, file: what.file)
+        // A path in a patch is from where the agent is.
+        let cwd = object["cwd"] as? String
+        let files = what.files.map { file in
+            file.hasPrefix("/") ? file : cwd.map { ($0 as NSString).appendingPathComponent(file) } ?? file
+        }
+        return AgentHookEvent(state: "working", sessionID: session, activity: what.activity, files: files)
+    }
+
+    /// Codex names each conversation with a hidden thread of its own, and that thread reports finishing
+    /// too, with its own ID and a title as its whole answer. It isn't the session, and the turn isn't over.
+    private static func isCodexTitleThread(_ object: [String: Any]) -> Bool {
+        guard let message = object["last-assistant-message"] as? String, message.hasPrefix("{"),
+              let parsed = (try? JSONSerialization.jsonObject(with: Data(message.utf8))) as? [String: Any] else { return false }
+        return parsed.count == 1 && parsed["title"] is String
     }
 
     public static func promptLine(_ text: String?) -> String? { snippet(text) }
@@ -515,7 +546,8 @@ public struct AgentHookEvent: Equatable, Sendable {
         let session = (object["thread-id"] as? String) ?? (object["session_id"] as? String)
         if let type = object["type"] as? String {
             if type == "agent-turn-complete" {
-                return AgentHookEvent(state: "done", message: snippet(object["last-assistant-message"] as? String), sessionID: session, turn: .end)
+                if isCodexTitleThread(object) { return nil }
+                return AgentHookEvent(state: "done", message: snippet(object["last-assistant-message"] as? String), sessionID: session, turn: .end, prompt: (object["input-messages"] as? [String])?.last)
             }
             return session == nil ? nil : AgentHookEvent(sessionID: session)
         }
@@ -524,7 +556,11 @@ public struct AgentHookEvent: Equatable, Sendable {
             return AgentHookEvent(state: "needs-input", message: (object["tool_name"] as? String).map { "Wants to use \($0)" }, sessionID: session)
         case "UserPromptSubmit":
             return AgentHookEvent(state: "working", sessionID: session, turn: .start, prompt: object["prompt"] as? String)
-        case "PreToolUse", "PostToolUse":
+        case "SessionStart":
+            return AgentHookEvent(state: "idle", sessionID: session)
+        case "PostToolUse":
+            return toolEvent(object, session: session)
+        case "PreToolUse":
             return AgentHookEvent(state: "working", sessionID: session)
         case "Interrupt":
             return AgentHookEvent(state: "done", message: "Interrupted", sessionID: session, turn: .end)

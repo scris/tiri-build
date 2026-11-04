@@ -1192,18 +1192,23 @@ final class AppModel {
     }
 
     func handleHookReport(item id: ItemID, tool: String?, state: String?, message: String?, session: String?,
-                          turn: String? = nil, prompt: String? = nil, activity: String? = nil, file: String? = nil) {
+                          turn: String? = nil, prompt: String? = nil, activity: String? = nil, files: [String] = []) {
         if let tool, case .terminal(let spec)? = anyItem(id)?.content, !spec.acceptsHook(from: tool) { return }
-        if turn != nil || activity != nil || file != nil {
+        if turn == AgentHookEvent.Turn.start.rawValue { (existingController(for: id) as? TerminalController)?.heardTurnStart() }
+        if turn != nil || activity != nil || !files.isEmpty {
             updateRuntime(id) { runtime in
                 if turn == AgentHookEvent.Turn.start.rawValue {
                     runtime.prompt = AgentHookEvent.promptLine(prompt)
                     runtime.touched = []
                     runtime.activity = nil
                 }
-                if turn == AgentHookEvent.Turn.end.rawValue { runtime.activity = nil }
+                if turn == AgentHookEvent.Turn.end.rawValue {
+                    runtime.activity = nil
+                    // An agent that only says when it's finished says here what it was asked.
+                    if let prompt, let line = AgentHookEvent.promptLine(prompt) { runtime.prompt = line }
+                }
                 if let activity { runtime.activity = activity }
-                if let file, !runtime.touched.contains(file) { runtime.touched.append(file) }
+                for file in files where !runtime.touched.contains(file) { runtime.touched.append(file) }
             }
         }
         if turn == AgentHookEvent.Turn.start.rawValue { turnStarted(item: id, prompt: prompt) }

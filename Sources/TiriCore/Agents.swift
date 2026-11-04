@@ -155,7 +155,7 @@ public enum AgentCatalog {
             resumingFlags: ["--continue", "--resume", "-c"], resumingSubcommands: ["resume"],
             oneShotFlags: ["-p", "--print"], oneShotSubcommands: ["exec"],
             configDirectory: ".codex", configDirectoryVariable: "CODEX_HOME",
-            hookInstall: .tomlSection(file: "config.toml"), hookEvents: ["PermissionRequest"],
+            hookInstall: .tomlSection(file: "config.toml"), hookEvents: ["SessionStart", "UserPromptSubmit", "PostToolUse", "PermissionRequest"],
             parseHook: { AgentHookEvent.parseCodex($0) }, claimsHookPayload: nil, alsoRunsHooksOf: nil,
             hookExample: AgentGuide.codexHooks, nothingToResume: ["No saved session found"],
             conversationFiles: "sessions/*/*/*/*.jsonl", conversationFormat: .codex,

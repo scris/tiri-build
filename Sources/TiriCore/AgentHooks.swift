@@ -132,6 +132,21 @@ public enum AgentHooks {
     private static let codexEnd = "# End of Tiri's section."
     private static let codexBlock = """
     \(codexStart)
+    [[hooks.SessionStart]]
+    [[hooks.SessionStart.hooks]]
+    type = "command"
+    command = "tiri hook codex 2>/dev/null || true"
+
+    [[hooks.UserPromptSubmit]]
+    [[hooks.UserPromptSubmit.hooks]]
+    type = "command"
+    command = "tiri hook codex 2>/dev/null || true"
+
+    [[hooks.PostToolUse]]
+    [[hooks.PostToolUse.hooks]]
+    type = "command"
+    command = "tiri hook codex 2>/dev/null || true"
+
     [[hooks.PermissionRequest]]
     [[hooks.PermissionRequest.hooks]]
     type = "command"

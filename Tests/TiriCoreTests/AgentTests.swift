@@ -18,9 +18,9 @@ import Testing
 
     @Test func toolCallsInWords() {
         #expect(AgentHookEvent.describe(tool: "Edit", input: ["file_path": "/a/auth.ts"]).activity == "Edited auth.ts")
-        #expect(AgentHookEvent.describe(tool: "Edit", input: ["file_path": "/a/auth.ts"]).file == "/a/auth.ts")
+        #expect(AgentHookEvent.describe(tool: "Edit", input: ["file_path": "/a/auth.ts"]).files == ["/a/auth.ts"])
         #expect(AgentHookEvent.describe(tool: "Write", input: ["file_path": "/a/b.md"]).activity == "Wrote b.md")
-        #expect(AgentHookEvent.describe(tool: "Read", input: ["file_path": "/a/b.md"]).file == nil)
+        #expect(AgentHookEvent.describe(tool: "Read", input: ["file_path": "/a/b.md"]).files.isEmpty)
         #expect(AgentHookEvent.describe(tool: "Bash", input: ["command": "npm test\nnpm run x"]).activity == "Ran npm test")
         #expect(AgentHookEvent.describe(tool: "Grep", input: nil).activity == "Searched the project")
         #expect(AgentHookEvent.describe(tool: "mcp__x__y", input: nil).activity == "Used mcp__x__y")
@@ -34,7 +34,32 @@ import Testing
         let event = try #require(AgentHookEvent.parseClaude(Data(payload.utf8)))
         #expect(event.state == "working")
         #expect(event.activity == "Edited auth.ts")
-        #expect(event.file == "/a/auth.ts")
+        #expect(event.files == ["/a/auth.ts"])
+    }
+
+    // From a real Codex 0.157 turn, with long values shortened.
+    @Test func codexsRealPayloads() throws {
+        let title = #"{"type":"agent-turn-complete","thread-id":"title-thread","turn-id":"t","cwd":"/w","client":"codex-tui","input-messages":["x"],"last-assistant-message":"{\"title\":\"Create file and list directory\"}"}"#
+        #expect(AgentHookEvent.parseCodex(Data(title.utf8)) == nil)
+
+        let done = #"{"type":"agent-turn-complete","thread-id":"main","turn-id":"t","cwd":"/w","client":"codex-tui","input-messages":["Create a.txt"],"last-assistant-message":"Created `a.txt`."}"#
+        let finished = try #require(AgentHookEvent.parseCodex(Data(done.utf8)))
+        #expect(finished.state == "done")
+        #expect(finished.sessionID == "main")
+        #expect(finished.prompt == "Create a.txt")
+
+        let patch = #"{"session_id":"main","turn_id":"t","cwd":"/w","hook_event_name":"PostToolUse","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Add File: a.txt\n+hi\n*** Update File: src/b.txt\n*** End Patch"}}"#
+        let edited = try #require(AgentHookEvent.parseCodex(Data(patch.utf8)))
+        #expect(edited.activity == "Edited a.txt and 1 more")
+        #expect(edited.files == ["/w/a.txt", "/w/src/b.txt"])
+
+        let shell = #"{"session_id":"main","cwd":"/w","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":"a.txt\n"}"#
+        #expect(try #require(AgentHookEvent.parseCodex(Data(shell.utf8))).activity == "Ran ls")
+
+        let prompt = #"{"session_id":"main","turn_id":"t","cwd":"/w","hook_event_name":"UserPromptSubmit","prompt":"Do it"}"#
+        let start = try #require(AgentHookEvent.parseCodex(Data(prompt.utf8)))
+        #expect(start.turn == .start)
+        #expect(start.prompt == "Do it")
     }
 
     @Test func oneShotRunsDontSpeakForTheSession() {
