@@ -48,7 +48,7 @@ has "git status" "master" "$(T git)$(T git | grep -c main >/dev/null; T git)"
 T send "$ID" 'clear; which tiri; tiri ping' --enter
 eventually "tiri works on the server" "pong" 10 T read "$ID" --lines 5
 T send "$ID" 'clear; tiri open src/app.py; tiri quit; echo rc=$?' --enter
-eventually "the Mac is off limits" "can only be run on the Mac" 10 T read "$ID" --lines 6
+eventually "the Mac is off limits" "only be run" 10 T read "$ID" --lines 6
 eventually "open from the server floats a Peek" "(peek)" 10 T items
 T send "$ID" 'clear; tiri open report.md:1; tiri open "dir with space/é.txt"; tiri open /etc/hosts; echo done-$((40+2))' --enter
 eventually "odd names and outside paths open" "done-42" 10 T read "$ID" --lines 8
@@ -97,6 +97,52 @@ scripts/dev-app.sh start "$NAME" >/dev/null 2>&1
 eventually "reconnects at launch" "Connected" 20 T remote
 sleep 1; T workspace switch tiri-e2e >/dev/null 2>&1
 eventually "same session after a relaunch" "after-quit-8" 25 T read "$ID" --lines 12
+
+# What a hostile server might try. Each of these has to stay on its own side.
+MARK="$(mktemp -d)"
+LOCAL_FILE="$MARK/secret.txt"; echo mac-secret > "$LOCAL_FILE"
+T workspace new localfront --folder "$MARK" >/dev/null
+T send "$ID" "clear; env -u TIRI_ITEM_ID tiri term --cwd /tmp --cmd 'touch $MARK/pwned'; env -u TIRI_ITEM_ID tiri open /tmp; echo tried-1" --enter
+eventually "with no item and a local workspace in front" "tried-1" 15 T read "$ID" --lines 5
+has "a server is refused" "workspace in front" "$(T read "$ID" --lines 8 | tr -d '\n')"
+T send "$ID" "clear; tiri term --cmd 'touch $MARK/pwned2'; tiri open $LOCAL_FILE; echo tried-2" --enter
+eventually "its own term stays on its server" "tried-2" 15 T read "$ID" --lines 6
+sleep 2
+[ ! -e "$MARK/pwned" ] && [ ! -e "$MARK/pwned2" ] && ok "nothing ran on the Mac" || bad "nothing ran on the Mac"
+hasnt "no Mac file opened" "secret.txt" "$(T items)"
+hasnt "and items only shows its own" "localfront" "$(T send "$ID" 'clear; tiri items; echo listed' --enter; sleep 2; T read "$ID" --lines 8)"
+T workspace switch tiri-e2e >/dev/null; sleep 1
+T send "$ID" "clear; tiri review add $LOCAL_FILE:1 x; tiri preview file://$LOCAL_FILE; tiri send i-nosuch hi; tiri focus i-nosuch; tiri theme light; echo tried-3" --enter
+eventually "other reaches" "tried-3" 15 T read "$ID" --lines 8
+hasnt "a Mac file can't be quoted" "$(cat "$LOCAL_FILE")" "$(T read "$ID" --lines 12)"
+has "preview of a Mac file is refused" "isn't on this server" "$(T read "$ID" --lines 12 | tr -d '\n')"
+has "theme stays the Mac's" "can only be run on the Mac" "$(T read "$ID" --lines 12 | tr -d '\n')"
+T workspace delete localfront >/dev/null 2>&1
+for leftover in $(T items | grep -F "[tiri-e2e]" | grep terminal | grep -v "$ID" | cut -f1); do T close "$leftover" >/dev/null 2>&1; done
+rm -rf "$MARK"
+
+# A file named to break out of quotes, on whatever the login shell is
+R "cd ~/tiri-e2e; python3 - <<'PY'
+open(\"';touch PWNED;\\\\\", 'w').write('harmless\\n')
+PY
+true" 2>/dev/null
+T send "$ID" 'clear; cd ~/tiri-e2e; tiri tree >/dev/null; echo quoted-done' --enter
+eventually "odd file names" "quoted-done" 10 T read "$ID" --lines 3
+sleep 2
+for name in $(T tree 2>/dev/null | grep -c PWNED); do :; done
+T open "/home/$(R 'id -un')/tiri-e2e/';touch PWNED;\\" >/dev/null 2>&1
+sleep 2
+R 'cd ~/tiri-e2e; [ -e PWNED ] && echo PWNED || echo clean' | grep -q clean && ok "a file's name can't run anything" || bad "a file's name can't run anything"
+R "cd ~/tiri-e2e; python3 -c \"import os; [os.remove(f) for f in os.listdir('.') if f.startswith(\\\"';\\\")]\""
+
+# A save that doesn't all arrive
+R 'cd ~/tiri-e2e; printf full-original-contents > keep.txt; printf ORI | ~/.tiri/bin/tiri-remote write keep.txt 30 2>/dev/null; echo "rc=$?"; cat keep.txt' > /tmp/.tiri-e2e-w 2>&1
+W="$(cat /tmp/.tiri-e2e-w)"; rm -f /tmp/.tiri-e2e-w
+has "a cut-off save is refused" "rc=1" "$W"
+has "and the file is untouched" "full-original-contents" "$W"
+W="$(R 'cd ~/tiri-e2e; printf new | ~/.tiri/bin/tiri-remote write keep.txt 3 --if-modified 12345 2>/dev/null; echo "rc=$?"; cat keep.txt')"
+has "a save that would replace newer work stops" "rc=9" "$W"
+has "and leaves it alone" "full-original-contents" "$W"
 
 if [ -n "${TIRI_E2E_NO_FORWARDING:-}" ]; then
   # A server that forbids forwarding: everything else still works, and these say so.

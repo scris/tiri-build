@@ -247,6 +247,24 @@ enum ControlHandler {
                 .object(["status": .string(change.status.letter), "path": .string(change.path)])
             }))
         }
+        // These can go over the network. The app keeps responding while they do.
+        if request.cmd == "git" || request.cmd == "changes" {
+            let folders = await MainActor.run { AppModel.shared.active.folders }
+            if request.cmd == "changes" {
+                let found = await Task.detached(priority: .userInitiated) { Git.changesAcross(folders) }.value
+                return .success(id: request.id, .array(found.map { change in
+                    .object(["status": .string(change.status.letter), "path": .string(change.path)])
+                }))
+            }
+            let found = await Task.detached(priority: .userInitiated) { Git.repositoriesAcross(folders) }.value
+            return .success(id: request.id, .array(found.map { repository in
+                var object: [String: JSONValue] = ["root": .string(repository.root), "head": .string(repository.title),
+                                                   "ahead": .int(repository.ahead), "behind": .int(repository.behind),
+                                                   "dirty": .bool(repository.isDirty)]
+                if let upstream = repository.upstream { object["upstream"] = .string(upstream) }
+                return .object(object)
+            }))
+        }
         // These read a lot of files. The app keeps responding while they do.
         if request.cmd == "search", let query = request.args["query"]?.stringValue {
             let paths = await AppModel.shared.searchablePaths()
@@ -368,8 +386,11 @@ enum ControlHandler {
     private static func worktreeAdd(_ request: ControlRequest) async -> ControlResponse {
         let model = AppModel.shared
         guard let branch = request.args["branch"]?.stringValue else { return .failure(id: request.id, "Which branch?") }
-        let source = request.args["source"]?.stringValue.flatMap { model.existingController(for: $0) as? TerminalController }?.currentDirectory
-        guard let folder = source ?? model.active.folders.first else { return .failure(id: request.id, "This workspace has no folder.") }
+        let terminal = request.args["source"]?.stringValue
+        let source = terminal.flatMap { model.existingController(for: $0) as? TerminalController }?.currentDirectory
+        // A terminal that hasn't been looked at yet has no controller, but its workspace still has folders.
+        let holder = terminal.flatMap { model.workspace(containing: $0) } ?? model.active
+        guard let folder = source ?? holder.folders.first else { return .failure(id: request.id, "This workspace has no folder.") }
         // From a terminal it's an agent asking. Where you're looking stays your call.
         switch await model.addWorktree(branch: branch, from: folder, activating: request.args["source"] == nil).value {
         case .success(let workspace):

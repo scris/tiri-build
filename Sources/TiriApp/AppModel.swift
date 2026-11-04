@@ -1317,7 +1317,7 @@ final class AppModel {
 
     @discardableResult
     func addWorktree(branch: String, from folder: String, activating: Bool = true) -> Task<Result<Workspace, Git.TransferFailure>, Never> {
-        let host = active.remote
+        let host = RemoteRegistry.shared.connection(forLocal: folder)?.destination
         return Task { [weak self] in
             let (result, root) = await Task.detached(priority: .userInitiated) { (Git.addWorktree(branch: branch, in: folder), Git.mainWorktree(of: folder)) }.value
             let repository = ((root ?? folder) as NSString).lastPathComponent

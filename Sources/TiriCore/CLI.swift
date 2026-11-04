@@ -22,6 +22,9 @@ public enum CLIParser {
         public var claudeEntrypoint: String?
         public var fileExists: @Sendable (String) -> Bool
         public var readStdin: @Sendable () -> Data
+        /// In a terminal on a server: where its absolute paths really are, and its home folder.
+        public var translate: (@Sendable (String) -> String)?
+        public var home: String?
         public init(cwd: String, itemID: String?, workspace: String? = nil, claudeEntrypoint: String? = nil,
                     fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
                     readStdin: @escaping @Sendable () -> Data = { FileHandle.standardInput.readDataToEndOfFile() }) {
@@ -165,7 +168,7 @@ public enum CLIParser {
         case "diagnostics":
             var options = Options(args)
             var paths: [JSONValue] = []
-            while let raw = options.positional() { paths.append(.string(absolute(raw, cwd: environment.cwd))) }
+            while let raw = options.positional() { paths.append(.string(absolute(raw, environment))) }
             try options.finish()
             return request("diagnostics", paths.isEmpty ? [:] : ["paths": .array(paths)])
 
@@ -205,7 +208,7 @@ public enum CLIParser {
             guard let raw = options.positional() else { throw UsageError(usage) }
             try options.finish()
             guard [turn != nil, commit != nil, branch].filter({ $0 }).count <= 1 else { throw UsageError(usage) }
-            var payload: [String: JSONValue] = ["path": .string(absolute(raw, cwd: environment.cwd))]
+            var payload: [String: JSONValue] = ["path": .string(absolute(raw, environment))]
             if tab { payload["mode"] = "tab" }
             if let turn { payload["turn"] = .string(turn) }
             if let commit { payload["commit"] = .string(commit) }
@@ -221,8 +224,8 @@ public enum CLIParser {
                 guard args.count >= 3 else { throw UsageError(usage) }
                 var payload: [String: JSONValue] = ["text": .string(args[2...].joined(separator: " "))]
                 let target = args[1]
-                if let match = target.wholeMatch(of: /(.+):(\d+)-(\d+)/), !environment.fileExists(absolute(target, cwd: environment.cwd)) {
-                    payload["path"] = .string(absolute(String(match.1), cwd: environment.cwd))
+                if let match = target.wholeMatch(of: /(.+):(\d+)-(\d+)/), !environment.fileExists(absolute(target, environment)) {
+                    payload["path"] = .string(absolute(String(match.1), environment))
                     payload["line"] = .int(Int(match.2) ?? 1)
                     payload["lastLine"] = .int(Int(match.3) ?? 1)
                 } else {
@@ -251,14 +254,14 @@ public enum CLIParser {
             var options = Options(args)
             guard let raw = options.positional() else { throw UsageError("usage: tiri reveal <path>") }
             try options.finish()
-            return request("reveal", ["path": .string(absolute(raw, cwd: environment.cwd))])
+            return request("reveal", ["path": .string(absolute(raw, environment))])
 
         case "preview":
             var options = Options(args)
             let split = try options.split()
             guard let raw = options.positional() else { throw UsageError("usage: tiri preview <url-or-path> [--split right]") }
             try options.finish()
-            var payload: [String: JSONValue] = ["target": .string(normalizeWebTarget(raw, cwd: environment.cwd))]
+            var payload: [String: JSONValue] = ["target": .string(normalizeWebTarget(raw, environment))]
             if let split { payload["split"] = .string(split) }
             if let item = environment.itemID { payload["source"] = .string(item) }
             return request("preview", payload)
@@ -269,7 +272,7 @@ public enum CLIParser {
             let cwd = try options.value("--cwd")
             let cmd = try options.value("--cmd")
             try options.finish()
-            var payload: [String: JSONValue] = ["cwd": .string(absolute(cwd ?? environment.cwd, cwd: environment.cwd))]
+            var payload: [String: JSONValue] = ["cwd": .string(absolute(cwd ?? environment.cwd, environment))]
             if let cmd { payload["cmd"] = .string(cmd) }
             if let split { payload["split"] = .string(split) }
             if let item = environment.itemID { payload["source"] = .string(item) }
@@ -287,26 +290,26 @@ public enum CLIParser {
                 try options.finish()
                 return request("workspace.switch", ["name": .string(name)])
             case "new":
-                let folders = try options.values("--folder").map { JSONValue.string(absolute($0, cwd: environment.cwd)) }
+                let folders = try options.values("--folder").map { JSONValue.string(absolute($0, environment)) }
                 guard let name = options.positional() else { throw UsageError("usage: tiri workspace new <name> [--folder DIR ...]") }
                 try options.finish()
                 return request("workspace.new", ["name": .string(name), "folders": .array(folders)])
             case "add-folder":
                 guard let folder = options.positional() else { throw UsageError("usage: tiri workspace add-folder <DIR>") }
                 try options.finish()
-                var payload: [String: JSONValue] = ["folder": .string(absolute(folder, cwd: environment.cwd))]
+                var payload: [String: JSONValue] = ["folder": .string(absolute(folder, environment))]
                 if let item = environment.itemID { payload["source"] = .string(item) }
                 return request("workspace.add-folder", payload)
             case "remove-folder":
                 guard let folder = options.positional() else { throw UsageError("usage: tiri workspace remove-folder <DIR>") }
                 try options.finish()
-                var payload: [String: JSONValue] = ["folder": .string(absolute(folder, cwd: environment.cwd))]
+                var payload: [String: JSONValue] = ["folder": .string(absolute(folder, environment))]
                 if let item = environment.itemID { payload["source"] = .string(item) }
                 return request("workspace.remove-folder", payload)
             case "import":
                 guard let file = options.positional() else { throw UsageError("usage: tiri workspace import <file.code-workspace>") }
                 try options.finish()
-                return request("workspace.import", ["file": .string(absolute(file, cwd: environment.cwd))])
+                return request("workspace.import", ["file": .string(absolute(file, environment))])
             case "rename":
                 guard let name = options.positional() else { throw UsageError("usage: tiri workspace rename <new-name> [<workspace>]") }
                 let target = options.positional()
@@ -523,6 +526,16 @@ public enum CLIParser {
 
     // MARK: Helpers
 
+    /// A path as the person typing it means it, wherever they're typing it.
+    public static func absolute(_ path: String, _ environment: Environment) -> String {
+        if let translate = environment.translate {
+            if path == "~" || path.hasPrefix("~/") { return translate((environment.home ?? "") + path.dropFirst(1)) }
+            if path.hasPrefix("/") { return translate(path) }
+            return RemotePathMap.lexical(environment.cwd + "/" + path)
+        }
+        return absolute(path, cwd: environment.cwd)
+    }
+
     public static func absolute(_ path: String, cwd: String) -> String {
         var expanded = path
         if expanded == "~" {
@@ -543,15 +556,22 @@ public enum CLIParser {
         return URL(fileURLWithPath: absolute(raw, cwd: cwd)).absoluteString
     }
 
+    public static func normalizeWebTarget(_ raw: String, _ environment: Environment) -> String {
+        if raw.contains("://") || raw.wholeMatch(of: /(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/.*)?/) != nil {
+            return normalizeWebTarget(raw, cwd: environment.cwd)
+        }
+        return URL(fileURLWithPath: absolute(raw, environment)).absoluteString
+    }
+
     /// `path:12:3`, unless a file literally has that name.
     static func parseLocation(_ raw: String, environment: Environment) -> (path: String, line: Int?, col: Int?) {
-        let whole = absolute(raw, cwd: environment.cwd)
+        let whole = absolute(raw, environment)
         if environment.fileExists(whole) { return (whole, nil, nil) }
         if let match = raw.wholeMatch(of: /(.+?):(\d+):(\d+)/) {
-            return (absolute(String(match.1), cwd: environment.cwd), Int(match.2), Int(match.3))
+            return (absolute(String(match.1), environment), Int(match.2), Int(match.3))
         }
         if let match = raw.wholeMatch(of: /(.+?):(\d+)/) {
-            return (absolute(String(match.1), cwd: environment.cwd), Int(match.2), nil)
+            return (absolute(String(match.1), environment), Int(match.2), nil)
         }
         return (whole, nil, nil)
     }

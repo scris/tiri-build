@@ -93,6 +93,12 @@ final class RemoteManager {
         connection.onPendingSaves = { [weak self] count in
             MainActor.assumeIsolated { self?.pendingSaves[destination] = count }
         }
+        connection.onSaveConflict = { [weak self] local in
+            MainActor.assumeIsolated { self?.askAboutConflict(local, on: connection) }
+        }
+        connection.onCaseCollision = { [weak self] name, holder in
+            MainActor.assumeIsolated { self?.noteCaseCollision(name, holder: holder, on: destination) }
+        }
         let box = openFiles
         connection.openFiles = { box.value }
         connection.onReady = { [weak self] in
@@ -142,7 +148,7 @@ final class RemoteManager {
     /// The server wouldn't open another session on that connection, whatever its limit is.
     func moveToNextSlot(_ item: ItemID, on destination: String) {
         let current = terminalSlots[destination]?[item] ?? 0
-        terminalSlots[destination, default: [:]][item] = current + 1
+        terminalSlots[destination, default: [:]][item] = min(current + 1, 8)
     }
 
     func releaseTerminalSlot(_ item: ItemID, on destination: String) {
@@ -217,15 +223,15 @@ final class RemoteManager {
         let wanted = forwards.filter { $0.destination == destination }
         let ends = pendingEnds.removeValue(forKey: destination) ?? []
         let tag = machineTag
-        let bridgePort = Int(model.editorBridge.port)
+        let bridge = model.editorBridge.listener(for: destination)
         let previousPort = bridgePorts[destination]
-        let lock = bridgeLock(for: connection)
+        let lock = bridgeLock(for: connection, token: bridge?.token)
         let names = model.settings.terminalPresets.compactMap { $0.command.split(separator: " ").first.map(String.init) }.filter(ShellLookup.isPlainName)
         Task.detached(priority: .userInitiated) { [weak self] in
             for forward in wanted { _ = connection.forwardToServer(remotePort: forward.remotePort, preferredLocalPort: forward.localPort) }
             var remoteBridge: Int?
-            if bridgePort != 0 {
-                remoteBridge = connection.forwardToMac(localPort: bridgePort, preferredRemotePort: previousPort)
+            if let bridge {
+                remoteBridge = connection.forwardToMac(localPort: Int(bridge.port), preferredRemotePort: previousPort)
                 if let remoteBridge, let lock { RemoteManager.writeBridgeLock(lock, port: remoteBridge, tag: tag, connection: connection) }
             }
             if let run = connection.runDirectory, let bin = connection.binDirectory {
@@ -233,14 +239,14 @@ final class RemoteManager {
                     _ = connection.run("\(ShellQuote.quote(bin + "/tiri-remote")) session kill \(ShellQuote.quote(run + "/" + tag + "-" + item + ".sock"))", timeout: 10)
                 }
                 // A tab closed while this Mac wasn't here. Other Macs' terminals have another tag.
-                if let listing = connection.run("cd \(ShellQuote.quote(run)) && for f in \(tag)-*.sock; do printf '%s\\n' \"$f\"; done", timeout: 10) {
+                if let listing = connection.run("cd \(ShellQuote.quote(run)) && for f in \(tag)-i-*.sock; do printf '%s\\n' \"$f\"; done", timeout: 10) {
                     // Asked now, not earlier: a workspace may have appeared since connecting.
                     let keep = await MainActor.run { () -> Set<ItemID> in
                         guard let self else { return [] }
                         return Set(self.model.workspaces.filter { $0.remote == destination }.flatMap { $0.items.map(\.id) })
                     }
                     for line in listing.text.split(whereSeparator: \.isNewline)
-                    where line.hasPrefix(tag + "-") && line.hasSuffix(".sock") && line != tag + "-control.sock" {
+                    where line.hasPrefix(tag + "-i-") && line.hasSuffix(".sock") {
                         let item = String(line.dropFirst(tag.count + 1).dropLast(5))
                         if self != nil, !keep.contains(item) {
                             _ = connection.run("\(ShellQuote.quote(bin + "/tiri-remote")) session kill \(ShellQuote.quote(run + "/" + line))", timeout: 10)
@@ -276,17 +282,17 @@ final class RemoteManager {
         var token: String
     }
 
-    private func bridgeLock(for connection: RemoteConnection) -> BridgeLock? {
-        guard model.editorBridge.port != 0 else { return nil }
+    private func bridgeLock(for connection: RemoteConnection, token: String?) -> BridgeLock? {
+        guard let token else { return nil }
         let folders = model.workspaces.filter { $0.remote == connection.destination }.flatMap(\.folders).compactMap { connection.map.remote($0) }
-        return BridgeLock(folders: Array(Set(folders)).sorted(), token: model.editorBridge.token)
+        return BridgeLock(folders: Array(Set(folders)).sorted(), token: token)
     }
 
     /// The process it names has to exist there, or Claude Code treats the lock as left over. So it
     /// names one that lives as long as this connection. Last time's lock goes, so they don't pile up.
     private nonisolated static func writeBridgeLock(_ lock: BridgeLock, port: Int, tag: String, connection: RemoteConnection) {
-        guard let pid = connection.waitForRelay(), let run = connection.runDirectory else { return }
-        let data = EditorProtocol.lockFile(pid: Int32(pid), folders: lock.folders, token: lock.token)
+        guard let pid = connection.waitForRelay().flatMap(Int32.init(exactly:)), let run = connection.runDirectory else { return }
+        let data = EditorProtocol.lockFile(pid: pid, folders: lock.folders, token: lock.token)
         let note = ShellQuote.quote(run + "/bridge-" + tag)
         let script = """
         [ -r \(note) ] && rm -f "$HOME/.claude/ide/$(cat \(note)).lock"
@@ -366,9 +372,9 @@ final class RemoteManager {
         if let bin = connection.binDirectory, let socket = sessionSocket(itemID, on: connection) {
             let helper = ShellQuote.quote(bin + "/tiri-remote")
             if attachOnly {
-                lines.append("exec \(helper) session attach \(ShellQuote.quote(socket)) --report")
+                lines.append("exec \(helper) session attach \(ShellQuote.quote(socket)) --report \(reportTag(for: itemID))")
             } else {
-                lines.append("exec \(helper) session attach \(ShellQuote.quote(socket)) --report --cwd \(ShellQuote.quote(remoteCwd)) --argv0 \(ShellQuote.quote(execName)) -- \(RemoteShell.arguments(program))")
+                lines.append("exec \(helper) session attach \(ShellQuote.quote(socket)) --report \(reportTag(for: itemID)) --cwd \(ShellQuote.quote(remoteCwd)) --argv0 \(ShellQuote.quote(execName)) -- \(RemoteShell.arguments(program))")
             }
         } else {
             // A kind of machine the helper doesn't run on: a plain session, which ends with its connection.
@@ -376,6 +382,12 @@ final class RemoteManager {
             lines.append("exec \(RemoteShell.arguments(program))")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// What says a report on a terminal's state really is from its session, not something printed by
+    /// a program or a file being read. Fixed for each terminal, since it's given when the session starts.
+    func reportTag(for item: ItemID) -> String {
+        SHA256.hash(data: Data((model.editorBridge.token + item).utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     func terminalLaunch(connection: RemoteConnection, script: String, slot: Int) -> TerminalLaunch {
@@ -491,6 +503,7 @@ final class RemoteManager {
     /// A file was saved here. Now it has to reach the server, and if it can't yet, it says so.
     func didSave(_ path: String) {
         guard let connection = RemoteRegistry.shared.connection(forLocal: path) else { return }
+        if (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int == 0 { connection.didSaveEmpty(path) }
         let name = (path as NSString).lastPathComponent
         connection.push(path) { [weak self] result in
             MainActor.assumeIsolated {
@@ -505,6 +518,35 @@ final class RemoteManager {
                 }
             }
         }
+    }
+
+    /// While a save waited for the connection, an agent changed the same file. Neither is lost
+    /// until someone chooses: yours stays here, and theirs stays there.
+    private func askAboutConflict(_ local: String, on connection: RemoteConnection) {
+        let name = (local as NSString).lastPathComponent
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "\(name) changed on \(SSHConfigFile.displayName(of: connection.destination)) while your save was waiting"
+        alert.informativeText = "Keep yours, which replaces what's there now, or keep theirs, which throws away your edit."
+        alert.addButton(withTitle: "Keep Mine")
+        alert.addButton(withTitle: "Keep Theirs")
+        let decide: (NSApplication.ModalResponse) -> Void = { response in
+            if response == .alertFirstButtonReturn { connection.keepMine(local) } else { connection.keepTheirs(local) }
+        }
+        if let window = model.window {
+            alert.beginSheetModal(for: window) { response in MainActor.assumeIsolated { decide(response) } }
+        } else {
+            decide(alert.runModal())
+        }
+    }
+
+    @ObservationIgnored private var saidCollision: Set<String> = []
+
+    /// This Mac's disk can't hold names that differ only by case, and a server's can. Said once.
+    private func noteCaseCollision(_ name: String, holder: String, on destination: String) {
+        guard saidCollision.insert(destination).inserted else { return }
+        model.showToast(title: "Some files on \(SSHConfigFile.displayName(of: destination)) differ only by case", detail: "This Mac can only show one of each, like \((holder as NSString).lastPathComponent). The terminal sees them all.",
+                        symbol: "textformat.size", tint: .secondary)
     }
 
     func needsFetch(_ path: String) -> Bool {
@@ -618,14 +660,22 @@ final class RemoteManager {
               let connection = connections[destination], connection.state.isReady, let path = hookConfigPath(tool) else { return }
         UserDefaults.standard.set(true, forKey: key)
         Task { [weak self] in
-            let text = await Task.detached(priority: .utility) { connection.run("cat \"$HOME\"/\(ShellQuote.quote(path)) 2>/dev/null", timeout: 15)?.text ?? "" }.value
-            guard let self, !AgentHooks.isInstalled(tool, in: text) else { return }
+            // Couldn't ask isn't the same as isn't there. Nothing's offered on a guess.
+            let text = await Task.detached(priority: .utility) { RemoteManager.readConfig(path, on: connection) }.value
+            guard let self, let text, !AgentHooks.isInstalled(tool, in: text) else { return }
             let name = SSHConfigFile.displayName(of: destination)
             self.model.showToast(title: "Get exact status from \(tool.title) on \(name)?", detail: "Right now Tiri is estimating when it's working or done.",
                                  symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up") { [weak self] in
                 self?.confirmHooks(tool, on: destination)
             }
         }
+    }
+
+    /// The file's text, empty if it isn't there, or nil if it couldn't be read.
+    private nonisolated static func readConfig(_ path: String, on connection: RemoteConnection) -> String? {
+        let quoted = "\"$HOME\"/" + ShellQuote.quote(path)
+        guard let result = connection.run("[ -e \(quoted) ] || exit 0; cat \(quoted)", timeout: 15), result.succeeded else { return nil }
+        return result.text
     }
 
     private func hookConfigPath(_ tool: AgentHooks.Tool) -> String? {
@@ -656,13 +706,14 @@ final class RemoteManager {
         Task { [weak self] in
             let problem: String? = await Task.detached(priority: .userInitiated) { () -> String? in
                 let quoted = "\"$HOME\"/" + ShellQuote.quote(path)
-                let existing = connection.run("cat \(quoted) 2>/dev/null", timeout: 15)?.text ?? ""
+                // A failed read must never look like an empty file, or their settings would be replaced.
+                guard let existing = RemoteManager.readConfig(path, on: connection) else { return "Couldn't read \(path) on the server." }
                 do {
                     let updated = try AgentHooks.installing(tool, in: existing)
                     let script = """
                     mkdir -p "$(dirname \(quoted))"
-                    [ ! -e \(quoted) ] || cp \(quoted) \(quoted).tiri-backup
-                    cat > \(quoted)
+                    [ ! -e \(quoted) ] || [ -e \(quoted).tiri-backup ] || cp \(quoted) \(quoted).tiri-backup
+                    cat > \(quoted).tiri-new && mv \(quoted).tiri-new \(quoted)
                     """
                     guard connection.run(script, stdin: Data(updated.utf8), timeout: 15)?.succeeded == true else { return "The server wouldn't take the change." }
                     return nil
@@ -691,7 +742,7 @@ final class RemoteManager {
         states[destination] = nil
         bridgePorts[destination] = nil
         // What was fetched goes with it, unless it holds an edit that hasn't got there yet.
-        if (connection?.pendingSaveCount ?? 0) == 0 {
+        if connection?.hasPendingSaves != true {
             let root = RemoteMirror.localRoot(of: destination)
             DispatchQueue.global(qos: .utility).async { try? FileManager.default.removeItem(atPath: root) }
         }
@@ -704,23 +755,26 @@ final class RemoteManager {
 /// server's terminal only reaches that server's own workspaces. It can't see or type into terminals
 /// on this Mac or another server, change settings or hooks here, or quit the app.
 enum RemoteRelay {
-    /// Commands that act on one item, which has to belong to this server.
     private static let allowed: Set<String> = [
         "ping", "items", "open", "reveal", "preview", "term", "focus", "close", "notify", "send", "read", "follow", "select",
-        "layout", "tree", "changes", "changes.branch", "changes.commit", "log", "diff", "turns", "git", "search", "diagnostics", "languages", "theme",
+        "layout", "tree", "changes", "changes.branch", "changes.commit", "log", "diff", "turns", "git", "search", "diagnostics", "languages",
         "review.list", "review.add", "review.remove", "review.clear", "review.send", "remote.forward", "remote.ports", "worktree.add",
     ]
     /// These answer about the workspace in front, so that has to be this server's.
     private static let aboutFront: Set<String> = ["layout", "tree", "changes", "changes.branch", "changes.commit", "log", "diff", "turns", "git", "search", "diagnostics", "languages",
                                                   "review.list", "review.add", "review.remove", "review.clear", "review.send", "reveal"]
 
+    private static func refuse(_ why: String) -> RemoteRelayMessage.Reply {
+        .init(code: 1, errors: "tiri: \(why)\n")
+    }
+
     static func handle(_ request: RemoteRelayMessage.Request, from destination: String) async -> RemoteRelayMessage.Reply {
         guard let connection = await MainActor.run(body: { AppModel.shared.remote.existingConnection(destination) }) else {
-            return .init(code: 1, errors: "tiri: this server isn't connected.\n")
+            return refuse("this server isn't connected.")
         }
         let map = connection.map
         let stdin = request.stdin
-        let environment = CLIParser.Environment(
+        var environment = CLIParser.Environment(
             cwd: map.local(request.cwd ?? connection.home ?? "/"), itemID: request.item, workspace: request.workspace, claudeEntrypoint: request.entrypoint,
             fileExists: { path in
                 if FileManager.default.fileExists(atPath: path) { return true }
@@ -728,6 +782,8 @@ enum RemoteRelay {
                 return map.remote(path).flatMap { connection.learn(remote: $0) } != nil
             },
             readStdin: { Data((stdin ?? "").utf8) })
+        environment.translate = { map.local($0) }
+        environment.home = connection.home
         let parsed: CLIParser.Parsed
         do {
             parsed = try CLIParser.parse(request.argv, environment: environment)
@@ -741,26 +797,68 @@ enum RemoteRelay {
             return .init()
         case .request(var control, let json):
             guard allowed.contains(control.cmd) else {
-                return .init(code: 1, errors: "tiri: \(control.cmd) can only be run on the Mac, not from a server.\n")
+                return refuse("\(control.cmd) can only be run on the Mac, not from a server.")
             }
-            let scoped: String? = await MainActor.run {
+            // Everything a path could mean has to be on this server. Nothing here is a path on the Mac.
+            for key in ["path", "cwd", "folder", "file"] {
+                guard let path = control.args[key]?.stringValue else { continue }
+                let standard = RemotePathMap.lexical(path)
+                guard map.contains(standard) else { return refuse("\(path) isn't on this server.") }
+                control.args[key] = .string(standard)
+            }
+            if let paths = control.args["paths"]?.arrayValue {
+                let standard = paths.compactMap(\.stringValue).map(RemotePathMap.lexical)
+                guard standard.allSatisfy(map.contains) else { return refuse("those paths aren't all on this server.") }
+                control.args["paths"] = .array(standard.map(JSONValue.string))
+            }
+            if control.cmd == "preview", let target = control.args["target"]?.stringValue {
+                guard let url = URL(string: target), let scheme = url.scheme?.lowercased() else { return refuse("that isn't an address.") }
+                if scheme == "file" {
+                    guard map.contains(RemotePathMap.lexical(url.path)) else { return refuse("that file isn't on this server.") }
+                } else if scheme == "http" || scheme == "https" {
+                    guard let local = await MainActor.run(body: { AppModel.shared.remote }).localURL(for: url, on: destination) else {
+                        return refuse("couldn't forward that port. This server may not allow it.")
+                    }
+                    control.args["target"] = .string(local.absoluteString)
+                } else {
+                    return refuse("Tiri only opens web and file addresses.")
+                }
+            }
+            // Every item named has to be on this server, and with none named the command
+            // has to land on this server, never on whatever the Mac happens to have in front.
+            let scoped: String? = await MainActor.run { () -> String? in
                 let model = AppModel.shared
-                for key in ["item", "id", "source"] {
-                    guard let id = control.args[key]?.stringValue else { continue }
-                    guard model.workspace(containing: id)?.remote == destination else { return "\(id) isn't on this server." }
+                var named: [String] = []
+                for key in ["item", "source", "to"] {
+                    if let id = control.args[key]?.stringValue { named.append(id) }
+                }
+                // Review comments have ids of their own.
+                if !control.cmd.hasPrefix("review."), let id = control.args["id"]?.stringValue { named.append(id) }
+                for id in named where model.workspace(containing: id)?.remote != destination {
+                    return "\(id) isn't on this server."
+                }
+                if let item = request.item {
+                    guard model.workspace(containing: item)?.remote == destination else { return "this terminal isn't one of this server's." }
+                    if control.args["source"] == nil { control.args["source"] = .string(item) }
+                } else if model.active.remote != destination {
+                    return "the workspace in front isn't on this server, and this isn't a terminal of Tiri's."
                 }
                 if aboutFront.contains(control.cmd), model.active.remote != destination {
-                    return "The workspace in front isn't on this server. Switch to it first."
+                    return "the workspace in front isn't on this server. Switch to it first."
+                }
+                if control.cmd == "review.send", control.args["item"] == nil, control.args["to"] == nil {
+                    return "say which terminal should get it, with --to."
+                }
+                // A folder here would become a workspace on the Mac. Workspaces are the person's call.
+                if control.cmd == "open", let path = control.args["path"]?.stringValue {
+                    var isDirectory: ObjCBool = false
+                    if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+                        return "that's a folder. Try tiri reveal."
+                    }
                 }
                 return nil
             }
-            if let scoped { return .init(code: 1, errors: "tiri: \(scoped)\n") }
-            if control.cmd == "preview", let target = control.args["target"]?.stringValue, let url = URL(string: target), !url.isFileURL {
-                guard let local = await MainActor.run(body: { AppModel.shared.remote }).localURL(for: url, on: destination) else {
-                    return .init(code: 1, errors: "tiri: couldn't forward that port.\n")
-                }
-                control.args["target"] = .string(local.absoluteString)
-            }
+            if let scoped { return refuse(scoped) }
             if control.cmd == "remote.forward" { control.args["host"] = .string(destination) }
             // Somewhere the copy doesn't hold yet: outside the folders, or only just made.
             for key in ["path", "cwd"] {
@@ -770,14 +868,19 @@ enum RemoteRelay {
             }
             var response = await ControlHandler.handle(control)
             if control.cmd == "items", let list = response.result?.arrayValue {
-                let onServer = await MainActor.run { Set(AppModel.shared.workspaces.filter { $0.remote == destination }.map(\.name)) }
-                response.result = .array(list.filter { onServer.contains($0["workspace"]?.stringValue ?? "") })
+                let allowedItems = await MainActor.run {
+                    Set(AppModel.shared.workspaces.filter { $0.remote == destination }.flatMap { ($0.items + ($0.peek.map { [$0] } ?? [])).map(\.id) })
+                }
+                response.result = .array(list.filter { allowedItems.contains($0["id"]?.stringValue ?? "") })
+            }
+            if control.cmd == "remote.ports", let list = response.result?.arrayValue {
+                response.result = .array(list.filter { $0["host"]?.stringValue == destination })
             }
             guard response.ok else {
-                return .init(code: 1, errors: "tiri: " + map.remoteText(response.error ?? "Unknown error") + "\n")
+                return refuse(map.remoteText(response.error ?? "Unknown error"))
             }
-            if json, let data = try? ControlCoding.encodeLine(response) {
-                return .init(output: map.remoteText(String(decoding: data, as: UTF8.self)))
+            if json {
+                return .init(output: map.remoteText(String(decoding: (try? ControlCoding.encodeLine(response)) ?? Data(), as: UTF8.self)))
             }
             return .init(output: map.remoteText(CLIOutput.text(request: control, response: response)))
         }

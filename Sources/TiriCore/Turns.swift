@@ -123,11 +123,10 @@ public final class TurnSnapshots: Sendable {
 
     /// The working tree as a tree object, leaving out what .gitignore does. Nil if it can't be read.
     public func snapshot(root: String) -> String? {
-        Self.lock.lock()
-        defer { Self.lock.unlock() }
         let manager = FileManager.default
         let store = storeDirectory(for: root)
         let index = store.appendingPathComponent("index")
+        // Not under the lock below: a slow server shouldn't hold up anything else's snapshot.
         if let connection = RemoteRegistry.shared.connection(forLocal: root) {
             guard let environment = environment(root: root, store: store),
                   let remoteStore = connection.map.remote(store.path) else { return nil }
@@ -140,6 +139,8 @@ public final class TurnSnapshots: Sendable {
             let id = String(decoding: tree.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             return id.isEmpty ? nil : id
         }
+        Self.lock.lock()
+        defer { Self.lock.unlock() }
         try? manager.createDirectory(at: store.appendingPathComponent("objects"), withIntermediateDirectories: true)
         guard let environment = environment(root: root, store: store) else { return nil }
         // Left by a run that was killed.

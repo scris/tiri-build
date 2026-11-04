@@ -87,6 +87,9 @@ public final class RemoteConnection: @unchecked Sendable {
         self.helperDirectory = helperDirectory
         self.askpass = askpass
         self.controlSocket = controlSocket
+        // Before anything can compare what's here with what's there: an edit that never got to the
+        // server has to be known about by then.
+        loadPendingSaves()
     }
 
     public var state: RemoteState { lock.withLock { _state } }
@@ -136,7 +139,7 @@ public final class RemoteConnection: @unchecked Sendable {
         return arguments + [destination, RemoteShell.wrap(script)]
     }
 
-    public static let terminalsOnMainConnection = 4
+    public static let terminalsOnMainConnection = 3
     public static let terminalsPerExtraConnection = 8
 
     /// Brings up the extra connection for a slot, if it isn't up. It goes away by itself once idle.
@@ -191,11 +194,14 @@ public final class RemoteConnection: @unchecked Sendable {
 
     /// `sshd` allows ten sessions per connection unless told otherwise, and refuses the rest. The
     /// watcher, the holder, a language server and a few terminals share them, so commands take turns.
-    private let commandSlots = DispatchSemaphore(value: 3)
+    private let commandSlots = DispatchSemaphore(value: 2)
+    /// Reading a big file can take a long time, and nothing else should have to wait for it.
+    private let transferSlots = DispatchSemaphore(value: 2)
 
     private func exec(_ script: String, stdin: Data?, timeout: TimeInterval, outputFile: URL? = nil) -> RemoteResult? {
-        commandSlots.wait()
-        defer { commandSlots.signal() }
+        let slots = timeout > 120 || outputFile != nil ? transferSlots : commandSlots
+        guard slots.wait(timeout: .now() + max(timeout, 30)) == .success else { return nil }
+        defer { slots.signal() }
         // A server can set its session limit lower than usual. It's only busy, so wait a moment.
         for attempt in 0..<6 {
             let result = Self.runProcess(executable: Self.ssh, arguments: clientArguments(tty: false) + [destination, RemoteShell.wrap(script)],
@@ -251,6 +257,9 @@ public final class RemoteConnection: @unchecked Sendable {
         do {
             try process.run()
         } catch {
+            // Or the threads above would wait for ever on pipes nobody will close.
+            try? errorPipe.fileHandleForWriting.close()
+            try? outputPipe.fileHandleForWriting.close()
             return nil
         }
         if let stdin {
@@ -296,12 +305,17 @@ public final class RemoteConnection: @unchecked Sendable {
         queue.async { [self] in
             wanted = true
             retryWork?.cancel()
+            // Someone's looking now, so it's fine to ask them things. Quietly trying won't get there.
+            let wasQuiet = isQuiet
             isQuiet = quiet
             switch state {
-            case .ready, .connecting:
+            case .ready:
                 return
+            case .connecting:
+                if wasQuiet, !quiet { startMaster(reconnecting: false) }
             case .reconnecting:
-                startMaster(reconnecting: true)
+                // An attempt under way may be waiting on a person, or just on a slow network.
+                if master?.isRunning != true { startMaster(reconnecting: true) }
             case .idle, .failed:
                 attempt = 0
                 setState(.connecting)
@@ -318,6 +332,7 @@ public final class RemoteConnection: @unchecked Sendable {
             guard wanted else { return }
             switch state {
             case .reconnecting:
+                guard master?.isRunning != true else { return }
                 retryWork?.cancel()
                 attempt = 0
                 startMaster(reconnecting: true)
@@ -327,8 +342,16 @@ public final class RemoteConnection: @unchecked Sendable {
                 setState(.connecting)
                 startMaster(reconnecting: false)
             case .ready:
-                // The socket may be dead and not know yet. Waiting for keepalives takes 30 seconds.
-                if !isMasterHealthy() { masterEnded(generation: generation) }
+                // The connection may be dead and not know yet, and waiting for keepalives takes 30
+                // seconds. Only asking the far side tells: the local process is fine either way.
+                let current = generation
+                DispatchQueue.global(qos: .utility).async { [self] in
+                    let alive = exec("true", stdin: nil, timeout: 6)?.succeeded == true
+                    queue.async { [self] in
+                        guard !alive, current == generation, let master, master.isRunning else { return }
+                        master.terminate()
+                    }
+                }
             case .idle, .connecting:
                 break
             }
@@ -362,6 +385,9 @@ public final class RemoteConnection: @unchecked Sendable {
             if let master, master.isRunning { master.terminate() }
         }
     }
+
+    /// Whether the local end of the connection is up. It can be, with the far end long gone.
+    public func isMasterRunning() -> Bool { isMasterHealthy() }
 
     private func isMasterHealthy() -> Bool {
         guard let result = Self.runProcess(executable: Self.ssh, arguments: configArguments + ["-S", controlPath, "-O", "check", destination], timeout: 5) else { return false }
@@ -428,6 +454,11 @@ public final class RemoteConnection: @unchecked Sendable {
                 let problem = prepare()
                 queue.async { [self] in
                     guard current == generation else { return }
+                    if problem == Self.connectionGone {
+                        // It dropped while getting ready. That's the usual case, handled the usual way.
+                        if let master, master.isRunning { master.terminate() }
+                        return
+                    }
                     if let problem {
                         // A connection that's up but can't be used doesn't get better by retrying.
                         if let master, master.isRunning { master.terminate() }
@@ -498,6 +529,8 @@ public final class RemoteConnection: @unchecked Sendable {
 
     /// What's needed before anything else: what kind of server it is, and the helper on it.
     /// Returns what's wrong, if anything is.
+    private static let connectionGone = "connection gone"
+
     private func prepare() -> String? {
         runningDuringPreparation.value = true
         defer { runningDuringPreparation.value = false }
@@ -509,7 +542,8 @@ public final class RemoteConnection: @unchecked Sendable {
         printf 'shell=%s\\n' "$shell"
         printf 'uid=%s\\n' "$(id -u)"
         """
-        guard let answer = exec(probe, stdin: nil, timeout: 30), answer.succeeded else {
+        guard let answer = exec(probe, stdin: nil, timeout: 30), answer.status != 255, answer.status != 124 else { return Self.connectionGone }
+        guard answer.succeeded else {
             return "\(SSHConfigFile.displayName(of: destination)) connected, but wouldn't run a command."
         }
         var values: [String: String] = [:]
@@ -549,12 +583,15 @@ public final class RemoteConnection: @unchecked Sendable {
             // Sockets have short paths, and a deep home folder can go past them.
             let run = (base + "/run").utf8.count < 70 ? base + "/run" : "/tmp/.tiri-" + uid + "/run"
             let quoted = ShellQuote.quote(bin + "/tiri-remote-" + version)
-            let check = "mkdir -p \(ShellQuote.quote(bin)) \(ShellQuote.quote(run)) \(ShellQuote.quote(base + "/tmp")) && chmod 700 \(ShellQuote.quote(base)) \(ShellQuote.quote(run)) && \(quoted) version"
+            // Only a folder that's really this user's. Under /tmp, someone else could have made it first.
+            let quotedBase = ShellQuote.quote(base)
+            let ours = "mkdir -p \(quotedBase) && [ -O \(quotedBase) ] && [ ! -L \(quotedBase) ] && chmod 700 \(quotedBase)"
+            let check = "\(ours) && mkdir -p \(ShellQuote.quote(bin)) \(ShellQuote.quote(run)) \(ShellQuote.quote(base + "/tmp")) && chmod 700 \(ShellQuote.quote(run)) && \(quoted) version"
             var works = exec(check, stdin: nil, timeout: 20)?.text.trimmingCharacters(in: .whitespacesAndNewlines) == version
             if !works, let name = Self.helperName(kind: kind),
                let binary = try? Data(contentsOf: URL(fileURLWithPath: helperDirectory + "/" + name)) {
                 let temporary = ShellQuote.quote(bin + "/.upload-" + UUID().uuidString.prefix(8))
-                let upload = "cat > \(temporary) && chmod 755 \(temporary) && mv \(temporary) \(quoted) && \(quoted) version"
+                let upload = "\(ours) && cat > \(temporary) && chmod 755 \(temporary) && mv \(temporary) \(quoted) && \(quoted) version"
                 works = exec(upload, stdin: binary, timeout: 120)?.text.trimmingCharacters(in: .whitespacesAndNewlines) == version
             }
             if works {
@@ -637,6 +674,13 @@ public final class RemoteConnection: @unchecked Sendable {
             }
             for frame in reader.read(data) { self?.relayFrame(frame, input: input) }
         }
+        process.terminationHandler = { [weak self] ended in
+            guard let self else { return }
+            self.queue.asyncAfter(deadline: .now() + 2) {
+                guard self.relayProcess === ended, self.state.isReady else { return }
+                self.startRelay()
+            }
+        }
         guard (try? process.run()) != nil else { return }
         relayProcess = process
         relayInput = input
@@ -686,7 +730,8 @@ public final class RemoteConnection: @unchecked Sendable {
                 var frames: [Frame] = []
                 while let newline = pending.firstIndex(of: 10) {
                     let words = String(decoding: pending[pending.startIndex..<newline], as: UTF8.self).split(separator: " ")
-                    guard words.count == 3, let kind = words[0].first, let id = Int(words[1]), let length = Int(words[2]) else {
+                    guard words.count == 3, let kind = words[0].first, let id = Int(words[1]), let length = Int(words[2]),
+                          length >= 0, length <= 16 * 1024 * 1024 else {
                         pending = Data(pending[pending.index(after: newline)...])
                         continue
                     }
@@ -696,6 +741,7 @@ public final class RemoteConnection: @unchecked Sendable {
                     frames.append(Frame(kind: kind, id: id, body: Data(pending[start..<end])))
                     pending = Data(pending[end...])
                 }
+                if pending.count > 32 * 1024 * 1024 { pending = Data() }
                 return frames
             }
         }
@@ -756,7 +802,16 @@ public final class RemoteConnection: @unchecked Sendable {
     private var excludes: [String] = [".git", ".DS_Store"]
     private var records: [String: RemoteRecord] = [:]
     private var inFlight: [String: [@Sendable (Result<Void, RemoteFailure>) -> Void]] = [:]
-    private var pendingSaves: Set<String> = []
+    /// Remote path to the server's modified time when the edit was made, to spot a conflict.
+    private var pendingSaves: [String: Int64] = [:]
+    private var uploading: Set<String> = []
+    private var savedAgain: Set<String> = []
+    /// Asked about by name, so a rescan of everything else shouldn't take them away.
+    private var onDemand: Set<String> = []
+    /// Case-folded path on this Mac to the one name on the server that gets to live there.
+    private var foldedNames: [String: String] = [:]
+    public var onCaseCollision: (@Sendable (String, String) -> Void)?
+    public var onSaveConflict: (@Sendable (String) -> Void)?
     private var watcher: Process?
     private var watcherInput: Pipe?
     private var limited = false
@@ -769,7 +824,7 @@ public final class RemoteConnection: @unchecked Sendable {
             let names = Array(Set(names + [".git", ".DS_Store"])).sorted()
             guard fresh != roots || names != excludes else { return }
             roots = fresh
-            excludes = names
+            lock.withLock { excludes = names }
             guard state.isReady else { return }
             rescan()
             startWatcher()
@@ -778,7 +833,27 @@ public final class RemoteConnection: @unchecked Sendable {
 
     private var excludeArgument: String {
         // A name with a comma can't be passed along. No such exclude is worth a whole failed scan.
-        excludes.filter { !$0.contains(",") }.joined(separator: ",")
+        lock.withLock { excludes }.filter { !$0.contains(",") }.joined(separator: ",")
+    }
+
+    /// Something still to reach the server is at this path, or somewhere under it.
+    private func holdsPendingSave(_ remote: String) -> Bool {
+        if pendingSaves[remote] != nil { return true }
+        let prefix = remote == "/" ? "/" : remote + "/"
+        return pendingSaves.keys.contains { $0.hasPrefix(prefix) }
+    }
+
+    /// On this Mac's disk, names that differ only by case or normalization are one file, and on
+    /// Linux they're two. Only the first gets a place here, or each would read and overwrite the other.
+    /// Returns false if this name's place is taken. Runs on mirrorQueue.
+    private func claimName(_ record: RemoteRecord) -> Bool {
+        let folded = record.path.precomposedStringWithCanonicalMapping.lowercased()
+        if let holder = foldedNames[folded], holder != record.path {
+            if let onCaseCollision { DispatchQueue.main.async { onCaseCollision(record.path, holder) } }
+            return false
+        }
+        foldedNames[folded] = record.path
+        return true
     }
 
     private func helper(_ bin: String) -> String { ShellQuote.quote(bin + "/tiri-remote") }
@@ -809,14 +884,17 @@ public final class RemoteConnection: @unchecked Sendable {
         guard let result = run(script, timeout: 120), result.succeeded || !result.output.isEmpty else { return }
         var reader = RemoteRecordReader()
         var found: [RemoteRecord] = []
-        var truncated = false
+        var partial = !result.succeeded
         for event in reader.read(result.output) {
             switch event {
             case .record(let record): found.append(record)
-            case .signal(let signal): if signal == "truncated" { truncated = true }
+            case .signal(let signal): if signal == "truncated" || signal == "partial" { partial = true }
             }
         }
-        apply(found, root: root, removing: removing && !truncated)
+        // The folder itself seems to be gone, which is more often a blip than the truth.
+        if let first = found.first, first.path == root, first.kind == .gone { return }
+        // Only a complete answer says what isn't there. A timeout or an unreadable folder doesn't.
+        apply(found, root: root, removing: removing && !partial)
     }
 
     /// Makes the copy of `root` match a listing. Runs on mirrorQueue.
@@ -830,10 +908,20 @@ public final class RemoteConnection: @unchecked Sendable {
         if removing, let walker = manager.enumerator(atPath: localRoot) {
             while let name = walker.nextObject() as? String { existing.insert(localRoot + "/" + name) }
         }
-        lock.withLock {
-            for record in listing { records[record.path] = record }
-        }
+        if removing { foldedNames = foldedNames.filter { !$0.value.hasPrefix(root == "/" ? "/" : root + "/") } }
+        var usable: [RemoteRecord] = []
+        usable.reserveCapacity(listing.count)
         for record in listing {
+            if record.kind == .gone {
+                applyEvent(record, open: open)
+            } else if claimName(record) {
+                usable.append(record)
+            }
+        }
+        lock.withLock {
+            for record in usable { records[record.path] = record }
+        }
+        for record in usable {
             let local = map.local(record.path)
             seen.insert(local)
             place(record, at: local, open: open)
@@ -841,7 +929,8 @@ public final class RemoteConnection: @unchecked Sendable {
         guard removing else { return }
         // Longest first, so a folder is empty by the time it's removed.
         for local in existing.subtracting(seen).sorted(by: { $0.count > $1.count }) {
-            guard let remote = map.remote(local), !pendingSaves.contains(remote) else { continue }
+            guard let remote = map.remote(local), !holdsPendingSave(remote), !onDemand.contains(remote), !open.contains(local),
+                  !(local as NSString).lastPathComponent.hasPrefix(".tiri-download-") else { continue }
             lock.withLock { records[remote] = nil }
             try? manager.removeItem(atPath: local)
         }
@@ -853,17 +942,23 @@ public final class RemoteConnection: @unchecked Sendable {
         let exists = lstat(local, &info) == 0
         let isFolderHere = exists && (info.st_mode & S_IFMT) == S_IFDIR
         if record.isFolder {
-            if exists, !isFolderHere { unlink(local) }
+            if exists, !isFolderHere {
+                guard pendingSaves[record.path] == nil else { return }
+                unlink(local)
+            }
             if !isFolderHere { mkdirs(local) }
             return
         }
-        if exists, isFolderHere { try? FileManager.default.removeItem(atPath: local) }
+        if exists, isFolderHere {
+            guard !holdsPendingSave(record.path) else { return }
+            try? FileManager.default.removeItem(atPath: local)
+        }
         guard exists, !isFolderHere else {
             createPlaceholder(local, modified: record.modified)
             if open.contains(local), record.size != 0 { fetchQueued(local) }
             return
         }
-        guard !pendingSaves.contains(record.path) else { return }
+        guard pendingSaves[record.path] == nil else { return }
         let localSize = Int64(info.st_size)
         let localModified = Int64(info.st_mtimespec.tv_sec) * 1000 + Int64(info.st_mtimespec.tv_nsec) / 1_000_000
         if localSize == 0 {
@@ -873,6 +968,8 @@ public final class RemoteConnection: @unchecked Sendable {
             return
         }
         if localSize == record.size, localModified == record.modified { return }
+        // A plain `find` couldn't say, so there's nothing to compare.
+        if record.size < 0 { return }
         if open.contains(local) {
             fetchQueued(local)
         } else {
@@ -906,12 +1003,14 @@ public final class RemoteConnection: @unchecked Sendable {
 
     private func applyEvent(_ record: RemoteRecord, open: Set<String>) {
         let local = map.local(record.path)
-        guard !pendingSaves.contains(record.path) else { return }
+        guard !holdsPendingSave(record.path) else { return }
         if record.kind == .gone {
             lock.withLock { records[record.path] = nil }
+            foldedNames[record.path.precomposedStringWithCanonicalMapping.lowercased()] = nil
             try? FileManager.default.removeItem(atPath: local)
             return
         }
+        guard claimName(record) else { return }
         lock.withLock { records[record.path] = record }
         place(record, at: local, open: open)
     }
@@ -921,8 +1020,10 @@ public final class RemoteConnection: @unchecked Sendable {
     private func startWatcher() {
         queue.async { [self] in
             stopWatcher()
+            guard state.isReady else { return }
             let folders: [String] = mirrorQueue.sync { roots }
-            guard state.isReady, let bin = binDirectory, !folders.isEmpty else {
+            guard !folders.isEmpty else { return }
+            guard let bin = binDirectory else {
                 setLimited(true)
                 return
             }
@@ -989,6 +1090,8 @@ public final class RemoteConnection: @unchecked Sendable {
             switch event {
             case .record(let record):
                 applyEvent(record, open: open)
+            case .signal("ready"):
+                setLimited(false)
             case .signal("rescan"):
                 rescan()
             case .signal("limited"):
@@ -1048,7 +1151,10 @@ public final class RemoteConnection: @unchecked Sendable {
         }
         guard let found else { return nil }
         lock.withLock { records[remote] = found }
-        mirrorQueue.sync { place(found, at: map.local(remote), open: []) }
+        mirrorQueue.sync {
+            onDemand.insert(remote)
+            place(found, at: map.local(remote), open: [])
+        }
         return found
     }
 
@@ -1127,12 +1233,15 @@ public final class RemoteConnection: @unchecked Sendable {
                 lock.withLock { records[remote] = record }
             }
         }
-        guard let result = run("cat -- \(ShellQuote.quote(remote))", timeout: 3600, outputFile: temporary) else {
+        // Well past anything worth reading here, and a server shouldn't be able to fill this disk.
+        let limit: Int64 = 8 * 1024 * 1024 * 1024
+        if let size = record(forLocal: local)?.size, size > limit { return .failure(RemoteFailure("That file is too big to open here.")) }
+        guard let result = run("head -c \(limit) -- \(ShellQuote.quote(remote))", timeout: 3600, outputFile: temporary) else {
             return .failure(RemoteFailure("The connection went away."))
         }
         guard result.succeeded else {
             let reason = result.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failure(RemoteFailure(reason.isEmpty ? "Couldn't read it." : reason.replacingOccurrences(of: "cat: ", with: "")))
+            return .failure(RemoteFailure(reason.isEmpty ? "Couldn't read it." : reason.replacingOccurrences(of: "head: ", with: "")))
         }
         setModified(temporary.path, modified)
         if rename(temporary.path, local) != 0 { return .failure(RemoteFailure(String(cString: strerror(errno)))) }
@@ -1140,75 +1249,160 @@ public final class RemoteConnection: @unchecked Sendable {
     }
 
     /// Sends what's here now to the server. A save that can't get through right now stays here,
-    /// and goes when the connection's back.
+    /// and goes when the connection's back. Saves of one file go one at a time, last one last.
     public func push(_ local: String, completion: @escaping @Sendable (Result<Void, RemoteFailure>) -> Void) {
         guard let remote = map.remote(local) else {
             completion(.failure(RemoteFailure("Not a file on this server.")))
             return
         }
         mirrorQueue.async { [self] in
-            pendingSaves.insert(remote)
+            if pendingSaves[remote] == nil { pendingSaves[remote] = self.record(forLocal: local)?.modified ?? 0 }
             savePending()
-            DispatchQueue.global(qos: .userInitiated).async { [self] in
-                let result = upload(local, remote: remote)
-                mirrorQueue.async { [self] in
-                    if case .success = result { pendingSaves.remove(remote) }
-                    savePending()
-                    let count = pendingSaves.count
-                    if let onPendingSaves { DispatchQueue.main.async { onPendingSaves(count) } }
-                    DispatchQueue.main.async { completion(result) }
+            if uploading.contains(remote) {
+                savedAgain.insert(remote)
+                DispatchQueue.main.async { completion(.success(())) }
+                return
+            }
+            startUpload(local, remote: remote, overwriting: false, completion: completion)
+        }
+    }
+
+    /// Runs on mirrorQueue.
+    private func startUpload(_ local: String, remote: String, overwriting: Bool, completion: @escaping @Sendable (Result<Void, RemoteFailure>) -> Void) {
+        uploading.insert(remote)
+        let expected = overwriting ? nil : pendingSaves[remote]
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            let result = upload(local, remote: remote, ifModified: expected)
+            mirrorQueue.async { [self] in
+                uploading.remove(remote)
+                if savedAgain.remove(remote) != nil {
+                    // Newer than what just went: that's the one that has to get there. The newer edit was
+                    // made over this upload's result, so it isn't a conflict with it.
+                    startUpload(local, remote: remote, overwriting: true, completion: completion)
+                    return
                 }
+                var outcome = result
+                switch result {
+                case .success:
+                    pendingSaves[remote] = nil
+                case .failure(let failure):
+                    if failure.description == Self.conflictMessage {
+                        // Left pending and untouched here until someone decides. Nothing's been lost.
+                        if let onSaveConflict { DispatchQueue.main.async { onSaveConflict(local) } }
+                        outcome = .success(())
+                    }
+                }
+                savePending()
+                let count = pendingSaves.count
+                if let onPendingSaves { DispatchQueue.main.async { onPendingSaves(count) } }
+                let final = outcome
+                DispatchQueue.main.async { completion(final) }
             }
         }
     }
 
-    private func upload(_ local: String, remote: String) -> Result<Void, RemoteFailure> {
+    private static let conflictMessage = "changed on the server"
+
+    private func upload(_ local: String, remote: String, ifModified expected: Int64?) -> Result<Void, RemoteFailure> {
         guard let data = FileManager.default.contents(atPath: local) else { return .failure(RemoteFailure("Couldn't read the file here.")) }
         guard state.isReady else { return .failure(RemoteFailure("Waiting for the connection.")) }
+        // An empty copy of a file with contents is a placeholder, not an edit. Never send one.
+        if data.isEmpty, let record = record(forLocal: local), record.size > 0, expected != nil, !savedByEditor(remote) {
+            mirrorQueue.async { [self] in
+                pendingSaves[remote] = nil
+                savePending()
+            }
+            return .success(())
+        }
         let script: String
         if let bin = binDirectory {
-            script = "\(helper(bin)) write \(ShellQuote.quote(remote))"
+            let condition = expected.flatMap { $0 > 0 ? " --if-modified \($0)" : nil } ?? ""
+            script = "\(helper(bin)) write \(ShellQuote.quote(remote)) \(data.count)\(condition)"
         } else {
-            script = "cat > \(ShellQuote.quote(remote)) && printf '0 %s\\n' \"$(wc -c < \(ShellQuote.quote(remote)))\""
+            // Into a file beside it, so a dropped connection can't leave half of it in place.
+            let target = ShellQuote.quote(remote)
+            let temporary = ShellQuote.quote(remote + ".tiri-upload")
+            script = "cat > \(temporary) && [ \"$(wc -c < \(temporary) | tr -d ' ')\" = \(data.count) ] && mv \(temporary) \(target) && printf '0 %s\\n' \(data.count)"
         }
         guard let result = run(script, stdin: data, timeout: 600) else { return .failure(RemoteFailure("The connection went away.")) }
         guard result.succeeded else {
+            if result.status == 9 { return .failure(RemoteFailure(Self.conflictMessage)) }
             let reason = result.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if result.status == 255 { return .failure(RemoteFailure("The connection went away.")) }
+            if result.status == 255 || result.status == 124 { return .failure(RemoteFailure("The connection went away.")) }
             return .failure(RemoteFailure(reason.isEmpty ? "The server wouldn't take it." : reason))
         }
         let words = result.text.split(separator: " ")
         if words.count == 2, let modified = Int64(words[0]), let size = Int64(words[1].trimmingCharacters(in: .whitespacesAndNewlines)) {
-            setModified(local, modified)
+            if modified > 0 { setModified(local, modified) }
             lock.withLock { records[remote] = RemoteRecord(kind: .file, modified: modified, size: size, path: remote) }
         }
         return .success(())
     }
 
+    /// A file an editor just saved empty really is empty. See `didSaveEmpty`.
+    private let emptiedByEditor = EmptiedFiles()
+
+    private final class EmptiedFiles: @unchecked Sendable {
+        private let lock = NSLock()
+        private var paths: Set<String> = []
+        func insert(_ path: String) { lock.withLock { _ = paths.insert(path) } }
+        func remove(_ path: String) -> Bool { lock.withLock { paths.remove(path) != nil } }
+    }
+
+    private func savedByEditor(_ remote: String) -> Bool { emptiedByEditor.remove(remote) }
+
+    /// Someone emptied a file on purpose and saved it, which looks exactly like a placeholder.
+    public func didSaveEmpty(_ local: String) {
+        if let remote = map.remote(local) { emptiedByEditor.insert(remote) }
+    }
+
+    /// Yours replaces theirs, after someone was asked.
+    public func keepMine(_ local: String) {
+        guard let remote = map.remote(local) else { return }
+        mirrorQueue.async { [self] in
+            startUpload(local, remote: remote, overwriting: true) { _ in }
+        }
+    }
+
+    /// Theirs replaces yours, after someone was asked.
+    public func keepTheirs(_ local: String) {
+        guard let remote = map.remote(local) else { return }
+        mirrorQueue.async { [self] in
+            pendingSaves[remote] = nil
+            savePending()
+            fetchQueued(local)
+        }
+    }
+
     /// Stored beside the copy, so a quit while it's offline doesn't lose the edit.
     private var pendingFile: String { map.localRoot + ".pending-saves.json" }
+
+    /// Whether anything is waiting that's only here, even if it's from before this launch.
+    public var hasPendingSaves: Bool {
+        access(pendingFile, F_OK) == 0
+    }
+
+    private func loadPendingSaves() {
+        guard let data = FileManager.default.contents(atPath: pendingFile),
+              let stored = try? JSONDecoder().decode([String: Int64].self, from: data) else { return }
+        pendingSaves = stored
+    }
 
     private func savePending() {
         if pendingSaves.isEmpty {
             unlink(pendingFile)
-        } else if let data = try? JSONEncoder().encode(Array(pendingSaves)) {
+        } else if let data = try? JSONEncoder().encode(pendingSaves) {
             try? data.write(to: URL(fileURLWithPath: pendingFile), options: .atomic)
         }
     }
 
     private func retryPendingSaves() {
         mirrorQueue.async { [self] in
-            if let data = FileManager.default.contents(atPath: pendingFile),
-               let stored = try? JSONDecoder().decode([String].self, from: data) {
-                pendingSaves.formUnion(stored)
-            }
-            for remote in pendingSaves {
-                push(map.local(remote)) { _ in }
+            for remote in pendingSaves.keys where !uploading.contains(remote) {
+                startUpload(map.local(remote), remote: remote, overwriting: false) { _ in }
             }
         }
     }
-
-    public var pendingSaveCount: Int { mirrorQueue.sync { pendingSaves.count } }
 
     // MARK: Changing things on the server
 
@@ -1241,11 +1435,17 @@ public final class RemoteConnection: @unchecked Sendable {
                 guard let result = run(script, timeout: 30) else { continue }
                 var reader = RemoteRecordReader()
                 var found: [RemoteRecord] = []
-                for case .record(let record) in reader.read(result.output) { found.append(record) }
-                if found.isEmpty {
+                var partial = !result.succeeded
+                for event in reader.read(result.output) {
+                    switch event {
+                    case .record(let record): found.append(record)
+                    case .signal(let signal): if signal == "truncated" || signal == "partial" { partial = true }
+                    }
+                }
+                if found.isEmpty || found.first?.kind == .gone {
                     applyEvent(RemoteRecord(kind: .gone, modified: 0, size: 0, path: remote), open: [])
                 } else {
-                    apply(found, root: remote, removing: true)
+                    apply(found, root: remote, removing: !partial)
                 }
             }
         }

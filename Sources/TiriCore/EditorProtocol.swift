@@ -65,7 +65,8 @@ public enum AgentReference {
 
     /// Pasted, agents take an image's path as the image itself. Typed, it's only text.
     public static func bracketedPaste(_ text: String) -> String {
-        "\u{1B}[200~" + text + "\u{1B}[201~"
+        // An escape inside could end the paste early, and what follows would run as if typed.
+        "\u{1B}[200~" + text.replacingOccurrences(of: "\u{1B}", with: "") + "\u{1B}[201~"
     }
 }
 
@@ -138,7 +139,7 @@ public enum EditorProtocol {
         guard let message = try? JSONDecoder().decode(JSONValue.self, from: data),
               message["method"]?.stringValue == "ide_connected",
               let pid = message["params"]?["pid"]?.intValue else { return nil }
-        return Int32(pid)
+        return Int32(exactly: pid)
     }
 
     public static let tools: [(name: String, description: String, required: [String])] = [

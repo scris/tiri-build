@@ -43,21 +43,42 @@ public struct RemotePathMap: Sendable, Hashable {
         self.localRoot = localRoot ?? RemoteMirror.localRoot(of: destination)
     }
 
-    /// The local path of a path on the server.
+    /// Whether a path steps out of where it says it is. A server can name anything, and `..` in a
+    /// path it names must never reach outside its own local folder.
+    public static func climbs(_ path: String) -> Bool {
+        path.split(separator: "/", omittingEmptySubsequences: true).contains { $0 == ".." || $0 == "." }
+    }
+
+    /// `.` and `..` worked out from the text alone. Foundation's own versions also look at the disk
+    /// and change `/private/tmp` to `/tmp`, which would make a path look like it's somewhere else.
+    public static func lexical(_ path: String) -> String {
+        var parts: [Substring] = []
+        for part in path.split(separator: "/", omittingEmptySubsequences: true) {
+            if part == "." { continue }
+            if part == ".." {
+                if !parts.isEmpty { parts.removeLast() }
+                continue
+            }
+            parts.append(part)
+        }
+        return "/" + parts.joined(separator: "/")
+    }
+
+    /// The local path of a path on the server. Always inside `localRoot`, whatever the server says.
     public func local(_ remote: String) -> String {
-        if remote == "/" { return localRoot }
-        return localRoot + (remote.hasPrefix("/") ? remote : "/" + remote)
+        let parts = remote.split(separator: "/", omittingEmptySubsequences: true).filter { $0 != ".." && $0 != "." }
+        return parts.isEmpty ? localRoot : localRoot + "/" + parts.joined(separator: "/")
     }
 
     /// The path on the server of a local path, or nil if it isn't this server's.
     public func remote(_ local: String) -> String? {
         if local == localRoot { return "/" }
-        guard local.hasPrefix(localRoot + "/") else { return nil }
+        guard local.hasPrefix(localRoot + "/"), !Self.climbs(local) else { return nil }
         return String(local.dropFirst(localRoot.count))
     }
 
     public func contains(_ local: String) -> Bool {
-        local == localRoot || local.hasPrefix(localRoot + "/")
+        (local == localRoot || local.hasPrefix(localRoot + "/")) && !Self.climbs(local)
     }
 
     /// Paths inside text, such as what a command printed. Only whole mirror roots are replaced.
@@ -115,6 +136,8 @@ public struct RemoteRecordReader: Sendable {
             start = pending.index(after: end)
         }
         pending = Data(pending[start...])
+        // No record is this long. Whatever this is, it doesn't get to fill the memory.
+        if pending.count > 1_048_576 { pending = Data() }
         return events
     }
 
@@ -127,7 +150,10 @@ public struct RemoteRecordReader: Sendable {
               let modified = Int64(String(decoding: parts[1], as: UTF8.self)),
               let size = Int64(String(decoding: parts[2], as: UTF8.self)),
               !parts[3].isEmpty else { return nil }
-        return .record(RemoteRecord(kind: kind, modified: modified, size: size, path: String(decoding: parts[3], as: UTF8.self)))
+        let path = String(decoding: parts[3], as: UTF8.self)
+        // A server's say-so only ever covers its own absolute paths.
+        guard path.hasPrefix("/"), !RemotePathMap.climbs(path) else { return nil }
+        return .record(RemoteRecord(kind: kind, modified: modified, size: size, path: path))
     }
 }
 
@@ -238,9 +264,11 @@ public enum SSHConfigFile {
                 return nil
             }
         }
-        guard var host, !host.isEmpty, !host.hasPrefix("-") else { return nil }
+        guard var host, !host.isEmpty else { return nil }
         if host.hasPrefix("ssh://") { host = String(host.dropFirst(6)) }
         if host.hasSuffix("/") { host.removeLast() }
+        // Would be taken as an option, or as a folder name that climbs.
+        guard !host.isEmpty, !host.hasPrefix("-"), host != ".", host != ".." else { return nil }
         if port == nil, let colon = host.lastIndex(of: ":"), !host.contains("[") {
             let after = host[host.index(after: colon)...]
             if !after.isEmpty, after.allSatisfy(\.isNumber) {
@@ -267,9 +295,12 @@ public enum SSHConfigFile {
 // MARK: - Speaking to `sh` on the other side
 
 public enum RemoteShell {
-    /// Whatever the user's login shell is, the script itself runs in `sh`.
+    /// Whatever the user's login shell is, the script runs in `sh`. It travels encoded, because ssh
+    /// hands it to that shell first, and fish and tcsh don't read quotes the way `sh` does. A file
+    /// named to break out of the quotes would otherwise run on the server, as you.
     public static func wrap(_ script: String) -> String {
-        "sh -c " + ShellQuote.quote(script)
+        let encoded = Data(script.utf8).base64EncodedString()
+        return "sh -c 'eval \"$(printf %s \(encoded) | base64 -d 2>/dev/null || printf %s \(encoded) | base64 -D)\"'"
     }
 
     /// A path in double quotes, where `$HOME` still expands. Paths from Tiri are absolute anyway.

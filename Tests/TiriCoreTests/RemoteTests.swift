@@ -212,3 +212,85 @@ import Testing
         #expect(next.hasSuffix("proj.worktrees/three"))
     }
 }
+
+/// What a hostile server might say. None of it can reach outside its own local folder.
+@Suite struct HostileServerTests {
+    private let map = RemotePathMap(destination: "evil", localRoot: "/Cache/evil")
+
+    @Test(arguments: ["/../../../Users/r/.ssh/config", "/a/../../b", "/./x", "../x", "x/../y", "/.."])
+    func listingsCantClimb(path: String) {
+        var reader = RemoteRecordReader()
+        #expect(reader.read(Data("f\t1\t9\t\(path)\u{0}".utf8)).isEmpty)
+    }
+
+    @Test(arguments: [("/../../etc/passwd", "/Cache/evil/etc/passwd"), ("/a/./b/../c", "/Cache/evil/a/b/c"), ("..", "/Cache/evil"), ("/", "/Cache/evil")])
+    func localIsAlwaysInside(path: String, expected: String) {
+        #expect(map.local(path) == expected)
+    }
+
+    @Test(arguments: ["/Cache/evil/../../Users/r", "/Cache/evil/a/../../..", "/Cache/evil2/x", "/Users/r"])
+    func outsideIsntTheServers(path: String) {
+        #expect(map.remote(path) == nil)
+        #expect(!map.contains(path))
+    }
+
+    @Test func aHugeRecordCantFillMemory() {
+        var reader = RemoteRecordReader()
+        _ = reader.read(Data(repeating: 65, count: 2_000_000))
+        #expect(reader.read(Data("f\t1\t1\t/ok\u{0}".utf8)) == [.record(RemoteRecord(kind: .file, modified: 1, size: 1, path: "/ok"))])
+    }
+
+    @Test func framesCantCrash() {
+        let frames = RemoteConnection.RelayFrames()
+        #expect(frames.read(Data("R 1 -5\nR 2 99999999999999\nP 99999999999 0\n".utf8)).map(\.kind) == ["P"])
+    }
+
+    @Test(arguments: ["ssh://-J8.8.8.8", "-J8.8.8.8", "ssh://..", "..", ".", "ssh://-oProxyCommand=x"])
+    func hostsCantBeOptions(typed: String) {
+        #expect(SSHConfigFile.destination(from: typed) == nil)
+    }
+
+    @Test func searchResultsCantClimb() {
+        let found = RemoteSearch.parse(Data("../../../etc/passwd\u{0}1\u{0}hello\na/b.txt\u{0}2\u{0}hello\n".utf8), root: "/Cache/evil/proj", query: "hello")
+        #expect(found.map(\.path) == ["/Cache/evil/proj/a/b.txt"])
+    }
+
+    @Test func pastesCantEndThemselves() {
+        #expect(AgentReference.bracketedPaste("x\u{1B}[201~\rrm -rf /") == "\u{1B}[200~x[201~\rrm -rf /\u{1B}[201~")
+    }
+
+    @Test func scriptsSurviveTheLoginShell() {
+        let wrapped = RemoteShell.wrap("cat -- '\u{27}; id; \\'")
+        #expect(!wrapped.contains("; id;"))
+        #expect(wrapped.filter { $0 == "\u{27}" }.count == 2)
+    }
+}
+
+@Suite struct LexicalPathTests {
+    @Test(arguments: [("/a/./b/../c", "/a/c"), ("/private/tmp/x", "/private/tmp/x"), ("/../..", "/"), ("/a//b/", "/a/b"), ("/", "/")])
+    func worksFromTheTextAlone(path: String, expected: String) {
+        #expect(RemotePathMap.lexical(path) == expected)
+    }
+
+    @Test func aRelativeEscapeLeavesTheCopy() {
+        let map = RemotePathMap(destination: "s", localRoot: "/private/tmp/s")
+        #expect(map.contains(RemotePathMap.lexical("/private/tmp/s/home/me/../you/a")))
+        #expect(!map.contains(RemotePathMap.lexical("/private/tmp/s/home/../../../../Users/r/.ssh/id_rsa")))
+    }
+}
+
+@Suite struct CLIOnAServerTests {
+    @Test func pathsMeanTheServers() throws {
+        var environment = CLIParser.Environment(cwd: "/Cache/s/home/me/p", itemID: "i-1")
+        environment.translate = { "/Cache/s" + $0 }
+        environment.home = "/home/me"
+        environment.fileExists = { _ in true }
+        func path(_ argument: String) throws -> String? {
+            guard case .request(let request, _) = try CLIParser.parse(["open", argument], environment: environment) else { return nil }
+            return request.args["path"]?.stringValue
+        }
+        #expect(try path("/etc/hosts") == "/Cache/s/etc/hosts")
+        #expect(try path("~/x.txt") == "/Cache/s/home/me/x.txt")
+        #expect(try path("a.txt") == "/Cache/s/home/me/p/a.txt")
+    }
+}

@@ -218,7 +218,7 @@ final class LanguageServerHub {
         sessions[key] = session
         startIdleTimer()
         model.languageRevision += 1
-        let params = LSP.initializeParams(root: root, processID: ProcessInfo.processInfo.processIdentifier)
+        let params = LSP.initializeParams(root: root, processID: RemoteRegistry.shared.isRemote(root) ? nil : ProcessInfo.processInfo.processIdentifier)
         Task {
             // A large project can take a while to say hello.
             let answer = await client.request("initialize", params, timeout: 60)
@@ -254,7 +254,7 @@ final class LanguageServerHub {
         let assignment = servers.path.map { "PATH=\(ShellQuote.quote($0)) " } ?? ""
         let script = "cd \(ShellQuote.quote(remoteRoot)) && \(assignment)exec \(RemoteShell.arguments([executable] + command.dropFirst()))"
         let client = LSPClient(launch: .init(executable: connection.sshExecutable, arguments: connection.commandArguments(script: script),
-                                             directory: NSHomeDirectory(), path: nil, remoteMap: connection.map))
+                                             directory: root, path: nil, remoteMap: connection.map))
         let session = Session(key: key, definition: definition, client: client, executable: executable)
         client.onNotification = { [weak self] method, params in
             DispatchQueue.main.async {

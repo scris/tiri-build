@@ -237,7 +237,7 @@ typedef struct {
     const char *argv0;
     char **command;
     struct winsize size;
-    int report;
+    const char *report;  // A tag that says it's really from here, not something a program printed.
 } launch_options;
 
 static void remove_files(const char *socket_path) {
@@ -315,14 +315,14 @@ static size_t state_command(int pid, char *out, size_t room) {
 static char last_report[8192];
 
 // A command's arguments split at %00.
-static void report_state(int client, int master, pid_t child, int force) {
+static void report_state(int client, int master, pid_t child, int force, const char *tag) {
     static char directory[4096], command[1024], encoded[6000], message[8192];
     int foreground = state_foreground(master, child, directory, sizeof directory);
     size_t length = state_command(foreground, command, sizeof command);
     size_t used = 0;
     encoded[0] = 0;
     put_encoded(encoded, sizeof encoded, &used, directory, strlen(directory));
-    int written = snprintf(message, sizeof message, "\033]6973;cwd=%s;fg=%d;shell=%d;cmd=", encoded, foreground, (int)child);
+    int written = snprintf(message, sizeof message, "\033]6973;n=%s;cwd=%s;fg=%d;shell=%d;cmd=", tag, encoded, foreground, (int)child);
     if (written <= 0 || written >= (int)sizeof message) return;
     used = (size_t)written;
     put_encoded(message, sizeof message - 2, &used, command, length);
@@ -395,7 +395,7 @@ static void run_server(const launch_options *options, int listener) {
                     close(client);
                     client = -1;
                 } else if (options->report) {
-                    report_state(client, master, child, 1);
+                    report_state(client, master, child, 1, options->report);
                 }
             }
         }
@@ -404,7 +404,7 @@ static void run_server(const launch_options *options, int listener) {
             double now = now_seconds();
             if (now - last_report_at >= 0.7) {
                 last_report_at = now;
-                report_state(client, master, child, 0);
+                report_state(client, master, child, 0, options->report);
             }
         }
 
@@ -650,9 +650,9 @@ int main(int argc, char **argv) {
             } else if (strcmp(argv[index], "--argv0") == 0 && index + 1 < argc) {
                 options.argv0 = argv[index + 1];
                 index += 2;
-            } else if (strcmp(argv[index], "--report") == 0) {
-                options.report = 1;
-                index += 1;
+            } else if (strcmp(argv[index], "--report") == 0 && index + 1 < argc) {
+                options.report = argv[index + 1];
+                index += 2;
             } else if (strcmp(argv[index], "--") == 0) {
                 options.command = argv + index + 1;
                 break;
@@ -700,6 +700,6 @@ int main(int argc, char **argv) {
         }
         return pid > 0 && kill(pid, 0) == 0 ? 0 : 1;
     }
-    fprintf(stderr, "usage: tiri-session attach <socket> [--cwd DIR] [--argv0 NAME] [--report] -- program args...\n");
+    fprintf(stderr, "usage: tiri-session attach <socket> [--cwd DIR] [--argv0 NAME] [--report TAG] -- program args...\n");
     return 64;
 }

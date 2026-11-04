@@ -74,11 +74,18 @@ static void emit(const char *path) {
 
 static long scan_left = 200000;
 
+static int scan_partial;
+
 static void scan_directory(const char *directory, int depth) {
     DIR *handle = opendir(directory);
-    if (!handle) return;
+    if (!handle) {
+        // Not a folder is fine. Couldn't look in one means this isn't the whole picture.
+        if (errno != ENOTDIR && errno != ENOENT) scan_partial = 1;
+        return;
+    }
     struct dirent *entry;
-    char path[8192];
+    // Only used before recursing, so one will do, and deep trees can't run out of stack.
+    static char path[8192];
     // Files before descending, so a cut-off scan shows the top of the tree rather than one deep corner.
     size_t cap = 64, count = 0;
     char **folders = malloc(cap * sizeof *folders);
@@ -121,8 +128,8 @@ static int run_scan(int argc, char **argv) {
         emit(roots[index]);
         scan_directory(roots[index], depth);
     }
-    int complete = scan_left > 0;
-    if (!complete) { printf("!truncated"); putchar(0); }
+    if (scan_left <= 0) { printf("!truncated"); putchar(0); }
+    if (scan_partial) { printf("!partial"); putchar(0); }
     return fflush(stdout) == 0 ? 0 : 1;
 }
 
@@ -148,6 +155,7 @@ static void remember_watch(int descriptor, const char *path) {
 }
 
 static void watch_tree(const char *directory) {
+    if (strlen(directory) > 7000) return;
     const uint32_t mask = IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE | IN_DELETE_SELF | IN_ONLYDIR;
     int descriptor = inotify_add_watch(watcher, directory, mask);
     if (descriptor < 0) {
@@ -162,18 +170,23 @@ static void watch_tree(const char *directory) {
     DIR *handle = opendir(directory);
     if (!handle) return;
     struct dirent *entry;
-    char path[8192];
+    char *path = malloc(8192);
+    if (!path) {
+        closedir(handle);
+        return;
+    }
     while ((entry = readdir(handle))) {
         const char *name = entry->d_name;
         if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 || excluded(name)) continue;
 #ifdef DT_DIR
         if (entry->d_type != DT_DIR && entry->d_type != DT_UNKNOWN) continue;
 #endif
-        int written = snprintf(path, sizeof path, "%s/%s", strcmp(directory, "/") == 0 ? "" : directory, name);
-        if (written <= 0 || written >= (int)sizeof path) continue;
+        int written = snprintf(path, 8192, "%s/%s", strcmp(directory, "/") == 0 ? "" : directory, name);
+        if (written <= 0 || written >= 8192) continue;
         struct stat info;
         if (lstat(path, &info) == 0 && S_ISDIR(info.st_mode)) watch_tree(path);
     }
+    free(path);
     closedir(handle);
 }
 
@@ -257,10 +270,14 @@ static int run_watch(int argc, char **argv) {
 
     static char events[65536] __attribute__((aligned(__alignof__(struct inotify_event))));
     char path[8192];
+    double first_pending = 0;
     for (;;) {
         struct pollfd fds[2] = {{watcher, POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
-        // Settle a little once something's waiting to be said.
-        int ready = poll(fds, 2, pending_count || git_moved || pending_overflow ? 80 : -1);
+        int waiting = pending_count || git_moved || pending_overflow;
+        if (!waiting) first_pending = 0;
+        else if (first_pending == 0) first_pending = now_seconds();
+        // Settle a little once something's waiting to be said, but not for ever if it keeps coming.
+        int ready = poll(fds, 2, waiting ? 80 : -1);
         if (ready < 0) {
             if (errno == EINTR) continue;
             return 1;
@@ -269,10 +286,11 @@ static int run_watch(int argc, char **argv) {
             char sink[256];
             if (read(STDIN_FILENO, sink, sizeof sink) <= 0) return 0;
         }
-        if (ready == 0) {
+        if (ready == 0 || (first_pending != 0 && now_seconds() - first_pending > 0.5)) {
             flush_changes();
+            first_pending = 0;
             if (ferror(stdout)) return 0;
-            continue;
+            if (ready == 0) continue;
         }
         if (!(fds[0].revents & POLLIN)) continue;
         ssize_t got = read(watcher, events, sizeof events);
@@ -329,8 +347,19 @@ static int run_watch(int argc, char **argv) {
 
 // MARK: write
 
+// tiri-remote write <path> <size> [--if-modified <ms>]
+// All of it or none of it: a connection that drops part-way ends stdin early, which is why the size is
+// said up front. --if-modified leaves the file alone if it isn't the version the edit was made to,
+// and exits 9, so a save that waited out a dropped connection can't silently replace newer work.
 static int run_write(int argc, char **argv) {
-    if (argc != 3) return 64;
+    if (argc != 4 && argc != 6) return 64;
+    long long size = atoll(argv[3]);
+    if (size < 0) return 64;
+    long long if_modified = -1;
+    if (argc == 6) {
+        if (strcmp(argv[4], "--if-modified") != 0) return 64;
+        if_modified = atoll(argv[5]);
+    }
     char target[8192];
     snprintf(target, sizeof target, "%s", argv[2]);
     // Write through a link, rather than replacing the link with a file.
@@ -340,34 +369,54 @@ static int run_write(int argc, char **argv) {
     struct stat info;
     int existed = stat(target, &info) == 0;
     if (existed) mode = info.st_mode & 07777;
+    if (existed && if_modified > 0 && MTIME_MS(info) != if_modified) {
+        fprintf(stderr, "changed on the server\n");
+        return 9;
+    }
 
     char temporary[8200];
     snprintf(temporary, sizeof temporary, "%s.tiri-XXXXXX", target);
     int fd = mkstemp(temporary);
-    int in_place = 0;
-    if (fd < 0) {
-        // A folder we can't create in can still hold a file we can write to.
+    int in_place = fd < 0;
+    char *held = NULL;
+    if (in_place) {
+        // A folder we can't create in can still hold a file we can write to. Nothing's touched
+        // until all of it has arrived.
+        held = malloc(size ? (size_t)size : 1);
+        if (!held) return 1;
+    }
+    char buffer[65536];
+    long long have = 0;
+    while (have < size) {
+        size_t want = size - have < (long long)sizeof buffer ? (size_t)(size - have) : sizeof buffer;
+        ssize_t got = read(STDIN_FILENO, buffer, want);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) break;
+        if (in_place) {
+            memcpy(held + have, buffer, (size_t)got);
+        } else if (write_all(fd, buffer, (size_t)got) < 0) {
+            fprintf(stderr, "%s\n", strerror(errno));
+            unlink(temporary);
+            return 1;
+        }
+        have += got;
+    }
+    if (have != size) {
+        fprintf(stderr, "the connection dropped part-way, so the file wasn't changed\n");
+        if (!in_place) unlink(temporary);
+        return 1;
+    }
+    if (in_place) {
         fd = open(target, O_WRONLY | O_TRUNC | (existed ? 0 : O_CREAT), mode);
         if (fd < 0) {
             fprintf(stderr, "%s\n", strerror(errno));
             return 1;
         }
-        in_place = 1;
-    }
-    char buffer[65536];
-    ssize_t got;
-    while ((got = read(STDIN_FILENO, buffer, sizeof buffer)) > 0) {
-        if (write_all(fd, buffer, (size_t)got) < 0) {
+        if (write_all(fd, held, (size_t)size) < 0) {
             fprintf(stderr, "%s\n", strerror(errno));
-            if (!in_place) unlink(temporary);
             return 1;
         }
-    }
-    if (got < 0) {
-        if (!in_place) unlink(temporary);
-        return 1;
-    }
-    if (!in_place) {
+    } else {
         if (!existed) {
             mode_t mask = umask(0);
             umask(mask);
@@ -375,8 +424,16 @@ static int run_write(int argc, char **argv) {
         }
         fchmod(fd, mode);
     }
-    fsync(fd);
-    close(fd);
+    if (fsync(fd) != 0 && errno != EINVAL && errno != ENOTSUP) {
+        fprintf(stderr, "%s\n", strerror(errno));
+        if (!in_place) unlink(temporary);
+        return 1;
+    }
+    if (close(fd) != 0) {
+        fprintf(stderr, "%s\n", strerror(errno));
+        if (!in_place) unlink(temporary);
+        return 1;
+    }
     if (!in_place && rename(temporary, target) != 0) {
         fprintf(stderr, "%s\n", strerror(errno));
         unlink(temporary);
@@ -433,6 +490,9 @@ static int run_relay_server(int argc, char **argv) {
     mode_t previous = umask(0077);
     if (bind(listener, (struct sockaddr *)&address, sizeof address) < 0 || listen(listener, 32) < 0) return 70;
     umask(previous);
+    // A relay from a dropped connection can linger for hours. It mustn't take the new one's socket with it.
+    struct stat bound;
+    ino_t bound_inode = stat(path, &bound) == 0 ? bound.st_ino : 0;
     printf("P %d 0\n", (int)getpid());
     fflush(stdout);
 
@@ -492,6 +552,9 @@ static int run_relay_server(int argc, char **argv) {
                 int placed = 0;
                 for (int index = 0; index < RELAY_CLIENTS && !placed; index++) {
                     if (clients[index].fd < 0) {
+                        // An answer can't be written to a client that isn't reading, for ever.
+                        struct timeval limit = {5, 0};
+                        setsockopt(fresh, SOL_SOCKET, SO_SNDTIMEO, &limit, sizeof limit);
                         clients[index] = (relay_client){fresh, next_id++, NULL, 0, 0};
                         placed = 1;
                     }
@@ -512,7 +575,15 @@ static int run_relay_server(int argc, char **argv) {
                 continue;
             }
             if (client->sent) continue;
-            client->data = realloc(client->data, client->length + (size_t)got);
+            char *grown = client->length + (size_t)got > 16 * 1024 * 1024 ? NULL : realloc(client->data, client->length + (size_t)got);
+            if (!grown) {
+                close(client->fd);
+                client->fd = -1;
+                free(client->data);
+                client->data = NULL;
+                continue;
+            }
+            client->data = grown;
             memcpy(client->data + client->length, buffer, (size_t)got);
             client->length += (size_t)got;
             if (memchr(client->data, '\n', client->length)) {
@@ -524,7 +595,7 @@ static int run_relay_server(int argc, char **argv) {
         }
     }
 done:
-    unlink(path);
+    if (stat(path, &bound) == 0 && bound.st_ino == bound_inode) unlink(path);
     return 0;
 }
 

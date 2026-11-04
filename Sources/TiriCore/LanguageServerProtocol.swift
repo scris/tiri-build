@@ -165,9 +165,10 @@ public enum LSP {
     }
 
     /// What Tiri can do with a server's answers. Asks for nothing to do with typing.
-    public static func initializeParams(root: String, processID: Int32) -> JSONValue {
+    /// `processID` is nil over SSH, where a server would look for it, not find it, and exit.
+    public static func initializeParams(root: String, processID: Int32?) -> JSONValue {
         .object([
-            "processId": .int(Int(processID)),
+            "processId": processID.map { .int(Int($0)) } ?? .null,
             "rootUri": .string(uri(for: root)),
             "rootPath": .string(root),
             "clientInfo": .object(["name": "Tiri", "version": .string(TiriCoreVersion.string)]),

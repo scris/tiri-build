@@ -733,7 +733,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             // Still running, so what's there now is what counts, and nothing is typed or replayed.
             let attach = self.reattaching || alive
             let script = self.model.remote.terminalScript(connection: connection, itemID: self.itemID, workspaceID: self.workspaceID,
-                                                          command: attach ? nil : self.launchCommand, cwd: self.trackedCwd, attachOnly: self.reattaching && alive)
+                                                          command: attach ? nil : self.launchCommand, cwd: self.trackedCwd, attachOnly: self.reattaching)
             let launch = self.model.remote.terminalLaunch(connection: connection, script: script, slot: slot)
             self.exited = false
             self.container.hideExitBar()
@@ -745,7 +745,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
                 self.prefill = nil
                 self.terminalView.send(txt: prefill)
             }
-            self.flushHeldBack()
+            // With the helper, what's waiting goes once the session says it's really there.
+            if !connection.hasHelper { self.flushHeldBack() }
         }
     }
 
@@ -779,16 +780,19 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     }
 
     /// What's on screen is replaced by what the server replays, or it would all appear twice.
-    private func beginReattach() {
+    private func beginReattach(keepingRetries: Bool = false) {
         waitingForConnection = false
-        remoteRetries = 0
-        reattaching = hasEverAttached
+        if !keepingRetries { remoteRetries = 0 }
+        reattaching = hasEverAttached && !restartRequested
+        restartRequested = false
         startingAgain = true
         if hasEverAttached { terminalView.feed(text: "\u{1B}c\u{1B}[3J") }
         spawnOnServer()
     }
 
     private var hasEverAttached = false
+    /// Restart was pressed while the connection was down, so what comes back is a fresh run.
+    private var restartRequested = false
 
     private func showConnectionNotice(_ state: RemoteState) {
         guard let destination = remoteDestination else { return }
@@ -814,7 +818,13 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// What the session on the server says about itself, since it can't be looked up from here.
     private func remoteReport(_ report: String) {
         guard let destination = remoteDestination, let connection = model.remote.existingConnection(destination) else { return }
+        // Anything can print an escape sequence, like `cat` on a file. Only the session knows this.
+        guard report.hasPrefix("n=" + model.remote.reportTag(for: itemID) + ";") else { return }
         hasEverAttached = true
+        // It's really there. From here on an exit is the program's own.
+        reattaching = false
+        remoteRetries = 0
+        flushHeldBack()
         for field in report.split(separator: ";", omittingEmptySubsequences: false) {
             let parts = field.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
             guard parts.count == 2 else { continue }
@@ -856,6 +866,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         // A resume that failed ("no conversation found") shouldn't fail again. Restart is a fresh run.
         launchCommand = spec.command
         reattaching = false
+        restartRequested = true
         startingAgain = true
         spawn()
         focus()
@@ -1096,25 +1107,44 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         // `session attach` with nothing there to attach to: it ended while the connection was down.
         if reattaching, exitCode == 3 {
             reattaching = false
+            heldBack = []
             return false
         }
         guard exitCode == 255 || exitCode == nil || !connection.state.isReady else { return false }
-        if connection.state.isReady {
-            // The connection says it's fine, so maybe it's only just noticed, or the server has a
-            // low limit on sessions. Try a few times, each on the next connection along.
-            remoteRetries += 1
-            guard remoteRetries <= 3 else { return false }
-            model.remote.moveToNextSlot(itemID, on: destination)
-            waitingForConnection = true
-            connection.tryNow()
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(remoteRetries)) { [weak self] in
-                guard let self, self.waitingForConnection else { return }
-                if connection.state.isReady { self.beginReattach() }
-            }
+        waitingForConnection = true
+        if !connection.state.isReady {
+            showConnectionNotice(connection.state)
             return true
         }
-        waitingForConnection = true
-        showConnectionNotice(connection.state)
+        // It says it's up, but a dropped connection takes a moment to notice, and ending every
+        // terminal at once beats it to it. Ask, before believing this is about anything else.
+        connection.tryNow()
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            let healthy = await Task.detached(priority: .userInitiated) { connection.run("true", timeout: 6)?.succeeded == true }.value
+            guard let self, self.waitingForConnection else { return }
+            // Down after all: it'll come back through remoteStateChanged.
+            guard healthy, connection.state.isReady else { return }
+            // Up, and it still ended, so the server probably has a low limit on sessions. The next
+            // connection along may have room. Only so many times, or it would go on for ever.
+            self.remoteRetries += 1
+            guard self.remoteRetries <= 3 else {
+                self.remoteRetries = 0
+                self.waitingForConnection = false
+                self.exited = true
+                self.model.updateRuntime(self.itemID) { runtime in
+                    runtime.status = .exited
+                    runtime.exitCode = exitCode
+                }
+                self.container.showExitBar(code: exitCode, onRestart: { [weak self] in self?.restart() }, onClose: { [weak self] in
+                    guard let self else { return }
+                    self.model.closeNow(self.itemID)
+                })
+                return
+            }
+            self.model.remote.moveToNextSlot(self.itemID, on: destination)
+            self.beginReattach(keepingRetries: true)
+        }
         return true
     }
 
@@ -1175,6 +1205,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     /// Whether a process is this terminal's shell or something running under it.
     func ownsProcess(_ pid: Int32) -> Bool {
+        // A process on a server has nothing to do with this Mac's process table.
+        if isRemote { return pid == remoteForeground || remoteCommand.isEmpty == false && pid == remoteShell }
         var current = pid
         for _ in 0..<32 {
             if current == shellPID { return true }

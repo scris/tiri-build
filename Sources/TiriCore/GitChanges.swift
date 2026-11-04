@@ -436,7 +436,9 @@ public enum Git {
         guard let root = repositoryRoot(of: folder),
               let result = run(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."], in: folder),
               result.status == 0 else { return [] }
-        let found = GitStatusParser.parse(String(decoding: result.output, as: UTF8.self), root: root)
+        var found = GitStatusParser.parse(String(decoding: result.output, as: UTF8.self), root: root)
+        // What a server's git says is what a server says.
+        if RemoteRegistry.shared.isRemote(folder) { found.removeAll { RemotePathMap.climbs($0.path) } }
         let realFolder = real(folder)
         // git reports real paths. The workspace may know this folder by a link to it.
         return found.map { file in

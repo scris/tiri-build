@@ -20,8 +20,44 @@ final class EditorBridge {
 
     private final class Client {
         let connection: NWConnection
+        /// The server this came in from, through its own listener. Nil for a client on this Mac.
+        let destination: String?
         var pid: Int32?
-        init(_ connection: NWConnection) { self.connection = connection }
+        init(_ connection: NWConnection, destination: String?) {
+            self.connection = connection
+            self.destination = destination
+        }
+    }
+
+    /// Each server gets its own port and token, so whoever's on one can't see or do anything about this
+    /// Mac's files, or another server's. A server is trusted less than this Mac is.
+    private var serverListeners: [String: (listener: NWListener, port: UInt16, token: String)] = [:]
+
+    private var serverTokensFile: URL { TiriPaths.supportDirectory.appendingPathComponent("editor-bridge-servers.json") }
+
+    /// Kept across launches, so an agent left running on the server can come back.
+    private func token(forServer destination: String) -> String {
+        var stored = (try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: serverTokensFile))) ?? [:]
+        if let known = stored[destination] { return known }
+        let fresh = EditorProtocol.newToken()
+        stored[destination] = fresh
+        try? FileManager.default.createDirectory(at: TiriPaths.supportDirectory, withIntermediateDirectories: true)
+        try? JSONEncoder().encode(stored).write(to: serverTokensFile, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: serverTokensFile.path)
+        return fresh
+    }
+
+    func listener(for destination: String) -> (port: UInt16, token: String)? {
+        if let existing = serverListeners[destination] { return (existing.port, existing.token) }
+        let token = token(forServer: destination)
+        for _ in 0..<5 {
+            let candidate = UInt16.random(in: 10_000...65_000)
+            guard let made = makeListener(port: candidate, token: token, destination: destination) else { continue }
+            made.start(queue: .main)
+            serverListeners[destination] = (made, candidate, token)
+            return (candidate, token)
+        }
+        return nil
     }
 
     init(model: AppModel) {
@@ -62,10 +98,9 @@ final class EditorBridge {
         writeLock()
     }
 
-    private func listen(on port: UInt16) -> Bool {
+    private func makeListener(port: UInt16, token expected: String, destination: String?) -> NWListener? {
         let socket = NWProtocolWebSocket.Options()
         socket.autoReplyPing = true
-        let expected = token
         // Anything else on this Mac can reach a local port. Only a holder of the token gets in.
         socket.setClientRequestHandler(.main) { subprotocols, headers in
             let authorized = headers.contains { $0.name.lowercased() == "x-claude-code-ide-authorization" && $0.value == expected }
@@ -76,10 +111,15 @@ final class EditorBridge {
         parameters.defaultProtocolStack.applicationProtocols.insert(socket, at: 0)
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
         parameters.allowLocalEndpointReuse = true
-        guard let listener = try? NWListener(using: parameters) else { return false }
+        guard let listener = try? NWListener(using: parameters) else { return nil }
         listener.newConnectionHandler = { [weak self] connection in
-            MainActor.assumeIsolated { self?.accept(connection) }
+            MainActor.assumeIsolated { self?.accept(connection, destination: destination) }
         }
+        return listener
+    }
+
+    private func listen(on port: UInt16) -> Bool {
+        guard let listener = makeListener(port: port, token: token, destination: nil) else { return false }
         listener.stateUpdateHandler = { [weak self, weak listener] state in
             MainActor.assumeIsolated {
                 guard case .failed(let error) = state, let self, self.listener === listener else { return }
@@ -107,8 +147,8 @@ final class EditorBridge {
         writeLock()
     }
 
-    private func accept(_ connection: NWConnection) {
-        let client = Client(connection)
+    private func accept(_ connection: NWConnection, destination: String?) {
+        let client = Client(connection, destination: destination)
         let key = ObjectIdentifier(connection)
         connections[key] = client
         connection.stateUpdateHandler = { [weak self] state in
@@ -137,49 +177,75 @@ final class EditorBridge {
         if let pid = EditorProtocol.connectedProcess(in: data) {
             client.pid = pid
             // It should know what's selected right away, like an editor it has just met.
-            if let latestSelection { send(EditorProtocol.selectionChanged(latestSelection), to: client) }
+            if let latestSelection, let shown = selection(latestSelection, for: client) { send(EditorProtocol.selectionChanged(shown), to: client) }
         }
-        if let response = EditorProtocol.respond(to: data, host: host) {
+        if let response = EditorProtocol.respond(to: data, host: host(for: client)) {
             send(response, to: client)
         }
     }
 
-    private var host: EditorProtocol.Host {
-        EditorProtocol.Host(
-            selection: { [weak self] in self?.latestSelection },
-            diagnostics: { [weak self] uri in self?.diagnostics(uri: uri) ?? [] },
-            openFiles: { [weak self] in
-                guard let model = self?.model else { return [] }
-                let front = model.active.activeItem?.filePath
-                return model.active.items.compactMap(\.filePath).map { (RemoteRegistry.shared.displayPath($0), $0 == front) }
+    /// What a client gets to see of a selection: only what's on its side of the fence.
+    private func selection(_ selection: EditorSelection, for client: Client) -> EditorSelection? {
+        var shown = selection
+        if let destination = client.destination {
+            guard let map = model.remote.existingConnection(destination)?.map, let remote = map.remote(selection.path) else { return nil }
+            shown.path = remote
+        } else {
+            guard !RemoteRegistry.shared.isRemote(selection.path) else { return nil }
+            shown.path = Self.realPath(selection.path)
+        }
+        return shown
+    }
+
+    private func host(for client: Client) -> EditorProtocol.Host {
+        let destination = client.destination
+        // What a client asks about is its own side: this Mac's workspaces, or its own server's.
+        let workspaces: () -> [Workspace] = { [weak self] in
+            guard let model = self?.model else { return [] }
+            let own = model.workspaces.filter { $0.remote == destination }
+            return own.contains { $0.id == model.activeID } ? [model.active] : own
+        }
+        let map = destination.flatMap { model.remote.existingConnection($0)?.map }
+        let shown: (String) -> String? = { path in
+            guard let destination else { return RemoteRegistry.shared.isRemote(path) ? nil : path }
+            _ = destination
+            return map?.remote(path)
+        }
+        let local: (String) -> String? = { path in
+            guard destination != nil else { return RemoteRegistry.shared.isRemote(path) ? nil : path }
+            return map?.local(path)
+        }
+        return EditorProtocol.Host(
+            selection: { [weak self] in
+                guard let self, let latest = self.latestSelection else { return nil }
+                return self.selection(latest, for: client)
             },
-            folders: { [weak self] in (self?.model.active.folders ?? []).map { RemoteRegistry.shared.displayPath($0) } },
+            diagnostics: { [weak self] uri in
+                guard let hub = self?.model.languageServers else { return [] }
+                guard let uri, let raw = LSP.path(from: uri) else {
+                    return hub.allKnownDiagnostics.compactMap { entry in shown(entry.path).map { ($0, entry.diagnostics) } }
+                }
+                guard let path = local(raw) else { return [] }
+                hub.requestDiagnosticsSoon(for: path)
+                return [(raw, hub.knownDiagnostics(for: path))]
+            },
+            openFiles: { [weak self] in
+                guard let self else { return [] }
+                let front = self.model.active.activeItem?.filePath
+                return workspaces().flatMap(\.items).compactMap(\.filePath).compactMap { path in shown(path).map { ($0, path == front) } }
+            },
+            folders: { workspaces().flatMap(\.folders).compactMap(shown) },
             isDirty: { [weak self] path in
-                guard let self else { return false }
-                return self.model.fileIsDirty(self.localPath(path))
+                guard let self, let path = local(path) else { return false }
+                return self.model.fileIsDirty(path)
             },
             openFile: { [weak self] path in
-                guard let self else { return }
-                _ = self.model.open(path: self.localPath(path), intent: .peek(takeFocus: false))
+                guard let self, let path = local(path) else { return }
+                // In its own workspace, whatever's in front.
+                let target = workspaces().first { $0.folder(containing: path) != nil }?.id ?? workspaces().first?.id
+                guard destination == nil || target != nil else { return }
+                _ = self.model.open(path: path, intent: .peek(takeFocus: false), in: target)
             })
-    }
-
-    /// A path from an agent on a server, as this Mac knows it. An agent here says what it means.
-    private func localPath(_ path: String) -> String {
-        guard !RemoteRegistry.shared.isRemote(path), !FileManager.default.fileExists(atPath: path), let connection = model.activeConnection else { return path }
-        return connection.map.local(path)
-    }
-
-    /// Claude can ask around each edit, and an edit shouldn't wait for a server to start. It gets
-    /// what's known, and asking gets the server going for next time.
-    private func diagnostics(uri: String?) -> [(path: String, diagnostics: [LSPDiagnostic])] {
-        let hub = model.languageServers
-        guard let uri, var path = LSP.path(from: uri) else {
-            return hub.allKnownDiagnostics.map { (RemoteRegistry.shared.displayPath($0.path), $0.diagnostics) }
-        }
-        path = localPath(path)
-        hub.requestDiagnosticsSoon(for: path)
-        return [(path, hub.knownDiagnostics(for: path))]
     }
 
     private func send(_ data: Data, to client: Client) {
@@ -196,10 +262,9 @@ final class EditorBridge {
         pendingSelection?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            var shown = selection
-            shown.path = Self.realPath(selection.path)
-            let data = EditorProtocol.selectionChanged(shown)
-            for client in self.connections.values { self.send(data, to: client) }
+            for client in self.connections.values {
+                if let shown = self.selection(selection, for: client) { self.send(EditorProtocol.selectionChanged(shown), to: client) }
+            }
         }
         pendingSelection = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
@@ -208,9 +273,17 @@ final class EditorBridge {
     /// Sends a mention to the Claude running in this terminal. False if it isn't connected.
     func mention(path: String, firstLine: Int?, lastLine: Int?, in terminal: TerminalController) -> Bool {
         let candidates = connections.values.filter { client in
-            client.pid.map(terminal.ownsProcess) ?? false
+            guard client.destination == terminal.remoteDestination else { return false }
+            return client.pid.map(terminal.ownsProcess) ?? false
         }
-        guard let client = candidates.first else { return false }
+        var found = candidates.first
+        // Which process connected isn't always what's in the terminal's foreground on a server. With
+        // only one to choose from, there's no choice to get wrong.
+        if found == nil, let destination = terminal.remoteDestination {
+            let onServer = connections.values.filter { $0.destination == destination }
+            if onServer.count == 1 { found = onServer.first }
+        }
+        guard let client = found else { return false }
         // Claude works out how to show a path from the real one, not from a link to it.
         send(EditorProtocol.atMentioned(path: Self.realPath(path), firstLine: firstLine, lastLine: lastLine), to: client)
         return true
@@ -246,6 +319,7 @@ final class EditorBridge {
 
     func stop() {
         listener?.cancel()
+        for entry in serverListeners.values { entry.listener.cancel() }
         if let lockURL { try? FileManager.default.removeItem(at: lockURL) }
     }
 }

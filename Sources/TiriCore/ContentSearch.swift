@@ -161,6 +161,7 @@ public enum RemoteSearch {
             guard let nul = rawLine.firstIndex(of: 0) else { continue }
             var relative = String(decoding: rawLine[rawLine.startIndex..<nul], as: UTF8.self)
             if relative.hasPrefix("./") { relative.removeFirst(2) }
+            guard !RemotePathMap.climbs(relative) else { continue }
             let rest = rawLine[rawLine.index(after: nul)...]
             // `git grep` puts a NUL after the number as well, and `grep` a colon.
             guard let end = rest.firstIndex(where: { $0 == 0 || $0 == UInt8(ascii: ":") }),
@@ -198,6 +199,7 @@ public enum RemoteSearch {
             for raw in result.output.split(whereSeparator: { $0 == 0 || $0 == 10 }) {
                 var relative = String(decoding: raw, as: UTF8.self)
                 if relative.hasPrefix("./") { relative.removeFirst(2) }
+                guard !RemotePathMap.climbs(relative) else { continue }
                 files.append(folder + "/" + relative)
             }
         }
