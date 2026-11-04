@@ -152,7 +152,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         outline.doubleAction = #selector(rowDoubleClicked)
         outline.setDraggingSourceOperationMask(.copy, forLocal: false)
         outline.setDraggingSourceOperationMask([.copy], forLocal: true)
-        outline.autoresizesOutlineColumn = true
+        // Growing it to fit an expanded row scrolled the whole tree sideways.
+        outline.autoresizesOutlineColumn = false
         outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         outline.intercellSpacing = NSSize(width: 0, height: 0)
         scrollView.documentView = outline
@@ -579,6 +580,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         field.stringValue = node.name
         outline.scrollRowToVisible(row)
         outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        // A scrolling field doesn't truncate, so only while it's being typed in.
+        field.cell?.isScrollable = true
         field.isEditable = true
         field.isSelectable = true
         field.isBordered = true
@@ -607,6 +610,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField, let node = editingNode else { return }
         editingNode = nil
+        field.cell?.isScrollable = false
+        field.lineBreakMode = .byTruncatingMiddle
         field.isEditable = false
         field.isSelectable = false
         field.isBordered = false
@@ -868,7 +873,6 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         field.translatesAutoresizingMaskIntoConstraints = false
         field.font = isRoot ? .systemFont(ofSize: 11, weight: .semibold) : .systemFont(ofSize: 13)
         cell.plainColor = isRoot ? .secondaryLabelColor : .labelColor
-        field.cell?.isScrollable = true
         cell.addSubview(field)
         cell.textField = field
         let badge = cell.badge

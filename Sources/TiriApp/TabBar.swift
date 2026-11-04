@@ -145,7 +145,8 @@ struct TabView: View {
                 .lineLimit(1)
                 .frame(maxWidth: 200, alignment: .leading)
                 .foregroundStyle(isActive ? .primary : .secondary)
-            closeOrDot
+            // Always holds its room, so tabs don't move as the mouse crosses them.
+            ZStack { closeOrDot }
                 .frame(width: 14, height: 14)
         }
         .padding(.leading, 9)
