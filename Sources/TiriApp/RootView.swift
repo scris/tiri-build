@@ -497,6 +497,7 @@ struct EmptyGroupView: View {
                 Button("Just Open a Folder…") {
                     model.chooseFolderForActiveWorkspace { _ in }
                 }
+                Button("Connect to a Server…") { model.connectToServerInteractive() }
             }
             .buttonStyle(.link)
         }
@@ -958,7 +959,10 @@ struct ChromeOverlays: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
             if let palette = model.palette {
+                // One palette replacing another is a new one. A text field being typed in keeps
+                // what's in it otherwise, whatever it's told.
                 PaletteView(palette: palette)
+                    .id(ObjectIdentifier(palette))
                     .transition(.opacity)
             }
         }

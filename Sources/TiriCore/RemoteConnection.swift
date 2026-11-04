@@ -940,8 +940,7 @@ public final class RemoteConnection: @unchecked Sendable {
         guard removing else { return }
         // Longest first, so a folder is empty by the time it's removed.
         for local in existing.subtracting(seen).sorted(by: { $0.count > $1.count }) {
-            guard let remote = map.remote(local), !holdsPendingSave(remote), !onDemand.contains(remote), !open.contains(local),
-                  !(local as NSString).lastPathComponent.hasPrefix(".tiri-download-") else { continue }
+            guard let remote = map.remote(local), !holdsPendingSave(remote), !onDemand.contains(remote), !open.contains(local) else { continue }
             lock.withLock { records[remote] = nil }
             try? manager.removeItem(atPath: local)
         }
@@ -1232,7 +1231,11 @@ public final class RemoteConnection: @unchecked Sendable {
         guard state.isReady else { return .failure(RemoteFailure("Not connected to \(SSHConfigFile.displayName(of: destination)).")) }
         let parent = (local as NSString).deletingLastPathComponent
         mkdirs(parent)
-        let temporary = URL(fileURLWithPath: parent + "/.tiri-download-" + UUID().uuidString.prefix(8))
+        // Beside the copy, not in it: on the same disk so it can be renamed into place, but where the
+        // tree and the watchers won't see a file that was never on the server.
+        let downloads = map.localRoot + ".downloads"
+        mkdirs(downloads)
+        let temporary = URL(fileURLWithPath: downloads + "/" + UUID().uuidString)
         defer { unlink(temporary.path) }
         // Taken before reading, so a change while it's on its way looks like a change afterwards.
         var modified = record(forLocal: local)?.modified ?? 0
@@ -1251,8 +1254,9 @@ public final class RemoteConnection: @unchecked Sendable {
             return .failure(RemoteFailure("The connection went away."))
         }
         guard result.succeeded else {
-            let reason = result.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failure(RemoteFailure(reason.isEmpty ? "Couldn't read it." : reason.replacingOccurrences(of: "head: ", with: "")))
+            // `head: cannot open 'x' for reading: Permission denied`: only the end says anything.
+            let reason = result.errorText.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: ": ").last ?? ""
+            return .failure(RemoteFailure(reason.isEmpty ? "Couldn't read it." : "Couldn't read \((local as NSString).lastPathComponent). \(reason)."))
         }
         setModified(temporary.path, modified)
         if rename(temporary.path, local) != 0 { return .failure(RemoteFailure(String(cString: strerror(errno)))) }

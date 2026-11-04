@@ -266,6 +266,14 @@ import Testing
     }
 }
 
+@Suite struct InputMethodTests {
+    @Test func widePunctuationIsWhatWasMeant() {
+        #expect(SSHConfigFile.halfWidth("～／proj。txt") == "~/proj.txt")
+        #expect(SSHConfigFile.halfWidth("me＠gpu－box") == "me@gpu-box")
+        #expect(SSHConfigFile.halfWidth("~/plain") == "~/plain")
+    }
+}
+
 @Suite struct LexicalPathTests {
     @Test(arguments: [("/a/./b/../c", "/a/c"), ("/private/tmp/x", "/private/tmp/x"), ("/../..", "/"), ("/a//b/", "/a/b"), ("/", "/")])
     func worksFromTheTextAlone(path: String, expected: String) {

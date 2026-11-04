@@ -1490,7 +1490,8 @@ final class TerminalContainer: NSView {
         if let notice {
             let size = notice.fittingSize
             let width = min(size.width, bounds.width - 24)
-            notice.frame = CGRect(x: (bounds.width - width) / 2, y: bounds.height - size.height - 10, width: width, height: size.height)
+            // On the left, because a Peek floats on the right.
+            notice.frame = CGRect(x: 12, y: bounds.height - size.height - 10, width: width, height: size.height)
         }
         if window != nil, bounds.width > 40 { onAttach?() }
     }

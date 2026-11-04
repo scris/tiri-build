@@ -1004,7 +1004,7 @@ extension AppModel {
                 self.remote.remember(destination: destination, folder: nil)
                 self.chooseRemoteFolder(on: destination)
             case .failure(let failure):
-                self.showToast(title: "Couldn't connect to \(name)", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
+                self.showToast(title: "Couldn't connect", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
                                actionTitle: "Try Again") { [weak self] in self?.connect(to: destination) }
             }
         }
@@ -1043,7 +1043,7 @@ extension AppModel {
             self.dismissToast(toast)
             switch result {
             case .failure(let failure):
-                self.showToast(title: "Couldn't connect to \(name)", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
+                self.showToast(title: "Couldn't connect", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
                                actionTitle: "Try Again") { [weak self] in self?.importRemoteWorkspace(imported, host: host) }
             case .success(let connection):
                 Task {
@@ -1096,7 +1096,7 @@ extension RemoteManager {
             (recent, configured.first { $0.alias == recent }?.detail)
         }
         names += configured.filter { !recents.contains($0.alias) }.map { ($0.alias, $0.detail) }
-        let text = query.trimmingCharacters(in: .whitespaces)
+        let text = SSHConfigFile.halfWidth(query.trimmingCharacters(in: .whitespaces))
         var rows: [PaletteModel.Row] = []
         for (alias, detail) in names where text.isEmpty || alias.localizedCaseInsensitiveContains(text) || (detail?.localizedCaseInsensitiveContains(text) ?? false) {
             rows.append(PaletteModel.Row(id: alias, title: SSHConfigFile.displayName(of: alias), detail: detail, symbol: "server.rack") { [weak self] _ in
@@ -1128,7 +1128,7 @@ extension RemoteManager {
             if path == home { return "~" }
             return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
         }
-        let text = query.trimmingCharacters(in: .whitespaces)
+        let text = SSHConfigFile.halfWidth(query.trimmingCharacters(in: .whitespaces))
         let opensTyped = text.isEmpty || text.hasSuffix("/") || text == "~"
         let directory = text.isEmpty ? home : expand(opensTyped ? String(text.dropLast(text.hasSuffix("/") && text.count > 1 ? 1 : 0)) : (text as NSString).deletingLastPathComponent)
         let filter = opensTyped ? "" : (text as NSString).lastPathComponent
@@ -1166,6 +1166,10 @@ extension RemoteManager {
                         self.model.palette?.query = pretty(path) + "/"
                     }
                 })
+            }
+            // Whatever's been typed can always be tried, so Return never does nothing.
+            if !opensTyped, !children.contains(filter) {
+                rows.append(openRow(expand(text)))
             }
             return rows
         }
