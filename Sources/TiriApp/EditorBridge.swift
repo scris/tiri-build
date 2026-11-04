@@ -497,7 +497,14 @@ final class QuoteButton: NSButton {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        applyColors()
+    }
+
+    /// Layer colors are fixed when they're set, and outside a window they resolve against the
+    /// Mac's appearance, not the app's. Set again whenever it's shown.
+    private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlAccentColor.cgColor
             commentButton.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
             commentButton.layer?.borderColor = NSColor.separatorColor.cgColor
         }
@@ -509,7 +516,7 @@ final class QuoteButton: NSButton {
         let y = host.isFlipped ? top : host.bounds.height - top - frame.height
         setFrameOrigin(NSPoint(x: max(host.bounds.width - frame.width - 18, 8),
                                y: min(max(y, 4), max(host.bounds.height - frame.height - 4, 4))))
-        layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        applyColors()
         isHidden = false
     }
 
@@ -543,7 +550,7 @@ final class QuoteButton: NSButton {
         var y = host.isFlipped ? anchor.y : anchor.y - size.height
         y = min(max(y, 4), max(host.bounds.height - size.height - 4, 4))
         setFrameOrigin(NSPoint(x: max(host.bounds.width - size.width - 18, 8), y: y))
-        layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        applyColors()
         isHidden = false
     }
 }
