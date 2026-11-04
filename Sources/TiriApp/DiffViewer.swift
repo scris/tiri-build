@@ -6,6 +6,8 @@ import TiriCore
 final class DiffController: NSObject, ItemController, NSTextViewDelegate {
     let itemID: ItemID
     let path: String
+    /// One agent's turn, or nil for everything since the last commit.
+    let turn: String?
     private unowned let model: AppModel
     private let scrollView = NSTextView.scrollableTextView()
     private let textView: DiffTextView
@@ -20,9 +22,10 @@ final class DiffController: NSObject, ItemController, NSTextViewDelegate {
 
     var view: NSView { container }
 
-    init(itemID: ItemID, path: String, model: AppModel) {
+    init(itemID: ItemID, path: String, turn: String? = nil, model: AppModel) {
         self.itemID = itemID
         self.path = path
+        self.turn = turn
         self.model = model
         let frame = NSRect(x: 0, y: 0, width: 400, height: 300)
         textView = DiffTextView(frame: frame)
@@ -66,22 +69,31 @@ final class DiffController: NSObject, ItemController, NSTextViewDelegate {
         generation += 1
         let current = generation
         let path = path
+        let wanted = turn
+        let found = turn.flatMap { model.turn(id: $0) }
+        let snapshots = model.snapshots
         Task.detached(priority: .userInitiated) { [weak self] in
-            let result = Git.diff(path: path)
+            let result: FileDiff?
+            if wanted != nil {
+                result = found.flatMap { snapshots.diff(path: path, in: $0) }
+            } else {
+                result = Git.diff(path: path)
+            }
             await MainActor.run {
                 guard let self, self.generation == current else { return }
-                self.display(result)
+                self.display(result ?? FileDiff(), missing: result == nil)
             }
         }
     }
 
-    private func display(_ result: FileDiff) {
+    private func display(_ result: FileDiff, missing: Bool = false) {
         let keepPlace = !firstLoad
         let origin = scrollView.contentView.bounds.origin
         diff = result
         model.controllerRevision += 1
-        container.showMessage(result.isBinary ? "This is a binary file. Git can't show its changes line by line."
-                              : (result.isEmpty ? "No changes in this file." : nil))
+        container.showMessage(missing ? "Tiri no longer has this turn's snapshot."
+                              : result.isBinary ? "This is a binary file. Git can't show its changes line by line."
+                              : (result.isEmpty ? (turn == nil ? "No changes in this file." : "This turn didn't change this file.") : nil))
         let text = result.lines.map(\.text).joined(separator: "\n")
         if text != textView.string || firstLoad {
             textView.lines = result.lines
@@ -402,7 +414,7 @@ struct ChangesList: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 1) {
-                ForEach(model.changes) { change in
+                ForEach(model.visibleChanges) { change in
                     ChangeRow(change: change)
                 }
             }
@@ -419,7 +431,7 @@ struct ChangeRow: View {
 
     private var isActive: Bool {
         guard case .diff(let spec)? = model.active.activeItem?.content else { return false }
-        return spec.path == change.path
+        return spec.path == change.path && spec.turn == model.scopedTurn?.id
     }
 
     private var statusColor: Color {
@@ -478,10 +490,10 @@ struct ChangeRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         // One click previews, like the explorer. A second keeps it.
-        .onTapGesture { model.openDiff(path: change.path, preview: true) }
-        .simultaneousGesture(TapGesture(count: 2).onEnded { model.openDiff(path: change.path, preview: false) })
+        .onTapGesture { model.openDiff(path: change.path, preview: true, turn: model.scopedTurn?.id) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { model.openDiff(path: change.path, preview: false, turn: model.scopedTurn?.id) })
         .contextMenu {
-            Button("Open Changes") { model.openDiff(path: change.path, preview: false) }
+            Button("Open Changes") { model.openDiff(path: change.path, preview: false, turn: model.scopedTurn?.id) }
             if change.status != .deleted {
                 Button("Open File") { model.open(path: change.path, intent: .pinned); model.requestFocus() }
             }

@@ -208,8 +208,8 @@ public struct RepositoryStatus: Sendable, Equatable, Identifiable {
 
 /// Runs git, for the changes view and the status bar. Only `transfer` touches a remote.
 public enum Git {
-    static func runGit(_ arguments: [String], in directory: String) -> (status: Int32, output: Data)? {
-        run(arguments, in: directory)
+    static func runGit(_ arguments: [String], in directory: String, environment: [String: String] = [:], timeout: Double = 20) -> (status: Int32, output: Data)? {
+        run(arguments, in: directory, timeout: timeout, extraEnvironment: environment)
     }
 
     /// Spawned and waited for directly. Foundation's Process can wait forever for a child that has

@@ -17,7 +17,8 @@ struct SidebarView: View {
     var body: some View {
         GeometryReader { geometry in
         // With the explorer folded, what's still open takes the room it left.
-        let changesFill = !explorerOpen && changesOpen && !model.changes.isEmpty
+        let hasChangesSection = !model.changes.isEmpty || !model.offeredTurns.isEmpty || model.changesScope != .sinceCommit
+        let changesFill = !explorerOpen && changesOpen && hasChangesSection
         let itemsFill = !explorerOpen && !changesFill && itemsOpen
         VStack(spacing: 0) {
             WorkspaceSwitcher()
@@ -42,20 +43,26 @@ struct SidebarView: View {
                     .allowsHitTesting(explorerOpen)
                     .clipped()
             }
-            if !model.changes.isEmpty {
+            if hasChangesSection {
                 Divider()
                 sectionHeader("Changes", isOpen: $changesOpen) {
-                    Text("\(model.changes.count)")
+                    if !model.offeredTurns.isEmpty || model.changesScope != .sinceCommit {
+                        ChangesScopeMenu()
+                    }
+                    Text("\(model.visibleChanges.count)")
                         .foregroundStyle(.tertiary)
                         .font(.caption)
                 }
                 if changesOpen {
+                    if let turn = model.scopedTurn {
+                        TurnCaption(turn: turn)
+                    }
                     if changesFill {
                         ChangesList()
                             .frame(maxHeight: .infinity)
                     } else {
                         ChangesList()
-                            .frame(height: min(CGFloat(model.changes.count) * 25 + 6, max(geometry.size.height * 0.28, 60)))
+                            .frame(height: min(CGFloat(model.visibleChanges.count) * 25 + 6, max(geometry.size.height * 0.28, 60)))
                     }
                 }
             }

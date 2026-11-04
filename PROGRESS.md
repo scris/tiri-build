@@ -45,6 +45,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Agent input:** selections reach Claude Code through its editor protocol. ⌘L, paste, drag and a picker add lines, files and images to Claude Code or Codex.
 - **Review comments:** comment on lines of any file or diff, keep them in the sidebar across a relaunch, and send them to one agent as one message, unsent. They follow lines an agent moves. `tiri review` for agents.
 - **Changes:** a sidebar section and diff items in the main window, live, in tabs and Peeks, with `tiri changes` and `tiri diff`. Read-only: no staging or committing.
+- **Per-turn diffs:** snapshots at the start and end of each agent turn, kept outside the repository, so Changes can show what one turn did. `tiri turns` for agents.
 - **Fetch, pull and push:** a bar along the bottom of the window with each repository's branch, uncommitted marker and commits to pull and push, plus Fetch, Pull (fast-forward only), Push (asks first) and Publish, and `tiri git`. No merging, no force push, no automatic fetch.
 - **Path search:** a path that doesn't exist as written is searched for across the workspace's folders, its terminals' folders and its open files. One match opens, several offer a choice, none shows a toast. Never an alert.
 - **First run:** the empty screen offers the agents the user's own shell can find, or links to get them. Settings can link `tiri` into `~/.local/bin` for other terminals.

@@ -106,6 +106,12 @@ final class AppModel {
     @ObservationIgnored let terminalFolderIndex = FileIndexStore()
     @ObservationIgnored lazy var editorBridge = EditorBridge(model: self)
     @ObservationIgnored var lastAgentTerminal: ItemID?
+    var turns: [AgentTurn] = []
+    var changesScope: ChangesScope = .sinceCommit
+    var turnChanges: [ChangedFile] = []
+    @ObservationIgnored var turnChangesInFlight = false
+    @ObservationIgnored let snapshots = TurnSnapshots()
+    @ObservationIgnored let turnStore = TurnStore()
     @ObservationIgnored var reviewPopover: NSPopover?
     @ObservationIgnored var reviewPopoverCloser: NSObjectProtocol?
     var changes: [ChangedFile] = []
@@ -184,6 +190,7 @@ final class AppModel {
         guard !didFinishLaunching else { return }
         didFinishLaunching = true
         editorBridge.start()
+        loadTurns()
         // Whatever isn't in a tab any more has nothing to come back to.
         TerminalSessions.endAll(except: Set(workspaces.flatMap { $0.items.map(\.id) }))
         router.install(model: self)
@@ -420,7 +427,7 @@ final class AppModel {
         case .settings:
             controller = SettingsController(itemID: id, model: self)
         case .diff(let spec):
-            controller = DiffController(itemID: id, path: spec.path, model: self)
+            controller = DiffController(itemID: id, path: spec.path, turn: spec.turn, model: self)
         case .web(let spec):
             guard let url = URL(string: spec.url) else { return nil }
             controller = WebController(itemID: id, url: url, forceDark: spec.forceDark, isFile: false, model: self)
@@ -1012,8 +1019,11 @@ final class AppModel {
         NSApp?.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
     }
 
-    func handleHookReport(item id: ItemID, tool: String?, state: String?, message: String?, session: String?) {
+    func handleHookReport(item id: ItemID, tool: String?, state: String?, message: String?, session: String?,
+                          turn: String? = nil, prompt: String? = nil) {
         if let tool, case .terminal(let spec)? = anyItem(id)?.content, !spec.acceptsHook(from: tool) { return }
+        if turn == AgentHookEvent.Turn.start.rawValue { turnStarted(item: id, prompt: prompt) }
+        if turn == AgentHookEvent.Turn.end.rawValue { turnEnded(item: id) }
         if let session, !session.isEmpty {
             if let index = workspaces.firstIndex(where: { $0.item(id) != nil }) {
                 workspaces[index].updateItem(id) { item in
@@ -1651,6 +1661,8 @@ final class AppModel {
         if changesWorkspace != activeID {
             changesWorkspace = activeID
             changes = []
+            turnChanges = []
+            changesScope = .sinceCommit
             repositories = []
             repositoryTokens = [:]
         }
@@ -1682,6 +1694,7 @@ final class AppModel {
                 guard let self else { return }
                 self.changesInFlight = false
                 self.refreshReviewLines()
+                self.refreshTurnChanges()
                 if self.activeID == workspace, self.changes != found { self.changes = found }
                 if self.activeID == workspace, self.repositories != repositories {
                     self.repositories = repositories
@@ -1805,14 +1818,14 @@ final class AppModel {
         }
     }
 
-    func openDiff(path: String, preview: Bool) {
-        updateActive { $0.dismissPeek(); $0.openDiff(path: path, preview: preview) }
+    func openDiff(path: String, preview: Bool, turn: String? = nil) {
+        updateActive { $0.dismissPeek(); $0.openDiff(path: path, preview: preview, turn: turn) }
         requestFocus()
     }
 
     /// Takes the Peek's place. With `takeFocus`, a person asked. Without it, an agent is showing something.
-    func peekDiff(path: String, takeFocus: Bool) {
-        updateActive { $0.peekDiff(path: path) }
+    func peekDiff(path: String, takeFocus: Bool, turn: String? = nil) {
+        updateActive { $0.peekDiff(path: path, turn: turn) }
         peekHasKeyboard = takeFocus
         requestFocus()
     }

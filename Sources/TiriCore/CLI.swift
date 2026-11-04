@@ -105,8 +105,14 @@ public enum CLIParser {
             return request("select", payload)
 
         case "changes":
-            guard args.isEmpty else { throw UsageError("usage: tiri changes") }
-            return request("changes")
+            var options = Options(args)
+            let turn = try options.value("--turn")
+            try options.finish()
+            return request("changes", turn.map { ["turn": .string($0)] } ?? [:])
+
+        case "turns":
+            guard args.isEmpty else { throw UsageError("usage: tiri turns") }
+            return request("turns")
 
         case "git":
             guard args.isEmpty else { throw UsageError("usage: tiri git") }
@@ -115,10 +121,12 @@ public enum CLIParser {
         case "diff":
             var options = Options(args)
             let tab = options.flag("--tab")
-            guard let raw = options.positional() else { throw UsageError("usage: tiri diff <path> [--tab]") }
+            let turn = try options.value("--turn")
+            guard let raw = options.positional() else { throw UsageError("usage: tiri diff <path> [--tab] [--turn <id|latest>]") }
             try options.finish()
             var payload: [String: JSONValue] = ["path": .string(absolute(raw, cwd: environment.cwd))]
             if tab { payload["mode"] = "tab" }
+            if let turn { payload["turn"] = .string(turn) }
             return request("diff", payload)
 
         case "review":
@@ -265,6 +273,8 @@ public enum CLIParser {
             if let state = event.state { body["state"] = .string(state) }
             if let message = event.message { body["message"] = .string(message) }
             if let session = event.sessionID { body["session"] = .string(session) }
+            if let turn = event.turn { body["turn"] = .string(turn.rawValue) }
+            if let prompt = event.prompt { body["prompt"] = .string(prompt) }
             body["hook"] = true
             return request("notify", body)
 
@@ -391,9 +401,10 @@ public enum CLIParser {
       tiri web-dark on|off [<item-id>]
       tiri search <text>           (across the workspace's files, as ⌘⇧F does)
       tiri select <item-id> <text> [--to <text>]   (select it in a file, diff or page, to point at it)
-      tiri changes                 (files changed since the last commit)
+      tiri changes [--turn <id|latest>]   (files changed since the last commit, or in one agent's turn)
+      tiri turns                   (agents' recent turns)
       tiri git                     (each repository's branch, and commits to pull and push)
-      tiri diff <path> [--tab]     (what changed in one file; floats as a Peek)
+      tiri diff <path> [--tab] [--turn <id|latest>]   (what changed in one file; floats as a Peek)
       tiri review [add <path>[:line[-line]] <text> | remove <id> | clear | send [--to <item-id>]]
                                    (comments waiting to go to an agent, all at once)
       tiri follow <item-id> <row> <col>
@@ -595,6 +606,9 @@ public enum AgentGuide {
 
     ```sh
     tiri changes                          # files changed since the last commit
+    tiri turns                            # recent turns, yours and other agents'
+    tiri changes --turn latest            # what the latest turn changed
+    tiri diff src/app.ts --turn latest    # one file's changes in it
     tiri git                              # each repository's branch, and commits to pull and push
     tiri diff src/app.ts                  # floats what changed over your terminal
     tiri diff src/app.ts --tab            # or keeps it as a tab

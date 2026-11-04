@@ -655,7 +655,7 @@ private func file(_ name: String, preview: Bool = false) -> Item {
         #expect(claude(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#)?.state == "working")
         #expect(claude(#"{"hook_event_name":"PostToolUse"}"#)?.state == "working")
         #expect(claude(#"{"hook_event_name":"PermissionRequest","tool_name":"Bash"}"#) == AgentHookEvent(state: "needs-input", message: "Wants to use Bash"))
-        #expect(claude(#"{"hook_event_name":"Stop","last_assistant_message":"All done.\nMore."}"#) == AgentHookEvent(state: "done", message: "All done."))
+        #expect(claude(#"{"hook_event_name":"Stop","last_assistant_message":"All done.\nMore."}"#) == AgentHookEvent(state: "done", message: "All done.", turn: .end))
     }
 
     @Test func claudeIdleNotificationDoesNotAskForAttention() {
@@ -669,7 +669,7 @@ private func file(_ name: String, preview: Bool = false) -> Item {
     }
 
     @Test func claudeFailureEndsTheTurn() {
-        #expect(claude(#"{"hook_event_name":"StopFailure","error":"rate limited"}"#) == AgentHookEvent(state: "done", message: "rate limited"))
+        #expect(claude(#"{"hook_event_name":"StopFailure","error":"rate limited"}"#) == AgentHookEvent(state: "done", message: "rate limited", turn: .end))
     }
 
     @Test func garbageIsIgnored() {
@@ -679,7 +679,7 @@ private func file(_ name: String, preview: Bool = false) -> Item {
     }
 
     @Test func codexNotifyAndHooks() {
-        #expect(codex(#"{"type":"agent-turn-complete","thread-id":"t1","last-assistant-message":"Done"}"#) == AgentHookEvent(state: "done", message: "Done", sessionID: "t1"))
+        #expect(codex(#"{"type":"agent-turn-complete","thread-id":"t1","last-assistant-message":"Done"}"#) == AgentHookEvent(state: "done", message: "Done", sessionID: "t1", turn: .end))
         #expect(codex(#"{"hook_event_name":"PermissionRequest","tool_name":"shell"}"#)?.state == "needs-input")
         #expect(codex(#"{"hook_event_name":"Interrupt"}"#)?.state == "done")
     }

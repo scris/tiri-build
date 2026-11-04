@@ -103,6 +103,8 @@ extension AppModel {
                 if let repository = model.frontRepository { model.confirmPush(repository) }
             },
             AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
+            AppCommand(id: "changesSinceCommit", title: "Changes: Since Last Commit", category: "View") { $0.setChangesScope(.sinceCommit) },
+            AppCommand(id: "changesLatestTurn", title: "Changes: Latest Turn", category: "View") { $0.setChangesScope(.latestTurn) },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 model.frontWebController?.reload()
             },
@@ -172,6 +174,18 @@ enum ControlHandler {
     static func handle(_ request: ControlRequest) async -> ControlResponse {
         let touched = paths(in: request)
         if !touched.isEmpty { _ = await FolderAccess.deniedPaths(touched) }
+        // Looking at a turn can mean snapshotting the files. The app keeps responding while it does.
+        if request.cmd == "changes", let wanted = request.args["turn"]?.stringValue {
+            let (turn, folders, snapshots) = await MainActor.run { () -> (AgentTurn?, [String], TurnSnapshots) in
+                let model = AppModel.shared
+                return (model.turns.resolving(wanted == "latest" ? .latestTurn : .turn(wanted), in: model.activeID), model.active.folders, model.snapshots)
+            }
+            guard let turn else { return ControlResponse.failure(id: request.id, "No such turn. Run tiri turns.") }
+            let found = await Task.detached(priority: .userInitiated) { snapshots.changes(in: turn, folders: folders) }.value
+            return ControlResponse.success(id: request.id, .array(found.map { change in
+                .object(["status": .string(change.status.letter), "path": .string(change.path)])
+            }))
+        }
         // These read a lot of files. The app keeps responding while they do.
         if request.cmd == "search", let query = request.args["query"]?.stringValue {
             let paths = await AppModel.shared.searchablePaths()
@@ -432,7 +446,9 @@ enum ControlHandler {
             model.handleHookReport(item: id, tool: request.args["tool"]?.stringValue,
                                    state: request.args["state"]?.stringValue,
                                    message: request.args["message"]?.stringValue,
-                                   session: request.args["session"]?.stringValue)
+                                   session: request.args["session"]?.stringValue,
+                                   turn: request.args["turn"]?.stringValue,
+                                   prompt: request.args["prompt"]?.stringValue)
             return .object(["item": .string(id), "status": .string(model.runtimes[id]?.status.rawValue ?? "idle")])
 
         case "settings.list", "settings.explain":
@@ -567,12 +583,27 @@ enum ControlHandler {
                 return .object(object)
             })
 
+        case "turns":
+            return .array(model.turns.filter { $0.workspace == model.activeID }.map { turn in
+                var object: [String: JSONValue] = ["id": .string(turn.id), "item": .string(turn.item), "title": .string(turn.title),
+                                                   "state": .string(turn.isOpen ? "working" : (turn.changedNothing ? "no changes" : "done"))]
+                if let prompt = turn.prompt { object["prompt"] = .string(prompt) }
+                return .object(object)
+            })
+
         case "diff":
             let path = try string(request, "path")
+            var turn: String?
+            if let wanted = request.args["turn"]?.stringValue {
+                guard let found = model.turns.resolving(wanted == "latest" ? .latestTurn : .turn(wanted), in: model.activeID) else {
+                    throw ControlFailure("No such turn. Run tiri turns.")
+                }
+                turn = found.id
+            }
             if request.args["mode"]?.stringValue == "tab" {
-                model.openDiff(path: path, preview: false)
+                model.openDiff(path: path, preview: false, turn: turn)
             } else {
-                model.peekDiff(path: path, takeFocus: false)
+                model.peekDiff(path: path, takeFocus: false, turn: turn)
             }
             return .object([:])
 

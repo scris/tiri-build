@@ -66,7 +66,12 @@ public struct FileSpec: Codable, Hashable, Sendable {
 /// What changed in a file, compared with the last commit.
 public struct DiffSpec: Codable, Hashable, Sendable {
     public var path: String
-    public init(path: String) { self.path = path }
+    /// One agent's turn, rather than everything since the last commit.
+    public var turn: String?
+    public init(path: String, turn: String? = nil) {
+        self.path = path
+        self.turn = turn
+    }
 }
 
 public struct WebSpec: Codable, Hashable, Sendable {
@@ -129,7 +134,7 @@ public struct Item: Codable, Hashable, Identifiable, Sendable {
         case .settings:
             return "Settings"
         case .diff(let spec):
-            return (spec.path as NSString).lastPathComponent + " (changes)"
+            return (spec.path as NSString).lastPathComponent + (spec.turn == nil ? " (changes)" : " (turn)")
         }
     }
 }
@@ -414,25 +419,25 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
         items.first { $0.filePath == path }
     }
 
-    public func diffItem(path: String) -> Item? {
-        items.first { $0.content == .diff(DiffSpec(path: path)) }
+    public func diffItem(path: String, turn: String? = nil) -> Item? {
+        items.first { $0.content == .diff(DiffSpec(path: path, turn: turn)) }
     }
 
     @discardableResult
-    public mutating func openDiff(path: String, preview: Bool) -> ItemID {
-        if let existing = diffItem(path: path) {
+    public mutating func openDiff(path: String, preview: Bool, turn: String? = nil) -> ItemID {
+        if let existing = diffItem(path: path, turn: turn) {
             if !preview { pin(existing.id) }
             activate(existing.id)
             return existing.id
         }
-        let item = Item(content: .diff(DiffSpec(path: path)), isPreview: preview)
+        let item = Item(content: .diff(DiffSpec(path: path, turn: turn)), isPreview: preview)
         addItem(item, split: nil)
         return item.id
     }
 
     @discardableResult
-    public mutating func peekDiff(path: String) -> ItemID {
-        let item = Item(content: .diff(DiffSpec(path: path)))
+    public mutating func peekDiff(path: String, turn: String? = nil) -> ItemID {
+        let item = Item(content: .diff(DiffSpec(path: path, turn: turn)))
         peek = item
         return item.id
     }

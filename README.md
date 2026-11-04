@@ -75,6 +75,8 @@ Explorer, Changes and Open Items each fold: click a section's name. What's still
 
 When a workspace folder is in a Git repository, the sidebar has a **Changes** section listing every file changed since the last commit, live as your agents work. Click one to see its diff as a tab, or double-click to keep it. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. They work the same in a Peek. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.
 
+Since the last commit can cover a lot, so the same section can show what one agent's turn changed. Choose **Latest Turn** or a particular prompt from the menu in its header. Tiri takes a snapshot when an agent takes your prompt and another when it stops, using the hooks in Agent Status. The snapshots stay in Tiri's own folder for a week, and nothing changes in your repository: no branch, stash, staged change or new object. If two agents work in one repository at the same time, a turn can include the other's edits, and Tiri says so. Codex only reports when it stops, so its first turn gives Tiri somewhere to start from, and the turns after that show up. `tiri turns`, `tiri changes --turn latest` and `tiri diff src/app.ts --turn latest` do the same for agents.
+
 The bar along the bottom of the window shows each repository's branch, a `*` if it has uncommitted changes, and how many commits there are to pull and push, like `feat/login* 2↓ 3↑`. The counts follow commits and pushes from your terminals.
 
 - The arrows button fetches. Tiri never fetches by itself, so `0↓` means nothing was new at the last fetch.

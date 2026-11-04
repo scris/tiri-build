@@ -319,11 +319,19 @@ public struct AgentHookEvent: Equatable, Sendable {
     public var state: String?
     public var message: String?
     public var sessionID: String?
+    /// Whether this is where an agent's turn starts or ends, for "what did this turn change".
+    public var turn: Turn?
+    /// What you asked for, to tell turns apart.
+    public var prompt: String?
 
-    public init(state: String? = nil, message: String? = nil, sessionID: String? = nil) {
+    public enum Turn: String, Sendable { case start, end }
+
+    public init(state: String? = nil, message: String? = nil, sessionID: String? = nil, turn: Turn? = nil, prompt: String? = nil) {
         self.state = state
         self.message = message
         self.sessionID = sessionID
+        self.turn = turn
+        self.prompt = prompt
     }
 
     private static func snippet(_ text: String?) -> String? {
@@ -350,7 +358,9 @@ public struct AgentHookEvent: Equatable, Sendable {
         case "SessionStart":
             // A session that's just opened is waiting for you, whatever its startup output looked like.
             return AgentHookEvent(state: "idle", sessionID: session)
-        case "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart":
+        case "UserPromptSubmit":
+            return AgentHookEvent(state: "working", sessionID: session, turn: .start, prompt: object["prompt"] as? String)
+        case "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart":
             return AgentHookEvent(state: "working", sessionID: session)
         case "PermissionRequest":
             let tool = object["tool_name"] as? String
@@ -365,9 +375,9 @@ public struct AgentHookEvent: Equatable, Sendable {
             if let tasks = object["background_tasks"] as? [Any], !tasks.isEmpty {
                 return AgentHookEvent(state: "working", sessionID: session)
             }
-            return AgentHookEvent(state: "done", message: snippet(object["last_assistant_message"] as? String), sessionID: session)
+            return AgentHookEvent(state: "done", message: snippet(object["last_assistant_message"] as? String), sessionID: session, turn: .end)
         case "StopFailure":
-            return AgentHookEvent(state: "done", message: snippet(object["error"] as? String) ?? "Stopped with an error", sessionID: session)
+            return AgentHookEvent(state: "done", message: snippet(object["error"] as? String) ?? "Stopped with an error", sessionID: session, turn: .end)
         default:
             return session == nil ? nil : AgentHookEvent(sessionID: session)
         }
@@ -379,17 +389,19 @@ public struct AgentHookEvent: Equatable, Sendable {
         let session = (object["thread-id"] as? String) ?? (object["session_id"] as? String)
         if let type = object["type"] as? String {
             if type == "agent-turn-complete" {
-                return AgentHookEvent(state: "done", message: snippet(object["last-assistant-message"] as? String), sessionID: session)
+                return AgentHookEvent(state: "done", message: snippet(object["last-assistant-message"] as? String), sessionID: session, turn: .end)
             }
             return session == nil ? nil : AgentHookEvent(sessionID: session)
         }
         switch object["hook_event_name"] as? String {
         case "PermissionRequest":
             return AgentHookEvent(state: "needs-input", message: (object["tool_name"] as? String).map { "Wants to use \($0)" }, sessionID: session)
-        case "UserPromptSubmit", "PreToolUse", "PostToolUse":
+        case "UserPromptSubmit":
+            return AgentHookEvent(state: "working", sessionID: session, turn: .start, prompt: object["prompt"] as? String)
+        case "PreToolUse", "PostToolUse":
             return AgentHookEvent(state: "working", sessionID: session)
         case "Interrupt":
-            return AgentHookEvent(state: "done", message: "Interrupted", sessionID: session)
+            return AgentHookEvent(state: "done", message: "Interrupted", sessionID: session, turn: .end)
         default:
             return session == nil ? nil : AgentHookEvent(sessionID: session)
         }

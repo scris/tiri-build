@@ -112,6 +112,10 @@ case "changes":
     for entry in response.result?.arrayValue ?? [] {
         print([cell(entry["status"]), cell(entry["path"])].joined(separator: "\t"))
     }
+case "turns":
+    for entry in response.result?.arrayValue ?? [] {
+        print([cell(entry["id"]), cell(entry["state"]), cell(entry["title"]), cell(entry["prompt"])].joined(separator: "\t"))
+    }
 case "settings.list":
     for entry in response.result?.arrayValue ?? [] {
         print([cell(entry["key"]), cell(entry["display"])].joined(separator: "\t"))
