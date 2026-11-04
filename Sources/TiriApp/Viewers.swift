@@ -1186,7 +1186,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         }
         let lineRange = string.lineRange(for: NSRange(location: min(location, string.length), length: 0))
         let cursor = min(location + max((col ?? 1) - 1, 0), NSMaxRange(lineRange))
-        textView.setSelectedRange(col == nil ? lineRange : NSRange(location: cursor, length: 0))
+        // A cursor, not a selection: going to a line isn't choosing it. A selection brings up Quote in
+        // Agent, tells Claude about it, and the next key typed would replace the line.
+        textView.setSelectedRange(NSRange(location: cursor, length: 0))
         textView.scrollRangeToVisible(lineRange)
         // Long lines shouldn't drag the view sideways and hide their own beginning.
         if col == nil {
@@ -1481,6 +1483,9 @@ final class LineGutter: NSView {
         }
         observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main, using: redraw))
         observers.append(center.addObserver(forName: NSTextView.didChangeSelectionNotification, object: textView, queue: .main, using: redraw))
+        // The text view has no height until its text is laid out. Numbers drawn before that stop at the first.
+        textView.postsFrameChangedNotifications = true
+        observers.append(center.addObserver(forName: NSView.frameDidChangeNotification, object: textView, queue: .main, using: redraw))
     }
 
     isolated deinit {
