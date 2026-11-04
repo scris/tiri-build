@@ -21,12 +21,13 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
 | By hand, with the keyboard and mouse in a focused window | Tested on a virtual display without taking your screen, so these never had a real press: Shift+Enter and Option+Enter in Claude Code, ⌘V with a picture or a copied file, drag and drop, the paperclip's picker, ⌘-clicking a path | Try each one once |
 | Sessions over days, and across a reboot | Quit and relaunch are tested on a real Claude session. A long run isn't | Use it |
-| Your own Install click for hooks | The installer ran through its real yes against an isolated config, and a real Claude session ran with the hooks passed for that session only. Status and session ID both arrived. Your real config waits for your click, because it's yours and a safety hook rightly stops an agent editing it | Settings, Agent Status, Install |
-| Resume by session ID on a real session | Depends on the hooks above. `claude --continue` is verified on a real session | Same as above, then relaunch |
+| Resume by session ID on a real session | A relaunch reattaches to the running session, so this only happens after a reboot. The stored ID itself is verified across a relaunch, and `claude --continue` on a real session | Reboot, then see that the agent comes back |
 | Clicking a native notification | Needs the system permission prompt answered. In-app toasts and badges are verified | Allow notifications, then run `tiri notify done --item <id>` in a terminal in another workspace |
 | Codex hooks, and a Codex turn | Its composer is tested with lines and an image, unsent. Hook payloads are tested with documented-format JSON | Settings, Agent Status, then run a session |
 | Seeing the folder panel, and a real ⌘-click on a path | Tested without taking your screen: the panel through accessibility, and the click through `tiri follow`, which runs the same code. An unfocused window doesn't draw the panel or take clicks | Open Tiri, press +, choose Claude Code; then ⌘-click a path |
 | Ask Claude Code against the real agent | Tested with a stand-in command, to avoid a real session on your account | Press Ask Claude Code on the Settings tab |
+| Pressing the agent buttons on the empty screen, and agents appearing after you install one | Buttons don't take clicks in an unfocused window, so tested without taking your screen through the palette command, which runs the same code. Coming back to the app needs real focus | New workspace, press Claude Code, choose a folder |
+| A `codex exec` inside a Claude terminal | Covered by unit tests only, to avoid a real Codex run | Ask a Claude session to run one, then check `tiri items` |
 | Reduce Transparency, Increase Contrast | Left to the system's glass, as the spec asks, but not exercised | Turn them on in Accessibility settings |
 | Terminal translucency setting | Implemented, not looked at | Set `terminal.translucent` |
 
@@ -42,6 +43,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Agent input:** selections reach Claude Code through its editor protocol. ⌘L, paste, drag and a picker add lines, files and images to Claude Code or Codex.
 - **Changes:** a sidebar section and diff items in the main window, live, in tabs and Peeks, with `tiri changes` and `tiri diff`. Read-only: no staging or committing.
 - **Path search:** a path that doesn't exist as written is searched for across the workspace's folders, its terminals' folders and its open files. One match opens, several offer a choice, none shows a toast. Never an alert.
+- **First run:** the empty screen offers the agents the user's own shell can find, or links to get them. Settings can link `tiri` into `~/.local/bin` for other terminals.
 - **Tree → terminal:** drag inserts a shell-quoted path.
 - **Agent attention:** status on the tab, item list and workspace switcher, toasts, dock badge, jump to next (⌘⇧U), hooks, fallback estimate when there are no hooks.
 - **Session restore:** layout, cwd and terminals. Agents resume. Other commands wait typed at the prompt, so nothing like `./deploy.sh` re-runs by itself.

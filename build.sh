@@ -30,6 +30,8 @@ codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Resources/bi
 codesign --force --sign "$IDENTITY" --timestamp=none "$APP"
 
 mkdir -p "$HOME/.local/bin"
+# Removed first: if Settings put a link here, copying would write into the app it points at.
+rm -f "$HOME/.local/bin/tiri"
 cp "$BIN_DIR/tiri" "$HOME/.local/bin/tiri"
 codesign --force --sign - --timestamp=none "$HOME/.local/bin/tiri"
 

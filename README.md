@@ -65,7 +65,7 @@ When a workspace folder is in a Git repository, the sidebar has a **Changes** se
 
 ## Start with a folder
 
-Nothing runs until you've said where. A new workspace asks for its folder first, and so does the first terminal or agent in a workspace without one. In a workspace with several folders, the **+** menu asks which folder a new terminal or agent should use, and ⌃\` uses the folder of what you're looking at.
+Nothing runs until you've said where. A new workspace shows the agents your shell can find: press one, choose its folder, and it starts there. If it can't find any, it links to where to get them, and they appear when you come back. Any other first terminal or agent in a workspace without a folder asks too. In a workspace with several folders, the **+** menu asks which folder a new terminal or agent should use, and ⌃\` uses the folder of what you're looking at.
 
 ## The Peek
 
@@ -120,15 +120,17 @@ tiri theme dark
 
 Run `tiri --help` for all commands, or `tiri --skill` for a guide written for agents. Terminals inside Tiri have `TIRI_SOCKET`, `TIRI_WORKSPACE` and `TIRI_ITEM_ID` set.
 
+`tiri` works in every terminal inside Tiri. To use it in your other terminals, go to Settings, Command Line, and press Install. That adds a link at `~/.local/bin/tiri`, which keeps working when the app updates. If your shell doesn't look there, Tiri gives you the line to add.
+
 ## Show agent status
 
 Hooks tell Tiri exactly when an agent is working, waiting for you or done, and let it resume exactly the right conversation after a relaunch. The status shows on the tab, in the item list and on the workspace switcher, and you get a notification if you aren't looking at that terminal.
 
 Without hooks, Tiri estimates status from terminal activity, which is less precise.
 
-**Turning them on:** Settings has an Agent Status section with an Install button for Claude Code and Codex, and Tiri offers the first time it sees one run. Your agent can start it too, with `tiri hooks install claude`. Either way Tiri shows what it will add and waits for your yes. It keeps your other hooks and settings, leaves a copy of the file next to it, and can remove its entries again.
-
 A `claude -p` run doesn't report, whether a session or a script started it, so it can't change the tab's status or which conversation comes back after a relaunch. Neither can one agent running inside another's terminal.
+
+**Turning them on:** Settings has an Agent Status section with an Install button for Claude Code and Codex, and Tiri offers the first time it sees one run. Your agent can start it too, with `tiri hooks install claude`. Either way Tiri shows what it will add and waits for your yes. It keeps your other hooks and settings, leaves a copy of the file next to it, and can remove its entries again.
 
 Outside Tiri these hooks do nothing and print nothing, so they're safe to leave on. Codex asks you to trust hooks once, in `/hooks`.
 

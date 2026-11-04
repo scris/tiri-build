@@ -55,6 +55,9 @@ extension AppModel {
             AppCommand(id: "themeSystem", title: "Theme: Follow System", category: "Preferences") { $0.setTheme(.system) },
             AppCommand(id: "themeLight", title: "Theme: Light", category: "Preferences") { $0.setTheme(.light) },
             AppCommand(id: "themeDark", title: "Theme: Dark", category: "Preferences") { $0.setTheme(.dark) },
+            AppCommand(id: "installCommandLine", title: "Install tiri Command for Other Terminals…", category: "Preferences") {
+                $0.confirmCommandLineTool(install: true)
+            },
             AppCommand(id: "newWorkspace", title: "New Workspace…", category: "Workspace") { $0.newWorkspaceInteractive() },
             AppCommand(id: "addFolder", title: "Add Folder to Workspace…", category: "Workspace") { $0.addFolderInteractive() },
             AppCommand(id: "importWorkspace", title: "Import .code-workspace…", category: "Workspace") { $0.importWorkspaceInteractive() },

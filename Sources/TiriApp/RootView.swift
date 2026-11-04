@@ -400,13 +400,16 @@ struct EmptyGroupView: View {
     var body: some View {
         Group {
             if model.active.folders.isEmpty {
-                chooseFolder
+                start
             } else {
-                VStack(spacing: 8) {
-                    row("Open a file", "quickOpen")
-                    row("New terminal", "newTerminal")
-                    row("All commands", "commandPalette")
-                    row("Toggle sidebar", "toggleSidebar")
+                VStack(spacing: 22) {
+                    agentButtons
+                    VStack(spacing: 8) {
+                        row("Open a file", "quickOpen")
+                        row("New terminal", "newTerminal")
+                        row("All commands", "commandPalette")
+                        row("Toggle sidebar", "toggleSidebar")
+                    }
                 }
             }
         }
@@ -415,23 +418,68 @@ struct EmptyGroupView: View {
         .contextMenu {
             Button("New Terminal") { model.startTerminal() }
         }
+        // Coming back from installing an agent should show it without a relaunch.
+        .onAppear { model.refreshAvailableCommands() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.refreshAvailableCommands()
+        }
     }
 
-    private var chooseFolder: some View {
-        VStack(spacing: 14) {
-            VStack(spacing: 4) {
-                Text("Choose a folder to start")
-                    .font(.title3.weight(.semibold))
-                Text("Terminals and agents in this workspace work in the folder you choose.")
-                    .foregroundStyle(.secondary)
-            }
-            Button("Choose Folder…") {
-                model.chooseFolderForActiveWorkspace { folder in
-                    model.newTerminal(cwd: folder)
+    /// One folder or none: the button starts the agent, asking for a folder first if it has to.
+    /// Several: it asks which, as the toolbar's + does.
+    @ViewBuilder
+    private var agentButtons: some View {
+        let presets = model.runnableAgentPresets()
+        if !presets.isEmpty {
+            HStack(spacing: 10) {
+                ForEach(presets) { preset in
+                    if model.active.folders.count > 1 {
+                        Menu(preset.name) {
+                            ForEach(model.active.folders, id: \.self) { folder in
+                                Button((folder as NSString).lastPathComponent) { model.newTerminal(command: preset.command, cwd: folder) }
+                            }
+                        }
+                        .fixedSize()
+                    } else {
+                        Button(model.active.folders.isEmpty ? preset.name + "…" : preset.name) {
+                            model.startTerminal(command: preset.command)
+                        }
+                        .buttonStyle(.glassProminent)
+                    }
                 }
             }
-            .buttonStyle(.glassProminent)
             .controlSize(.large)
+        }
+    }
+
+    private var start: some View {
+        let noAgents = model.availableCommands != nil && model.runnableAgentPresets().isEmpty
+        return VStack(spacing: 16) {
+            VStack(spacing: 4) {
+                Text(noAgents ? "No agents found" : "Start an agent")
+                    .font(.title3.weight(.semibold))
+                Text(noAgents
+                     ? "Tiri works with the CLI agents you already use, and your shell can't find one yet. Once you've installed one, it appears here."
+                     : "Choose the folder it works in, and it starts there.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 380)
+            }
+            if noAgents {
+                HStack(spacing: 18) {
+                    Link("Get Claude Code", destination: URL(string: "https://claude.com/product/claude-code")!)
+                    Link("Get Codex", destination: URL(string: "https://github.com/openai/codex")!)
+                }
+            } else {
+                agentButtons
+            }
+            HStack(spacing: 18) {
+                Button("Shell…") { model.startTerminal() }
+                Button("Just Open a Folder…") {
+                    model.chooseFolderForActiveWorkspace { _ in }
+                }
+            }
+            .buttonStyle(.link)
         }
     }
 }

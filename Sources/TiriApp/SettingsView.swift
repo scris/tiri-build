@@ -74,6 +74,7 @@ struct SettingsView: View {
                 }
                 if query.trimmingCharacters(in: .whitespaces).isEmpty {
                     AgentHooksSection()
+                    CommandLineSection()
                 }
                 if !commands.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -264,6 +265,42 @@ struct AgentHooksSection: View {
                     .padding(.vertical, 9)
                 }
             }
+            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
+        }
+    }
+}
+
+struct CommandLineSection: View {
+    @Environment(AppModel.self) private var model
+
+    private var path: String { (model.commandLineLink.path as NSString).abbreviatingWithTildeInPath }
+
+    private var detail: String {
+        switch model.commandLineState() {
+        case .installed: "Works in your other terminals too, through a link at \(path)."
+        case .notInstalled: "Works in every terminal inside Tiri. This adds it to your other terminals, at \(path)."
+        case .stale: "The link at \(path) points to a copy of Tiri that has moved. Install fixes it."
+        case .otherFile: "There's another file at \(path). Install replaces it with a link to this copy of Tiri."
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Command Line").font(.headline)
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("tiri command")
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                let installed = model.commandLineState() == .installed
+                Button(installed ? "Remove" : "Install…") { model.confirmCommandLineTool(install: !installed) }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
             .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
         }
     }

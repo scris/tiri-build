@@ -1784,6 +1784,119 @@ final class AppModel {
         }
     }
 
+    // MARK: What's installed
+
+    /// The first word of each New Terminal preset that the user's shell can run. Nil until the
+    /// shell has answered, or if it didn't, so nothing is hidden on a guess.
+    private(set) var availableCommands: Set<String>?
+    private var isLookingUpCommands = false
+
+    func agentPresets() -> [TerminalPreset] {
+        settings.terminalPresets.filter { !$0.command.isEmpty }
+    }
+
+    static func tool(of preset: TerminalPreset) -> String {
+        preset.command.split(separator: " ").first.map(String.init) ?? preset.command
+    }
+
+    /// Agents that can start, as far as anyone knows. Commands that aren't plain names can't be asked about.
+    func runnableAgentPresets() -> [TerminalPreset] {
+        guard let availableCommands else { return agentPresets() }
+        return agentPresets().filter {
+            let tool = Self.tool(of: $0)
+            return availableCommands.contains(tool) || !ShellLookup.isPlainName(tool)
+        }
+    }
+
+    /// Called while the screen that needs it is up, including on coming back from installing one.
+    func refreshAvailableCommands() {
+        guard !isLookingUpCommands else { return }
+        let names = agentPresets().map(Self.tool(of:)) + ["tiri"]
+        if let availableCommands, availableCommands.isSuperset(of: names) { return }
+        isLookingUpCommands = true
+        let shell = settings.terminalShell.isEmpty
+            ? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            : settings.terminalShell
+        Task {
+            let found = await ShellLookup.run(names: names, shell: shell)
+            isLookingUpCommands = false
+            availableCommands = found
+        }
+    }
+
+    // MARK: The tiri command
+
+    var commandLineLink: URL { CommandLineTool.link() }
+
+    var bundledCommandLineTool: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("bin/tiri")
+    }
+
+    func commandLineState() -> CommandLineTool.State {
+        _ = hooksRevision
+        guard let bundled = bundledCommandLineTool else { return .notInstalled }
+        return CommandLineTool.state(link: commandLineLink, bundled: bundled)
+    }
+
+    /// Your home folder, so nothing changes until you say yes here.
+    func confirmCommandLineTool(install: Bool) {
+        guard let window, let bundled = bundledCommandLineTool else { return }
+        if install, let problem = CommandLineTool.problem(appPath: Bundle.main.bundlePath) {
+            showToast(title: "Can't install the tiri command yet", detail: problem, symbol: "exclamationmark.triangle", tint: .orange)
+            return
+        }
+        let link = commandLineLink
+        let path = (link.path as NSString).abbreviatingWithTildeInPath
+        let replacing = commandLineState() == .otherFile
+        let alert = NSAlert()
+        if install {
+            alert.messageText = "Use tiri in your other terminals?"
+            alert.informativeText = "Tiri adds a link at \(path). It follows the app when you update, and Settings can remove it."
+                + (replacing ? "\n\nThis replaces the file already at that path." : "")
+            alert.addButton(withTitle: replacing ? "Replace" : "Install")
+        } else {
+            alert.messageText = "Remove the tiri command?"
+            alert.informativeText = "Tiri removes the link at \(path). Terminals inside Tiri keep their own."
+            alert.addButton(withTitle: "Remove")
+        }
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn, let self else { return }
+                do {
+                    if install {
+                        try CommandLineTool.install(link: link, bundled: bundled)
+                    } else {
+                        try CommandLineTool.remove(link: link)
+                    }
+                    self.hooksRevision += 1
+                    if install { self.reportCommandLineInstalled(link: link) }
+                } catch {
+                    self.showToast(title: "Couldn't change the tiri command", detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
+                }
+            }
+        }
+    }
+
+    /// Tiri doesn't edit shell setup files, so if the folder isn't on the PATH, it says what to add.
+    private func reportCommandLineInstalled(link: URL) {
+        let shell = settings.terminalShell.isEmpty
+            ? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+            : settings.terminalShell
+        Task {
+            let found = await ShellLookup.run(names: ["tiri"], shell: shell)
+            if found?.contains("tiri") == false {
+                let line = "export PATH=\"$HOME/.local/bin:$PATH\""
+                showToast(title: "One more step for the tiri command",
+                          detail: "Your shell doesn't look in ~/.local/bin yet. Copy this line into its setup file.",
+                          symbol: "terminal", tint: .accentColor, actionTitle: "Copy Line") { Clipboard.copy(line) }
+            } else {
+                showToast(title: "tiri works in your other terminals", detail: "New terminals will have it.",
+                          symbol: "checkmark.circle.fill", tint: .green)
+            }
+        }
+    }
+
     // MARK: Keyboard shortcuts
 
     /// Saves a shortcut, or removes it if the key is nil. Returns why it couldn't, if it couldn't.
