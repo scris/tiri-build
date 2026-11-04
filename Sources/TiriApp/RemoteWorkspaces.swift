@@ -74,9 +74,8 @@ final class RemoteManager {
     func connection(_ destination: String) -> RemoteConnection {
         if let existing = connections[destination] { return existing }
         TerminalSessions.prepareDirectory()
-        let hash = SHA256.hash(data: Data(destination.utf8)).prefix(5).map { String(format: "%02x", $0) }.joined()
         let resources = Bundle.main.resourceURL?.appendingPathComponent("remote").path ?? ""
-        let connection = RemoteConnection(destination: destination, controlPath: TerminalSessions.directory + "/s-" + hash,
+        let connection = RemoteConnection(destination: destination, controlPath: controlPath(for: destination),
                                           helperDirectory: resources, askpass: resources + "/tiri-askpass", controlSocket: TiriPaths.socket, machineTag: machineTag)
         connection.onRelayRequest = { body in
             guard let request = try? JSONDecoder().decode(RemoteRelayMessage.Request.self, from: body) else {
@@ -111,6 +110,11 @@ final class RemoteManager {
 
     func existingConnection(_ destination: String) -> RemoteConnection? { connections[destination] }
 
+    private func controlPath(for destination: String) -> String {
+        let hash = SHA256.hash(data: Data(destination.utf8)).prefix(5).map { String(format: "%02x", $0) }.joined()
+        return TerminalSessions.directory + "/s-" + hash
+    }
+
     func state(of destination: String) -> RemoteState { states[destination] ?? .idle }
 
     func connect(_ destination: String, quiet: Bool = false) {
@@ -124,6 +128,9 @@ final class RemoteManager {
     func startUp() {
         let hosts = Set(model.workspaces.compactMap(\.remote))
         for destination in hosts { _ = connection(destination) }
+        let directory = TerminalSessions.directory
+        let keeping = Set(hosts.map { (controlPath(for: $0) as NSString).lastPathComponent })
+        DispatchQueue.global(qos: .utility).async { RemoteConnection.endLeftovers(in: directory, keeping: keeping) }
         for destination in hosts where destination != model.active.remote { connect(destination, quiet: true) }
     }
 

@@ -365,11 +365,12 @@ public final class RemoteConnection: @unchecked Sendable {
             wanted = false
             retryWork?.cancel()
             generation += 1
+            // First, so it's done even if the app is on its way out.
+            if let master, master.isRunning { master.terminate() }
+            master = nil
             stopWatcher()
             stopRelay()
             endTerminalConnections()
-            if let master, master.isRunning { master.terminate() }
-            master = nil
             setState(.idle)
         }
     }
@@ -385,6 +386,14 @@ public final class RemoteConnection: @unchecked Sendable {
             endTerminalConnections()
             _ = Self.runProcess(executable: Self.ssh, arguments: configArguments + ["-S", controlPath, "-O", "exit", destination], timeout: 2)
             if let master, master.isRunning { master.terminate() }
+        }
+    }
+
+    /// Connections left by a run that crashed, which would otherwise linger for as long as the Mac's up.
+    public static func endLeftovers(in directory: String, keeping: Set<String>) {
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? [] where name.hasPrefix("s-") && !keeping.contains(name) {
+            _ = runProcess(executable: ssh, arguments: ["-S", directory + "/" + name, "-O", "exit", "leftover"], timeout: 3)
+            unlink(directory + "/" + name)
         }
     }
 
