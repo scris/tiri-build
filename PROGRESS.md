@@ -129,7 +129,6 @@ Open times run from the request until the content is showing, except for Office 
 - Revealing a folder from a ⌘-click selects it, but its children can sit below the visible area.
 - A Latin-1 file shows `�`, with no way to reopen it in another encoding.
 - A file you've deleted stays in quick open until its index refreshes.
-- The `terminal.translucent` setting has no visible effect, because the window behind it is opaque, so it's out of the Settings screen until that's worked out.
 - The first jump to the end of a very long diff lays out everything before it: about a second at 46,000 rows, longer at 180,000.
 - A 4.9 MB markdown file with 46,000 headings takes about 3.7 s to build, off the main thread. A 2,000-formula document takes about 1.3 s.
 

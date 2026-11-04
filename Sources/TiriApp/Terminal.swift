@@ -1082,7 +1082,9 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         terminalView.font = TerminalTheme.font(family: family, size: size)
         terminalView.changeScrollback(settings.terminalScrollback)
         TerminalTheme.apply(to: terminalView, dark: model.effectiveDark, translucent: settings.terminalTranslucent)
-        container.setBackground(terminalView.nativeBackgroundColor.withAlphaComponent(settings.terminalTranslucent ? 0.82 : 1))
+        let color = TerminalTheme.background(dark: model.effectiveDark)
+        container.setBackground(settings.terminalTranslucent ? .clear : color)
+        container.setTranslucent(settings.terminalTranslucent ? color.withAlphaComponent(TerminalTheme.translucentOpacity) : nil)
     }
 
     // MARK: Cwd and processes
@@ -1509,6 +1511,34 @@ final class TerminalContainer: NSView {
         layer?.backgroundColor = color.cgColor
     }
 
+    /// What's behind the window, blurred, with the terminal's own color over it so text stays easy to
+    /// read. The system's material, so it goes solid by itself with Reduce Transparency on.
+    private var blur: NSVisualEffectView?
+    private var tint: NSView?
+
+    func setTranslucent(_ color: NSColor?) {
+        guard let color else {
+            blur?.removeFromSuperview()
+            blur = nil
+            tint = nil
+            return
+        }
+        if blur == nil {
+            let effect = NSVisualEffectView()
+            effect.blendingMode = .behindWindow
+            effect.material = .underWindowBackground
+            effect.state = .active
+            let cover = NSView()
+            cover.wantsLayer = true
+            effect.addSubview(cover)
+            addSubview(effect, positioned: .below, relativeTo: terminal)
+            blur = effect
+            tint = cover
+            needsLayout = true
+        }
+        tint?.layer?.backgroundColor = color.cgColor
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         onAppearanceChange?()
@@ -1519,6 +1549,8 @@ final class TerminalContainer: NSView {
     override func layout() {
         super.layout()
         let inset = Self.padding
+        blur?.frame = bounds
+        tint?.frame = bounds
         terminal?.frame = CGRect(x: inset.left, y: inset.bottom,
                                  width: max(bounds.width - inset.left - inset.right, 0),
                                  height: max(bounds.height - inset.top - inset.bottom, 0))
@@ -1656,13 +1688,16 @@ enum TerminalTheme {
 
     /// `dark` comes from the app, not the view: right after a theme change a view's
     /// effectiveAppearance is still the old one.
+    static let translucentOpacity: CGFloat = 0.72
+
     static func apply(to view: TerminalView, dark: Bool, translucent: Bool) {
         view.nativeBackgroundColor = dark ? background(dark: true) : background(dark: false)
         view.nativeForegroundColor = dark ? NSColor(srgbRed: 0.90, green: 0.90, blue: 0.92, alpha: 1)
                                           : NSColor(srgbRed: 0.11, green: 0.11, blue: 0.12, alpha: 1)
         view.caretColor = .controlAccentColor
         view.selectedTextBackgroundColor = NSColor.controlAccentColor.withAlphaComponent(dark ? 0.45 : 0.3)
-        view.backgroundOpacity = translucent ? 0.82 : 1
+        // The container paints it. Colors a program asks for itself stay solid, so a TUI stays readable.
+        view.backgroundOpacity = translucent ? 0 : 1
         view.installColors(dark ? darkPalette : lightPalette)
     }
 
