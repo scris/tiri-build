@@ -147,6 +147,7 @@ struct LocalTerminalBackend: TerminalBackend {
 
 final class TiriTerminalView: LocalProcessTerminalView {
     weak var owner: TerminalController?
+    private var alreadyAskedServer = false
     private var underlines: [CALayer] = []
     private var hoverKey: String?
     private var hoverTarget: LinkTarget?
@@ -203,7 +204,11 @@ final class TiriTerminalView: LocalProcessTerminalView {
         case .choice(let matches):
             model.chooseFromTerminal(matches, forceTab: forceTab)
         case .web(let url):
-            model.openWebFromTerminal(url, forceTab: forceTab)
+            if let destination = owner?.remoteDestination {
+                model.openWebFromTerminal(url, forceTab: forceTab, from: destination)
+            } else {
+                model.openWebFromTerminal(url, forceTab: forceTab)
+            }
         }
     }
 
@@ -213,7 +218,11 @@ final class TiriTerminalView: LocalProcessTerminalView {
         if let url, url.isFileURL {
             model.openFromTerminal(ResolvedPath(path: url.path, isDirectory: false), forceTab: forceTab)
         } else if let url, url.scheme == "http" || url.scheme == "https" {
-            model.openWebFromTerminal(url, forceTab: forceTab)
+            if let destination = owner?.remoteDestination {
+                model.openWebFromTerminal(url, forceTab: forceTab, from: destination)
+            } else {
+                model.openWebFromTerminal(url, forceTab: forceTab)
+            }
         } else if url?.scheme == nil {
             // A target like `/resume/index.html` is a path that needs finding.
             let candidate = PathCandidate(path: link, range: 0..<0)
@@ -258,6 +267,28 @@ final class TiriTerminalView: LocalProcessTerminalView {
 
     private func searchAgain(for shown: String, forceTab: Bool, find: @escaping () -> [ResolvedPath]) {
         guard let owner else { return }
+        // On a server the copy only holds the workspace's folders. It may be anywhere else there.
+        if !alreadyAskedServer, let destination = owner.remoteDestination, let connection = owner.model.remote.existingConnection(destination),
+           let resolver = pathResolver() {
+            let candidates = resolver.candidatePaths(of: shown).compactMap { connection.map.remote($0) }
+            Task { [weak self] in
+                let known = await Task.detached(priority: .userInitiated) { () -> Bool in
+                    candidates.contains { connection.learn(remote: $0) != nil }
+                }.value
+                guard let self else { return }
+                if known {
+                    let matches = find()
+                    if !matches.isEmpty {
+                        owner.model.chooseFromTerminal(matches, forceTab: forceTab)
+                        return
+                    }
+                }
+                self.alreadyAskedServer = true
+                self.searchAgain(for: shown, forceTab: forceTab, find: find)
+                self.alreadyAskedServer = false
+            }
+            return
+        }
         owner.model.rebuildLinkIndexes(for: owner.itemID) { [weak self] in
             guard let model = self?.owner?.model else { return }
             let matches = find()
@@ -423,9 +454,16 @@ final class TiriTerminalView: LocalProcessTerminalView {
         guard let owner else { return nil }
         let model = owner.model
         let itemID = owner.itemID
-        return PathResolver(cwd: owner.currentDirectory, workspaceFolders: model.workspace(containing: itemID)?.folders ?? [], search: { path in
+        var resolver = PathResolver(cwd: owner.currentDirectory, workspaceFolders: model.workspace(containing: itemID)?.folders ?? [], search: { path in
             MainActor.assumeIsolated { model.linkMatches(for: path, from: itemID) }
         })
+        // An absolute path printed on a server is a path on that server.
+        if let destination = owner.remoteDestination, let connection = model.remote.existingConnection(destination) {
+            let map = connection.map
+            resolver.absolute = { map.local($0) }
+            if let home = connection.home { resolver.home = map.local(home) }
+        }
+        return resolver
     }
 
     static func webLink(in text: String, column: Int) -> (URL, Range<Int>)? {
@@ -497,6 +535,12 @@ final class TiriTerminalView: LocalProcessTerminalView {
 
     /// An agent gets mentions and images. A shell gets quoted paths.
     private func insertFiles(_ paths: [String]) {
+        if let owner, owner.runningAgent == nil, let destination = owner.remoteDestination {
+            owner.model.remote.serverPaths(for: paths, on: destination) { [weak self] mapped in
+                self?.send(txt: ShellQuote.join(mapped) + " ")
+            }
+            return
+        }
         if let owner, let agent = owner.runningAgent {
             owner.model.insert(paths, into: owner, agent: agent)
         } else {
@@ -528,6 +572,16 @@ final class TiriTerminalView: LocalProcessTerminalView {
 // MARK: - The controller
 
 final class TerminalController: ItemController, LocalProcessTerminalViewDelegate {
+    /// The server this terminal is on, if it's on one.
+    let remoteDestination: String?
+    /// Back to what's already there rather than starting anything. After a dropped connection.
+    private var reattaching = false
+    private var waitingForConnection = false
+    private var remoteCwd: String?
+    private var remoteForeground: Int32 = 0
+    private var remoteShell: Int32 = 0
+    private var remoteCommand: [String] = []
+    private var remoteRetries = 0
     let itemID: ItemID
     let terminalView: TiriTerminalView
     unowned let model: AppModel
@@ -566,6 +620,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         self.model = model
         self.trackedCwd = spec.cwd
         self.persistedCwd = spec.cwd
+        self.remoteDestination = model.workspaces.first { $0.id == workspaceID }?.remote
         var options = TerminalOptions.default
         options.scrollback = model.settings.terminalScrollback
         terminalView = TiriTerminalView(frame: CGRect(x: 0, y: 0, width: 800, height: 500), font: nil, options: options)
@@ -582,6 +637,11 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         let activity = activity
         terminalView.setProcessOutputHandler { activity.noteOutput() }
         oscObservation = terminalView.observeOscEvents { [weak self] event in
+            if event.code == 6973 {
+                let report = String(decoding: event.payload, as: UTF8.self)
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.remoteReport(report) } }
+                return
+            }
             let notification = Self.notificationText(from: event)
             guard let notification else { return }
             DispatchQueue.main.async {
@@ -621,6 +681,10 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     }
 
     private func spawn() {
+        if remoteDestination != nil {
+            spawnOnServer()
+            return
+        }
         let backend: TerminalBackend = LocalTerminalBackend()
         let launch = backend.launch(command: launchCommand, cwd: currentDirectory, shell: model.settings.terminalShell,
                                     itemID: itemID, workspaceID: workspaceID, socket: model.socketPath)
@@ -635,6 +699,152 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         }
     }
 
+    // MARK: On a server
+
+    private var isRemote: Bool { remoteDestination != nil }
+
+    /// The program runs on the server, and what's here is `ssh` showing it. Comes up when the
+    /// connection does, and comes back whenever the connection does.
+    private func spawnOnServer() {
+        guard let destination = remoteDestination else { return }
+        let connection = model.remote.connection(destination)
+        guard connection.state.isReady, model.remote.isSetUp(destination) else {
+            waitingForConnection = true
+            showConnectionNotice(connection.state.isReady ? .connecting : connection.state)
+            model.remote.connect(destination)
+            return
+        }
+        waitingForConnection = false
+        Task { [weak self] in
+            guard let self else { return }
+            let alive = await self.model.remote.sessionIsAlive(self.itemID, on: connection)
+            let slot = self.model.remote.terminalSlot(self.itemID, on: destination)
+            if slot > 0 {
+                guard await Task.detached(priority: .userInitiated, operation: { connection.ensureTerminalConnection(slot: slot) }).value else {
+                    self.waitingForConnection = true
+                    self.container.showNotice("Couldn't open another connection to \(SSHConfigFile.displayName(of: destination)).", busy: false, actionTitle: "Try Again") { [weak self] in
+                        self?.beginReattach()
+                    }
+                    return
+                }
+            }
+            guard !self.exited || self.startingAgain else { return }
+            self.startingAgain = false
+            // Still running, so what's there now is what counts, and nothing is typed or replayed.
+            let attach = self.reattaching || alive
+            let script = self.model.remote.terminalScript(connection: connection, itemID: self.itemID, workspaceID: self.workspaceID,
+                                                          command: attach ? nil : self.launchCommand, cwd: self.trackedCwd, attachOnly: self.reattaching && alive)
+            let launch = self.model.remote.terminalLaunch(connection: connection, script: script, slot: slot)
+            self.exited = false
+            self.container.hideExitBar()
+            self.container.showNotice(nil)
+            self.terminalView.startProcess(executable: launch.executable, args: launch.args, environment: launch.environment,
+                                           execName: launch.execName, currentDirectory: launch.cwd)
+            self.sessionUp = true
+            if !attach, let prefill = self.prefill {
+                self.prefill = nil
+                self.terminalView.send(txt: prefill)
+            }
+            self.flushHeldBack()
+        }
+    }
+
+    private var startingAgain = false
+    /// Whether `ssh` to this terminal's session is up right now.
+    private var sessionUp = false
+    private var heldBack: [String] = []
+
+    private func flushHeldBack() {
+        guard sessionUp, !heldBack.isEmpty else { return }
+        // A moment for the replay to finish, because input during a replay is dropped.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self, self.sessionUp else { return }
+            let held = self.heldBack
+            self.heldBack = []
+            for text in held { self.terminalView.send(txt: self.onServer(text)) }
+        }
+    }
+
+    func remoteStateChanged(_ state: RemoteState) {
+        switch state {
+        case .ready:
+            container.showNotice(nil)
+            if waitingForConnection, started {
+                beginReattach()
+            }
+        default:
+            // Only something that's running or waiting to has anything to say about it.
+            if started, !exited || waitingForConnection { showConnectionNotice(state) }
+        }
+    }
+
+    /// What's on screen is replaced by what the server replays, or it would all appear twice.
+    private func beginReattach() {
+        waitingForConnection = false
+        remoteRetries = 0
+        reattaching = hasEverAttached
+        startingAgain = true
+        if hasEverAttached { terminalView.feed(text: "\u{1B}c\u{1B}[3J") }
+        spawnOnServer()
+    }
+
+    private var hasEverAttached = false
+
+    private func showConnectionNotice(_ state: RemoteState) {
+        guard let destination = remoteDestination else { return }
+        let name = SSHConfigFile.displayName(of: destination)
+        switch state {
+        case .ready:
+            container.showNotice(nil)
+        case .reconnecting:
+            container.showNotice("Reconnecting to \(name). What's running there keeps running.")
+        case .connecting:
+            container.showNotice("Connecting to \(name)…")
+        case .idle:
+            container.showNotice("Not connected to \(name). What's running there keeps running.", busy: false, actionTitle: "Connect") { [weak self] in
+                self?.model.remote.connect(destination)
+            }
+        case .failed(let message):
+            container.showNotice(message, busy: false, actionTitle: "Try Again") { [weak self] in
+                self?.model.remote.connect(destination)
+            }
+        }
+    }
+
+    /// What the session on the server says about itself, since it can't be looked up from here.
+    private func remoteReport(_ report: String) {
+        guard let destination = remoteDestination, let connection = model.remote.existingConnection(destination) else { return }
+        hasEverAttached = true
+        for field in report.split(separator: ";", omittingEmptySubsequences: false) {
+            let parts = field.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            switch parts[0] {
+            case "cwd":
+                let remote = parts[1].removingPercentEncoding ?? String(parts[1])
+                let directory = connection.map.local(remote)
+                if !remote.isEmpty, directory != trackedCwd {
+                    trackedCwd = directory
+                    persistedCwd = directory
+                    model.terminalCwdChanged(item: itemID, cwd: directory)
+                }
+            case "fg":
+                remoteForeground = Int32(parts[1]) ?? 0
+            case "shell":
+                remoteShell = Int32(parts[1]) ?? 0
+            case "cmd":
+                remoteCommand = parts[1].components(separatedBy: "%00").filter { !$0.isEmpty }.map { $0.removingPercentEncoding ?? $0 }
+            default:
+                break
+            }
+        }
+    }
+
+    /// Text from Tiri, on its way to a program on a server: paths in it are paths on that server.
+    private func onServer(_ text: String) -> String {
+        guard let destination = remoteDestination, let connection = model.remote.existingConnection(destination) else { return text }
+        return connection.map.remoteText(text)
+    }
+
     func restart() {
         guard exited else { return }
         model.updateRuntime(itemID) { runtime in
@@ -645,12 +855,18 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         hookActive = false
         // A resume that failed ("no conversation found") shouldn't fail again. Restart is a fresh run.
         launchCommand = spec.command
+        reattaching = false
+        startingAgain = true
         spawn()
         focus()
     }
 
     /// The tab was closed on purpose, so what's running in it stops too.
     func endSession() {
+        if let remoteDestination {
+            if started, !exited || waitingForConnection { model.remote.endSession(itemID, on: remoteDestination) }
+            return
+        }
         if started, !exited { TerminalSessions.end(itemID) }
     }
 
@@ -681,6 +897,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     /// OSC 7 when the shell reports it, otherwise whatever the process is actually in.
     var currentDirectory: String {
+        if isRemote { return trackedCwd }
         if started, !exited, let fallback = processDirectory() {
             if fallback != trackedCwd { trackedCwd = fallback }
         }
@@ -688,12 +905,14 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     }
 
     private var shellPID: pid_t {
+        if isRemote { return remoteShell }
         if let session = TerminalSessions.shellPID(for: itemID) { return session }
         return started && !exited ? terminalView.process.shellPid : 0
     }
 
     private var foregroundPID: pid_t? {
         guard started, !exited else { return nil }
+        if isRemote { return remoteForeground > 0 ? remoteForeground : nil }
         // In a session, the view's own terminal only ever has the relay in it.
         if let session = TerminalSessions.shellPID(for: itemID) {
             return TerminalSessions.foregroundGroup(of: session)
@@ -705,6 +924,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     }
 
     private func processDirectory() -> String? {
+        if isRemote { return nil }
         for pid in [foregroundPID, shellPID > 0 ? shellPID : nil].compactMap({ $0 }) {
             var info = proc_vnodepathinfo()
             let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
@@ -726,6 +946,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             return launchCommand.split(separator: " ").first.map(String.init)
         }
         guard foreground != shellPID else { return nil }
+        if isRemote { return remoteCommand.first.map { ($0 as NSString).lastPathComponent } ?? "a process" }
         var buffer = [CChar](repeating: 0, count: 256)
         let length = proc_name(foreground, &buffer, UInt32(buffer.count))
         return length > 0 ? String(cString: buffer) : "a process"
@@ -734,6 +955,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// The executable and arguments of what's in the foreground. Nothing if it's just the shell.
     var foregroundCommandLine: [String] {
         guard let foreground = foregroundPID, foreground != shellPID else { return [] }
+        if isRemote { return remoteCommand }
         var request = [CTL_KERN, KERN_PROCARGS2, foreground]
         var size = 0
         guard sysctl(&request, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return [] }
@@ -757,7 +979,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     }
 
     private func tick() {
-        guard started, !exited else { return }
+        guard started, !exited, !waitingForConnection else { return }
         // Plain shells don't report their folder unless they're set up to, and a relaunch
         // should come back where the terminal was.
         if let directory = processDirectory(), directory != persistedCwd {
@@ -771,7 +993,11 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             model.terminalTypedAgentChanged(item: itemID, agent: typed)
         }
         if !hookActive, let agent = runningAgent {
-            model.offerHooksIfNeeded(agent)
+            if let remoteDestination {
+                model.remote.offerHooksIfNeeded(agent, on: remoteDestination)
+            } else {
+                model.offerHooksIfNeeded(agent)
+            }
         }
         let now = ProcessClock.now()
         let quietFor = now - activity.lastOutput
@@ -839,13 +1065,18 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         guard let directory else { return }
-        let path = URL(string: directory)?.path ?? directory
+        var path = URL(string: directory)?.path ?? directory
+        if let remoteDestination, let connection = model.remote.existingConnection(remoteDestination) {
+            path = connection.map.local(path)
+        }
         guard !path.isEmpty, path != trackedCwd else { return }
         trackedCwd = path
         model.terminalCwdChanged(item: itemID, cwd: path)
     }
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
+        sessionUp = false
+        if handleEndOverSSH(exitCode: exitCode) { return }
         exited = true
         model.updateRuntime(itemID) { runtime in
             runtime.status = .exited
@@ -855,6 +1086,36 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             guard let self else { return }
             self.model.closeNow(self.itemID)
         })
+    }
+
+    /// Whether `ssh` ending means the program did. It reports its own failures as 255, and a
+    /// connection that's gone takes every terminal with it. Returns true if it's only the connection.
+    private func handleEndOverSSH(exitCode: Int32?) -> Bool {
+        guard let destination = remoteDestination else { return false }
+        let connection = model.remote.connection(destination)
+        // `session attach` with nothing there to attach to: it ended while the connection was down.
+        if reattaching, exitCode == 3 {
+            reattaching = false
+            return false
+        }
+        guard exitCode == 255 || exitCode == nil || !connection.state.isReady else { return false }
+        if connection.state.isReady {
+            // The connection says it's fine, so maybe it's only just noticed, or the server has a
+            // low limit on sessions. Try a few times, each on the next connection along.
+            remoteRetries += 1
+            guard remoteRetries <= 3 else { return false }
+            model.remote.moveToNextSlot(itemID, on: destination)
+            waitingForConnection = true
+            connection.tryNow()
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(remoteRetries)) { [weak self] in
+                guard let self, self.waitingForConnection else { return }
+                if connection.state.isReady { self.beginReattach() }
+            }
+            return true
+        }
+        waitingForConnection = true
+        showConnectionNotice(connection.state)
+        return true
     }
 
     func processFailedToStart(source: TerminalView, error: LocalProcessError) {
@@ -930,7 +1191,12 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     func send(text: String) {
         noteKeyPress(isReturn: text.contains("\r"))
-        terminalView.send(txt: text)
+        // Between connections, what's sent waits, so a quote made just then isn't lost.
+        if isRemote, waitingForConnection || !sessionUp {
+            heldBack.append(text)
+            return
+        }
+        terminalView.send(txt: onServer(text))
     }
 
     func readText(lines: Int?) -> String {
@@ -969,6 +1235,7 @@ final class OutputActivity: @unchecked Sendable {
 final class TerminalContainer: NSView {
     private var terminal: NSView?
     private var exitBar: NSView?
+    private var notice: NSView?
     var onAttach: (() -> Void)?
     var onAppearanceChange: (() -> Void)?
 
@@ -999,7 +1266,60 @@ final class TerminalContainer: NSView {
             let height: CGFloat = 40
             exitBar.frame = CGRect(x: 0, y: 0, width: bounds.width, height: height)
         }
+        if let notice {
+            let size = notice.fittingSize
+            let width = min(size.width, bounds.width - 24)
+            notice.frame = CGRect(x: (bounds.width - width) / 2, y: bounds.height - size.height - 10, width: width, height: size.height)
+        }
         if window != nil, bounds.width > 40 { onAttach?() }
+    }
+
+    private var noticeAction: (() -> Void)?
+    @objc private func noticePressed() { noticeAction?() }
+
+    /// A quiet line over the terminal about its connection. Never in the way of reading it.
+    func showNotice(_ text: String?, busy: Bool = true, actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        notice?.removeFromSuperview()
+        notice = nil
+        noticeAction = action
+        guard let text else { return }
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .center
+        label.maximumNumberOfLines = 3
+        label.preferredMaxLayoutWidth = 520
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.startAnimation(nil)
+        var parts: [NSView] = busy ? [spinner, label] : [label]
+        if let actionTitle {
+            let button = NSButton(title: actionTitle, target: self, action: #selector(noticePressed))
+            button.controlSize = .small
+            parts.append(button)
+        }
+        let stack = NSStackView(views: parts)
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 7, left: 12, bottom: 7, right: 14)
+        let holder = NSVisualEffectView()
+        holder.material = .hudWindow
+        holder.blendingMode = .withinWindow
+        holder.state = .active
+        holder.wantsLayer = true
+        holder.layer?.cornerRadius = 10
+        holder.layer?.masksToBounds = true
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        holder.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: holder.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
+        ])
+        addSubview(holder)
+        notice = holder
+        needsLayout = true
     }
 
     override func viewDidMoveToWindow() {

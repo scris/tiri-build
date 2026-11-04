@@ -8,6 +8,7 @@ public struct WorkspaceStore: Sendable {
             public var id: WorkspaceID
             public var name: String
             public var folders: [String]
+            public var remote: String?
         }
         public var version: Int
         public var activeID: WorkspaceID?
@@ -66,6 +67,7 @@ public struct WorkspaceStore: Sendable {
         var workspaces: [Workspace] = []
         for entry in index.workspaces {
             var workspace = Workspace(id: entry.id, name: entry.name, folders: entry.folders)
+            workspace.remote = entry.remote
             if let data = try? Data(contentsOf: layoutURL(entry.id)) {
                 guard let layout = try? JSONDecoder().decode(LayoutFile.self, from: data) else {
                     // This workspace comes back empty. Its old layout shouldn't vanish with the next save.
@@ -93,7 +95,7 @@ public struct WorkspaceStore: Sendable {
         let index = Index(
             version: 1,
             activeID: snapshot.activeID,
-            workspaces: snapshot.workspaces.map { .init(id: $0.id, name: $0.name, folders: $0.folders) }
+            workspaces: snapshot.workspaces.map { .init(id: $0.id, name: $0.name, folders: $0.folders, remote: $0.remote) }
         )
         let encoder = Self.encoder()
         try encoder.encode(index).write(to: indexURL, options: .atomic)

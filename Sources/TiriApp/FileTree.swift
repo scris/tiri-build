@@ -180,6 +180,16 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
     }
 
+    /// Everything that's showing, read again. For when the local copy of a server just changed.
+    func reload() {
+        func walk(_ node: FileNode) {
+            guard node.children != nil else { return }
+            refresh(node)
+            node.children?.forEach(walk)
+        }
+        roots.forEach(walk)
+    }
+
     private func findLoaded(_ path: String) -> FileNode? {
         for root in roots where path == root.path || path.hasPrefix(root.path + "/") {
             var node = root
@@ -313,6 +323,26 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
     }
 
+    /// A server has no Trash to move things to, so this says what it really does.
+    private func confirmDeleteOnServer(_ nodes: [FileNode], connection: RemoteConnection, window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = nodes.count == 1
+            ? "Delete \u{201C}\(nodes[0].name)\u{201D} from \(SSHConfigFile.displayName(of: connection.destination))?"
+            : "Delete \(nodes.count) items from \(SSHConfigFile.displayName(of: connection.destination))?"
+        alert.informativeText = "A server has no Trash, so this can't be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn, let model = self?.model else { return }
+                let remotes = nodes.compactMap { connection.map.remote($0.path) }
+                model.remote.perform("rm -rf -- \(RemoteShell.arguments(remotes))", affecting: remotes, on: connection,
+                                     failure: "Couldn't delete \(nodes.count == 1 ? nodes[0].name : "those")")
+            }
+        }
+    }
+
     func renameSelected() {
         guard let node = selectedNodes().first, !node.isRoot else { return }
         beginEditing(node)
@@ -321,6 +351,10 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     func trashSelected() {
         let nodes = selectedNodes().filter { !$0.isRoot }
         guard !nodes.isEmpty, let window = outline.window else { return }
+        if let connection = RemoteRegistry.shared.connection(forLocal: nodes[0].path) {
+            confirmDeleteOnServer(nodes, connection: connection, window: window)
+            return
+        }
         let alert = NSAlert()
         alert.messageText = nodes.count == 1
             ? "Are you sure you want to delete \u{201C}\(nodes[0].name)\u{201D}?"
@@ -425,6 +459,23 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             return
         }
         let destination = ((node.path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(name)
+        if let connection = RemoteRegistry.shared.connection(forLocal: node.path), let from = connection.map.remote(node.path), let to = connection.map.remote(destination) {
+            let model = model
+            let oldPath = node.path
+            Task.detached(priority: .userInitiated) {
+                let result = connection.perform("mv -- \(ShellQuote.quote(from)) \(ShellQuote.quote(to))", affecting: [from, to])
+                await MainActor.run {
+                    switch result {
+                    case .success:
+                        model?.fileRenamed(from: oldPath, to: destination)
+                    case .failure(let failure):
+                        model?.showToast(title: "Couldn't rename \((oldPath as NSString).lastPathComponent)", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange)
+                    }
+                    model?.fileTree.reload()
+                }
+            }
+            return
+        }
         do {
             try FileManager.default.moveItem(atPath: node.path, toPath: destination)
             model?.fileRenamed(from: node.path, to: destination)
@@ -440,6 +491,25 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         let manager = FileManager.default
         guard !manager.fileExists(atPath: path) else {
             model?.showToast(title: "\(name) already exists", detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
+            return
+        }
+        if let connection = RemoteRegistry.shared.connection(forLocal: path), let remote = connection.map.remote(path) {
+            let quoted = ShellQuote.quote(remote)
+            let parentFolder = ShellQuote.quote((remote as NSString).deletingLastPathComponent)
+            let script = kind == .folder ? "mkdir -p -- \(quoted)" : "mkdir -p -- \(parentFolder) && : >> \(quoted)"
+            let model = model
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let result = connection.perform(script, affecting: [remote])
+                await MainActor.run {
+                    if case .failure(let failure) = result {
+                        model?.showToast(title: "Couldn't create \(name)", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange)
+                        return
+                    }
+                    self?.refresh(parent)
+                    self?.reveal(path: path, expand: false, quiet: true)
+                    if kind == .file { model?.openFromTree(path: path, pin: true) }
+                }
+            }
             return
         }
         do {
@@ -529,7 +599,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     @objc private func menuCopyPath(_ sender: NSMenuItem) {
         guard let node = menuNode(sender) else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(node.path, forType: .string)
+        NSPasteboard.general.setString(RemoteRegistry.shared.displayPath(node.path), forType: .string)
     }
 
     @objc private func menuCopyRelativePath(_ sender: NSMenuItem) {

@@ -24,7 +24,15 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <pty.h>
+#else
 #include <util.h>
+#endif
+#if defined(__APPLE__)
+#include <libproc.h>
+#include <sys/sysctl.h>
+#endif
 
 // Frames from the relay to the server: type, then a 16-bit length, then that many bytes.
 //   'D' input for the program   'W' rows and columns, 16 bits each   'K' stop the program
@@ -211,6 +219,12 @@ static int send_replay(int fd) {
     return send_frame(fd, 'R', &had_output, 1);
 }
 
+static double now_seconds(void) {
+    struct timespec time;
+    clock_gettime(CLOCK_MONOTONIC, &time);
+    return (double)time.tv_sec + (double)time.tv_nsec / 1e9;
+}
+
 static volatile sig_atomic_t child_changed;
 static void on_child(int signal) {
     (void)signal;
@@ -223,6 +237,7 @@ typedef struct {
     const char *argv0;
     char **command;
     struct winsize size;
+    int report;
 } launch_options;
 
 static void remove_files(const char *socket_path) {
@@ -230,6 +245,92 @@ static void remove_files(const char *socket_path) {
     snprintf(pid_path, sizeof pid_path, "%s.pid", socket_path);
     unlink(socket_path);
     unlink(pid_path);
+}
+
+// MARK: Telling a view over SSH what it can't see for itself
+
+// On this Mac Tiri asks the system which folder a program is in and what's in the foreground. Over
+// SSH it can't, so with --report the server says so, on the same stream as the output, in a private
+// escape sequence that's never replayed. Fields are split by 0x1F, a command's arguments by 0x1E.
+
+static int state_foreground(int master, pid_t child, char *directory, size_t room) {
+    pid_t foreground = tcgetpgrp(master);
+    if (foreground <= 0) foreground = child;
+    directory[0] = 0;
+#if defined(__linux__)
+    char link[64];
+    snprintf(link, sizeof link, "/proc/%d/cwd", (int)foreground);
+    ssize_t got = readlink(link, directory, room - 1);
+    if (got <= 0) {
+        snprintf(link, sizeof link, "/proc/%d/cwd", (int)child);
+        got = readlink(link, directory, room - 1);
+    }
+    if (got > 0) directory[got] = 0;
+#elif defined(__APPLE__)
+    struct proc_vnodepathinfo info;
+    if (proc_pidinfo(foreground, PROC_PIDVNODEPATHINFO, 0, &info, sizeof info) == (int)sizeof info
+        || proc_pidinfo(child, PROC_PIDVNODEPATHINFO, 0, &info, sizeof info) == (int)sizeof info) {
+        snprintf(directory, room, "%s", info.pvi_cdir.vip_path);
+    }
+#endif
+    return (int)foreground;
+}
+
+// Terminals drop control characters inside these sequences, and paths can hold anything. So fields
+// split at `;`, and anything that could get in the way is written %XX.
+static void put_encoded(char *out, size_t room, size_t *used, const char *text, size_t length) {
+    static const char hex[] = "0123456789ABCDEF";
+    for (size_t index = 0; index < length && *used + 4 < room; index++) {
+        unsigned char byte = (unsigned char)text[index];
+        if (byte < 0x21 || byte == 0x7F || byte == '%' || byte == ';') {
+            out[(*used)++] = '%';
+            out[(*used)++] = hex[byte >> 4];
+            out[(*used)++] = hex[byte & 15];
+        } else {
+            out[(*used)++] = (char)byte;
+        }
+    }
+    out[*used] = 0;
+}
+
+static size_t state_command(int pid, char *out, size_t room) {
+    out[0] = 0;
+#if defined(__linux__)
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%d/cmdline", pid);
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    ssize_t got = read(fd, out, room - 1);
+    close(fd);
+    if (got <= 0) return 0;
+    out[got] = 0;
+    return (size_t)got;
+#else
+    (void)pid;
+    (void)room;
+    return 0;
+#endif
+}
+
+static char last_report[8192];
+
+// A command's arguments split at %00.
+static void report_state(int client, int master, pid_t child, int force) {
+    static char directory[4096], command[1024], encoded[6000], message[8192];
+    int foreground = state_foreground(master, child, directory, sizeof directory);
+    size_t length = state_command(foreground, command, sizeof command);
+    size_t used = 0;
+    encoded[0] = 0;
+    put_encoded(encoded, sizeof encoded, &used, directory, strlen(directory));
+    int written = snprintf(message, sizeof message, "\033]6973;cwd=%s;fg=%d;shell=%d;cmd=", encoded, foreground, (int)child);
+    if (written <= 0 || written >= (int)sizeof message) return;
+    used = (size_t)written;
+    put_encoded(message, sizeof message - 2, &used, command, length);
+    message[used++] = 7;
+    message[used] = 0;
+    if (!force && strcmp(message, last_report) == 0) return;
+    strcpy(last_report, message);
+    send_frame(client, 'D', message, (uint32_t)used);
 }
 
 static void run_server(const launch_options *options, int listener) {
@@ -267,6 +368,7 @@ static void run_server(const launch_options *options, int listener) {
         fclose(pid_file);
     }
 
+    double last_report_at = 0;
     int client = -1;
     unsigned char input[READ_BYTES + 3];
     size_t input_count = 0;
@@ -292,7 +394,17 @@ static void run_server(const launch_options *options, int listener) {
                 if (send_replay(client) < 0) {
                     close(client);
                     client = -1;
+                } else if (options->report) {
+                    report_state(client, master, child, 1);
                 }
+            }
+        }
+
+        if (options->report && client >= 0) {
+            double now = now_seconds();
+            if (now - last_report_at >= 0.7) {
+                last_report_at = now;
+                report_state(client, master, child, 0);
             }
         }
 
@@ -449,12 +561,6 @@ static int send_input(int fd, char type, const void *data, size_t count) {
     return count ? write_all(fd, data, count) : 0;
 }
 
-static double now_seconds(void) {
-    struct timespec time;
-    clock_gettime(CLOCK_MONOTONIC, &time);
-    return (double)time.tv_sec + (double)time.tv_nsec / 1e9;
-}
-
 static int relay(int server) {
     signal(SIGPIPE, SIG_IGN);
     struct sigaction action;
@@ -544,6 +650,9 @@ int main(int argc, char **argv) {
             } else if (strcmp(argv[index], "--argv0") == 0 && index + 1 < argc) {
                 options.argv0 = argv[index + 1];
                 index += 2;
+            } else if (strcmp(argv[index], "--report") == 0) {
+                options.report = 1;
+                index += 1;
             } else if (strcmp(argv[index], "--") == 0) {
                 options.command = argv + index + 1;
                 break;
@@ -570,6 +679,27 @@ int main(int argc, char **argv) {
         }
         return relay(server);
     }
-    fprintf(stderr, "usage: tiri-session attach <socket> [--cwd DIR] [--argv0 NAME] -- program args...\n");
+    // tiri-session kill <socket>: ends the program, because its terminal was closed on purpose.
+    if (argc == 3 && strcmp(argv[1], "kill") == 0) {
+        int server = connect_to(argv[2]);
+        if (server < 0) return 3;
+        send_input(server, 'K', NULL, 0);
+        char sink[65536];
+        while (read(server, sink, sizeof sink) > 0) {}
+        return 0;
+    }
+    // tiri-session alive <socket>: asking the socket would count as attaching, so this reads the pid.
+    if (argc == 3 && strcmp(argv[1], "alive") == 0) {
+        char pid_path[1100];
+        snprintf(pid_path, sizeof pid_path, "%s.pid", argv[2]);
+        FILE *file = fopen(pid_path, "r");
+        int pid = 0;
+        if (file) {
+            if (fscanf(file, "%d", &pid) != 1) pid = 0;
+            fclose(file);
+        }
+        return pid > 0 && kill(pid, 0) == 0 ? 0 : 1;
+    }
+    fprintf(stderr, "usage: tiri-session attach <socket> [--cwd DIR] [--argv0 NAME] [--report] -- program args...\n");
     return 64;
 }

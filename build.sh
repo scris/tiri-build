@@ -22,6 +22,7 @@ cp "$BIN_DIR/tiri-session" "$APP/Contents/Resources/bin/tiri-session"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/highlight.min.js "$APP/Contents/Resources/highlight.min.js"
+cp -R Resources/remote "$APP/Contents/Resources/remote"
 
 # Ad-hoc is enough to run locally and to ask for notifications.
 IDENTITY="${TIRI_SIGN_IDENTITY:--}"

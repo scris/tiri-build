@@ -12,6 +12,8 @@ final class PaletteModel {
         case prompt(title: String, commit: (String) -> Void)
         case choices(title: String, rows: [Row])
         case search
+        /// Rows that depend on what's typed and may take a moment, like folders on a server.
+        case dynamic(title: String, provider: (_ query: String, _ deliver: @escaping ([Row]) -> Void) -> Void)
     }
 
     struct Row: Identifiable {
@@ -50,7 +52,7 @@ final class PaletteModel {
         switch mode {
         case .files: "Search files by name. Add :line to jump, or > for commands."
         case .commands: "Type a command"
-        case .prompt(let title, _), .choices(let title, _): title
+        case .prompt(let title, _), .choices(let title, _), .dynamic(let title, _): title
         case .search: "Search in files"
         }
     }
@@ -68,6 +70,15 @@ final class PaletteModel {
         case .prompt: rows = []
         case .choices(_, let all): refreshChoices(all)
         case .search: refreshSearch()
+        case .dynamic(_, let provider):
+            let asked = query
+            provider(asked) { [weak self] found in
+                // A slower answer to an earlier question doesn't get a say.
+                guard let self, self.query == asked else { return }
+                let keepsRow = self.rows.indices.contains(self.selection) ? self.rows[self.selection].id : nil
+                self.rows = found
+                self.selection = keepsRow.flatMap { id in found.firstIndex { $0.id == id } } ?? 0
+            }
         }
     }
 
@@ -94,10 +105,13 @@ final class PaletteModel {
             try? await Task.sleep(for: .milliseconds(120))
             guard let self, !Task.isCancelled, !cancellation.isCancelled else { return }
             let paths = await self.model.searchablePaths()
+            let connection = self.model.activeConnection
+            let folders = self.model.active.folders
+            let excludes = self.model.settings.filesExclude
             guard !Task.isCancelled, !cancellation.isCancelled else { return }
             let collector = SearchCollector()
             Task.detached(priority: .userInitiated) {
-                ContentSearch.run(paths: paths, query: text, cancellation: cancellation) { batch in
+                AppModel.runSearch(query: text, on: connection, folders: folders, paths: paths, excludes: excludes, cancellation: cancellation) { batch in
                     collector.add(batch)
                 }
                 collector.finish()

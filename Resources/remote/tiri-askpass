@@ -1,0 +1,3 @@
+#!/bin/sh
+# ssh runs this when it has a question for a person. Tiri asks, and keeps none of the answers.
+exec "$(dirname "$0")/../bin/tiri" askpass "$@"

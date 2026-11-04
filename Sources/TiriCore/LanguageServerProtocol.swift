@@ -327,7 +327,11 @@ public final class LSPClient: @unchecked Sendable {
         public var arguments: [String]
         public var directory: String
         public var path: String?
-        public init(executable: String, arguments: [String], directory: String, path: String?) {
+        /// A server over SSH knows files by their paths there. Everything said to it, and everything
+        /// it says, goes through this. Local paths are all Tiri ever sees.
+        public var remoteMap: RemotePathMap?
+        public init(executable: String, arguments: [String], directory: String, path: String?, remoteMap: RemotePathMap? = nil) {
+            self.remoteMap = remoteMap
             self.executable = executable
             self.arguments = arguments
             self.directory = directory
@@ -397,7 +401,8 @@ public final class LSPClient: @unchecked Sendable {
 
     private func receive(_ data: Data) {
         for message in framer.feed(data) {
-            guard let value = try? JSONDecoder().decode(JSONValue.self, from: message) else { continue }
+            let translated = launch.remoteMap.map { LSP.fromServer(message, map: $0) } ?? message
+            guard let value = try? JSONDecoder().decode(JSONValue.self, from: translated) else { continue }
             handle(value)
         }
     }
@@ -429,7 +434,8 @@ public final class LSPClient: @unchecked Sendable {
     }
 
     private func write(_ message: JSONValue) {
-        guard let input, let body = try? JSONEncoder().encode(message) else { return }
+        guard let input, var body = try? JSONEncoder().encode(message) else { return }
+        if let map = launch.remoteMap { body = LSP.toServer(body, map: map) }
         try? input.write(contentsOf: LSPFramer.frame(body))
     }
 
@@ -473,4 +479,26 @@ public final class LSPClient: @unchecked Sendable {
     }
 
     public var processIdentifier: Int32? { process?.processIdentifier }
+}
+
+// MARK: - Over SSH
+
+extension LSP {
+    private static func replacing(_ data: Data, _ pairs: [(String, String)]) -> Data {
+        var text = String(decoding: data, as: UTF8.self)
+        for (from, to) in pairs { text = text.replacingOccurrences(of: from, with: to) }
+        return Data(text.utf8)
+    }
+
+    /// JSON may write slashes as `\/`, so both are handled.
+    static func toServer(_ data: Data, map: RemotePathMap) -> Data {
+        let root = map.localRoot
+        let escaped = root.replacingOccurrences(of: "/", with: "\\/")
+        return replacing(data, [(escaped + "\\/", "\\/"), (root + "/", "/")])
+    }
+
+    static func fromServer(_ data: Data, map: RemotePathMap) -> Data {
+        let escaped = map.localRoot.replacingOccurrences(of: "/", with: "\\/")
+        return replacing(data, [("file:\\/\\/\\/", "file:\\/\\/" + escaped + "\\/"), ("file:///", "file://" + map.localRoot + "/")])
+    }
 }

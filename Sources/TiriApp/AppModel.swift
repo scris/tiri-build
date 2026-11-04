@@ -79,6 +79,9 @@ final class AppModel {
 
     // MARK: State
 
+    /// Workspaces on servers.
+    @ObservationIgnored lazy var remote = RemoteManager(model: self)
+
     var workspaces: [Workspace] = []
     var activeID: WorkspaceID = ""
     var settings = TiriSettings()
@@ -216,6 +219,7 @@ final class AppModel {
         FileWatchHub.shared.onChanges = { [weak self] paths in self?.filesChanged(paths) }
         syncWatchRoots()
         fileTree.model = self
+        remote.startUp()
         enterActiveWorkspace()
         // After launch, so the warm web view doesn't count against the launch budget.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { MarkdownWebViews.warmUp() }
@@ -256,6 +260,8 @@ final class AppModel {
     }
 
     private func activeWorkspaceReady() {
+        if let destination = active.remote { remote.connect(destination) }
+        remote.syncOpenFiles()
         fileTree.bind(active)
         refreshFileIndex()
         watchForChanges()
@@ -283,6 +289,7 @@ final class AppModel {
         saveWork?.cancel()
         saveNow()
         editorBridge.stop()
+        remote.prepareForQuit()
         for controller in controllers.values { controller.teardown() }
         languageServers.stopAll()
         server?.stop()
@@ -305,7 +312,7 @@ final class AppModel {
     private func startServer() {
         let path = TiriPaths.socket
         let server = ControlServer(path: path) { request in
-            await ControlHandler.handle(request)
+            await ControlHandler.handleFromMac(request)
         }
         do {
             try server.start()
@@ -361,6 +368,7 @@ final class AppModel {
     }
 
     private func afterStructureChange() {
+        remote.syncOpenFiles()
         collectGarbage()
         scheduleSave()
         markActiveItemSeen()
@@ -436,6 +444,13 @@ final class AppModel {
             controller = TerminalController(itemID: id, spec: spec, launchCommand: launch, prefill: prefill,
                                             workspaceID: workspaceID, model: self)
         case .file(let spec):
+            // On a server and not here yet. The viewer depends on what's in it, so it waits.
+            if remote.needsFetch(spec.path) {
+                let loading = RemoteFileController(itemID: id, path: spec.path, model: self)
+                controllers[id] = loading
+                remote.fetch(spec.path)
+                return loading
+            }
             controller = ViewerFactory.make(itemID: id, spec: spec, model: self)
         case .settings:
             controller = SettingsController(itemID: id, model: self)
@@ -455,6 +470,8 @@ final class AppModel {
         controllers[id]?.teardown()
         controllers[id] = nil
     }
+
+    var allControllers: [ItemController] { Array(controllers.values) }
 
     var terminalControllers: [TerminalController] {
         controllers.values.compactMap { $0 as? TerminalController }
@@ -591,6 +608,9 @@ final class AppModel {
             return nil
         }
         if inFront { rememberRecent(path) }
+        if RemoteRegistry.shared.isRemote(path), ["html", "htm", "svg"].contains((path as NSString).pathExtension.lowercased()) {
+            remote.fetchAround(path)
+        }
         var result: ItemID?
         switch intent {
         case .preview:
@@ -771,6 +791,17 @@ final class AppModel {
         var seen = Set<String>()
         return PathSearch.ranked(found, open: Set(openFiles), near: cwd).filter {
             seen.insert(($0 as NSString).resolvingSymlinksInPath).inserted
+        }
+    }
+
+    func openWebFromTerminal(_ url: URL, forceTab: Bool, from destination: String) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let local = await self.remote.localURL(for: url, on: destination) else {
+                self.showToast(title: "Couldn't reach that port on the server", detail: url.absoluteString, symbol: "exclamationmark.triangle", tint: .orange)
+                return
+            }
+            self.openWebFromTerminal(local, forceTab: forceTab)
         }
     }
 
@@ -1233,8 +1264,9 @@ final class AppModel {
     }
 
     @discardableResult
-    func createWorkspace(name: String, folders: [String]) -> Workspace {
+    func createWorkspace(name: String, folders: [String], remote destination: String? = nil) -> Workspace {
         var workspace = Workspace(name: uniqueName(name), folders: folders)
+        workspace.remote = destination
         if !folders.isEmpty { workspace.addInitialTerminal(fallbackCwd: NSHomeDirectory()) }
         workspaces.append(workspace)
         switchWorkspace(workspace.id)
@@ -1282,6 +1314,7 @@ final class AppModel {
             workspaces.append(Workspace(name: Workspace.placeholderName))
         }
         let wasActive = id == activeID
+        let removedRemote = workspaces[index].remote
         workspaces.remove(at: index)
         if wasActive {
             peekHasKeyboard = false
@@ -1293,6 +1326,7 @@ final class AppModel {
         }
         collectGarbage()
         scheduleSave()
+        if let destination = removedRemote { remote.forget(destination) }
     }
 
     func confirmDeleteWorkspace(_ id: WorkspaceID) {
@@ -1325,11 +1359,16 @@ final class AppModel {
 
     private func foldersChanged() {
         editorBridge.writeLock()
+        remote.syncAllRoots()
         syncWatchRoots()
         enterActiveWorkspace()
     }
 
     func addFolderInteractive() {
+        if let destination = active.remote {
+            chooseRemoteFolder(on: destination, adding: true)
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -1415,6 +1454,7 @@ final class AppModel {
     // MARK: Files
 
     func openExternally(path: String, line: Int? = nil, col: Int? = nil) {
+        if openExternallyOnServer(path: path, line: line) { return }
         let pathEnv = ProcessInfo.processInfo.environment["PATH"]
         for editor in settings.externalEditors {
             guard let executable = ExternalEditor.locate(editor, pathEnv: pathEnv) else { continue }
@@ -1651,7 +1691,33 @@ final class AppModel {
 
     /// The files worth searching: what git counts as the project, which leaves out what
     /// .gitignore does, or else everything the explorer shows.
+    /// The search behind ⌘⇧F and `tiri search`, wherever the files are.
+    nonisolated static func runSearch(query: String, on connection: RemoteConnection?, folders: [String], paths: [String], excludes: [String],
+                                      cancellation: ContentSearch.Cancellation, found: @escaping @Sendable ([ContentMatch]) -> Void) {
+        if let connection {
+            RemoteSearch.run(connection: connection, folders: folders, query: query, excludes: excludes, cancellation: cancellation, found: found)
+        } else {
+            ContentSearch.run(paths: paths, query: query, cancellation: cancellation, found: found)
+        }
+    }
+
+    var activeConnection: RemoteConnection? { active.remote.flatMap { remote.existingConnection($0) } }
+
+    /// On a server the contents aren't here to read, so the server says which files mention the
+    /// name, and those are brought here to look through like any others.
+    func symbolSearchPaths(for symbol: String) async -> [String] {
+        guard let connection = activeConnection else { return await searchablePaths() }
+        let folders = active.folders
+        let excludes = settings.filesExclude
+        return await Task.detached(priority: .userInitiated) { () -> [String] in
+            let files = RemoteSearch.filesMentioning(symbol, connection: connection, folders: folders, excludes: excludes)
+            connection.fetchAndWait(files.filter { connection.needsFetch($0) }, timeout: 20)
+            return files
+        }.value
+    }
+
     func searchablePaths() async -> [String] {
+        if active.remote != nil { return active.items.compactMap(\.filePath) }
         let folders = active.folders
         let excludes = ExcludeMatcher(patterns: settings.filesExclude)
         let openFiles = active.items.compactMap(\.filePath)
@@ -1695,7 +1761,7 @@ final class AppModel {
         refreshChanges()
     }
 
-    private func scheduleChangesRefresh() {
+    func scheduleChangesRefresh() {
         changesWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.refreshChanges() }
         changesWork = work
@@ -1707,6 +1773,8 @@ final class AppModel {
             changesAgain = true
             return
         }
+        // Nothing can be asked until it's back, and not knowing isn't the same as no changes.
+        if let destination = active.remote, !remote.state(of: destination).isReady { return }
         changesInFlight = true
         let folders = active.folders
         let workspace = activeID
@@ -1986,6 +2054,14 @@ final class AppModel {
 
     /// Agents that can start, as far as anyone knows. Commands that aren't plain names can't be asked about.
     func runnableAgentPresets() -> [TerminalPreset] {
+        if let destination = active.remote {
+            // What counts is what the server can run. Not known yet: don't hide anything on a guess.
+            guard let found = remote.commandsOnServer[destination] else { return agentPresets() }
+            return agentPresets().filter {
+                let tool = Self.tool(of: $0)
+                return found.contains(tool) || !ShellLookup.isPlainName(tool)
+            }
+        }
         guard let availableCommands else { return agentPresets() }
         return agentPresets().filter {
             let tool = Self.tool(of: $0)
@@ -2263,8 +2339,9 @@ final class AppModel {
         banner = AppBanner(message: message, isError: isError)
     }
 
+    @discardableResult
     func showToast(title: String, detail: String?, symbol: String, tint: Color,
-                   actionTitle: String? = nil, action: (() -> Void)? = nil) {
+                   actionTitle: String? = nil, action: (() -> Void)? = nil) -> UUID {
         let toast = AppToast(title: title, detail: detail, symbol: symbol, tint: tint, actionTitle: actionTitle, action: action)
         withAnimation(.smooth(duration: 0.25)) {
             toasts.append(toast)
@@ -2273,6 +2350,7 @@ final class AppModel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self, id = toast.id] in
             self?.dismissToast(id)
         }
+        return toast.id
     }
 
     func dismissToast(_ id: UUID) {

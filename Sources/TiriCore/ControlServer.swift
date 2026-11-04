@@ -273,3 +273,39 @@ public final class ControlClient {
         }
     }
 }
+
+// MARK: - The relay for terminals on a server
+
+/// What `tiri` on a server sends, and what it wants back. See `tiri-remote relay`.
+public enum RemoteRelayMessage {
+    public struct Request: Decodable, Sendable {
+        public var argv: [String]
+        public var cwd: String?
+        public var item: String?
+        public var workspace: String?
+        public var entrypoint: String?
+        public var stdin: String?
+    }
+
+    public struct Reply: Sendable {
+        public var code: Int32
+        public var output: String
+        public var errors: String
+        public init(code: Int32 = 0, output: String = "", errors: String = "") {
+            self.code = code
+            self.output = output
+            self.errors = errors
+        }
+
+        /// The exit code on its own line, what to print, and what to complain about after a 0x1E.
+        public var encoded: Data {
+            var answer = Data("\(code)\n".utf8)
+            answer.append(Data(output.utf8))
+            if !errors.isEmpty {
+                answer.append(0x1E)
+                answer.append(Data(errors.utf8))
+            }
+            return answer
+        }
+    }
+}

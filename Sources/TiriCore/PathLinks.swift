@@ -391,6 +391,8 @@ public struct PathResolver: Sendable {
     /// Last resort: the files in the workspace this could mean, best first. Agents often print a
     /// path relative to some other folder, or to a web root like `/resume/index.html`.
     public var search: (@Sendable (String) -> [String])?
+    /// Where an absolute path really is. On a server, that's in the local copy of it.
+    public var absolute: (@Sendable (String) -> String)?
 
     public init(cwd: String?, workspaceFolders: [String],
                 home: String = NSHomeDirectory(),
@@ -463,10 +465,13 @@ public struct PathResolver: Sendable {
         }
     }
 
+    /// Where a path as written could be, in the order they're tried.
+    public func candidatePaths(of path: String) -> [String] { absoluteVariants(of: path) }
+
     private func absoluteVariants(of path: String) -> [String] {
         if path == "~" { return [home] }
         if path.hasPrefix("~/") { return [home + String(path.dropFirst(1))] }
-        if path.hasPrefix("/") { return [standardize(path)] }
+        if path.hasPrefix("/") { return [standardize(absolute?(path) ?? path)] }
         var roots: [String] = []
         if let cwd { roots.append(cwd) }
         roots.append(contentsOf: workspaceFolders)

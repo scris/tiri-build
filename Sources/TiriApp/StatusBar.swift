@@ -30,6 +30,7 @@ struct StatusBar: View {
             HStack(spacing: 0) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 18) {
+                        if let host = model.active.remote { RemoteStatusItem(destination: host) }
                         ForEach(model.repositories) { repository in
                             RepositoryStatusItem(repository: repository, showsName: model.repositories.count > 1)
                         }
@@ -137,5 +138,66 @@ struct RepositoryStatusItem: View {
         .disabled(value == 0)
         .help(help)
         .accessibilityLabel(label)
+    }
+}
+
+/// Which server this workspace is on, and how the connection is. Its menu holds what little there is
+/// to do about a connection, since a connection mostly looks after itself.
+struct RemoteStatusItem: View {
+    let destination: String
+    @Environment(AppModel.self) private var model
+
+    private var state: RemoteState { model.remote.state(of: destination) }
+
+    private var tint: Color {
+        switch state {
+        case .ready: .secondary
+        case .connecting, .reconnecting: .orange
+        case .failed, .idle: .red
+        }
+    }
+
+    var body: some View {
+        Menu {
+            Text(state.label)
+            if case .failed(let message) = state { Text(message) }
+            Divider()
+            Button("Reconnect") { model.remote.connect(destination) }
+            Button("Disconnect") { model.remote.existingConnection(destination)?.disconnect() }
+            let forwards = model.remote.forwards.filter { $0.destination == destination }
+            if !forwards.isEmpty {
+                Divider()
+                ForEach(forwards) { forward in
+                    Menu("Port \(forward.remotePort) → localhost:\(forward.localPort)") {
+                        Button("Open") { model.openWeb(url: "http://localhost:\(forward.localPort)", split: nil) }
+                        Button("Stop Forwarding") { model.remote.cancelForward(forward) }
+                    }
+                }
+            }
+            Divider()
+            Button("Forward a Port…") {
+                model.openPrompt(title: "Port on the server to reach from this Mac", initial: "") { text in
+                    guard let port = Int(text.trimmingCharacters(in: .whitespaces)) else { return }
+                    Task {
+                        if let local = await model.remote.forward(remotePort: port, on: destination) {
+                            model.openWeb(url: "http://localhost:\(local)", split: nil)
+                        } else {
+                            model.showToast(title: "Couldn't forward port \(port)", detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: state.isReady ? "server.rack" : "exclamationmark.icloud")
+                Text(SSHConfigFile.displayName(of: destination))
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(tint)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(state.label)
     }
 }

@@ -89,6 +89,34 @@ public enum CLIParser {
             if let item = environment.itemID { payload["source"] = .string(item) }
             return request("open", payload)
 
+        case "askpass":
+            // ssh runs this when it has a question: a passphrase, a password, an unknown host.
+            return request("askpass", ["prompt": .string(args.joined(separator: " ")),
+                                       "host": .string(ProcessInfo.processInfo.environment["TIRI_ASKPASS_HOST"] ?? "")])
+
+        case "remote":
+            let usage = "usage: tiri remote [connect <host> [<folder>] | disconnect <host> | ports | forward <port>]"
+            switch args.first {
+            case nil:
+                return request("remote.list")
+            case "connect":
+                guard args.count == 2 || args.count == 3 else { throw UsageError(usage) }
+                var payload: [String: JSONValue] = ["host": .string(args[1])]
+                if args.count == 3 { payload["folder"] = .string(args[2]) }
+                return request("remote.connect", payload)
+            case "disconnect":
+                guard args.count == 2 else { throw UsageError(usage) }
+                return request("remote.disconnect", ["host": .string(args[1])])
+            case "ports":
+                guard args.count == 1 else { throw UsageError(usage) }
+                return request("remote.ports")
+            case "forward":
+                guard args.count == 2, let port = Int(args[1]) else { throw UsageError(usage) }
+                return request("remote.forward", ["port": .int(port)])
+            default:
+                throw UsageError(usage)
+            }
+
         case "search":
             guard !args.isEmpty else { throw UsageError("usage: tiri search <text>") }
             return request("search", ["query": .string(args.joined(separator: " "))])

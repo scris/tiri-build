@@ -97,6 +97,12 @@ public final class TurnSnapshots: Sendable {
 
     private func storeDirectory(for root: String) -> URL {
         let hash = SHA256.hash(data: Data(root.utf8)).prefix(10).map { String(format: "%02x", $0) }.joined()
+        // On a server, git runs there, so its snapshots live there. Named as local paths here, and
+        // translated like every other path that goes to it.
+        if let connection = RemoteRegistry.shared.connection(forLocal: root), let bin = connection.binDirectory {
+            let base = (bin as NSString).deletingLastPathComponent + "/snapshots/" + hash
+            return URL(fileURLWithPath: connection.map.local(base), isDirectory: true)
+        }
         return directory.appendingPathComponent(hash, isDirectory: true)
     }
 
@@ -116,6 +122,18 @@ public final class TurnSnapshots: Sendable {
         let manager = FileManager.default
         let store = storeDirectory(for: root)
         let index = store.appendingPathComponent("index")
+        if let connection = RemoteRegistry.shared.connection(forLocal: root) {
+            guard let environment = environment(root: root, store: store),
+                  let remoteStore = connection.map.remote(store.path) else { return nil }
+            let found = Git.runGit(["rev-parse", "--path-format=absolute", "--git-path", "index"], in: root)
+            let existing = found.flatMap { connection.map.remote(String(decoding: $0.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) } ?? ""
+            let quotedStore = ShellQuote.quote(remoteStore)
+            _ = connection.run("mkdir -p \(quotedStore)/objects; rm -f \(quotedStore)/index.lock; [ -e \(quotedStore)/index ] || cp \(ShellQuote.quote(existing)) \(quotedStore)/index 2>/dev/null; true")
+            _ = Git.runGit(["add", "-A", "--ignore-errors", "--", "."], in: root, environment: environment, timeout: 60)
+            guard let tree = Git.runGit(["write-tree"], in: root, environment: environment), tree.status == 0 else { return nil }
+            let id = String(decoding: tree.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            return id.isEmpty ? nil : id
+        }
         try? manager.createDirectory(at: store.appendingPathComponent("objects"), withIntermediateDirectories: true)
         guard let environment = environment(root: root, store: store) else { return nil }
         // Left by a run that was killed.

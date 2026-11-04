@@ -151,18 +151,33 @@ final class EditorBridge {
             openFiles: { [weak self] in
                 guard let model = self?.model else { return [] }
                 let front = model.active.activeItem?.filePath
-                return model.active.items.compactMap(\.filePath).map { ($0, $0 == front) }
+                return model.active.items.compactMap(\.filePath).map { (RemoteRegistry.shared.displayPath($0), $0 == front) }
             },
-            folders: { [weak self] in self?.model.active.folders ?? [] },
-            isDirty: { [weak self] path in self?.model.fileIsDirty(path) ?? false },
-            openFile: { [weak self] path in _ = self?.model.open(path: path, intent: .peek(takeFocus: false)) })
+            folders: { [weak self] in (self?.model.active.folders ?? []).map { RemoteRegistry.shared.displayPath($0) } },
+            isDirty: { [weak self] path in
+                guard let self else { return false }
+                return self.model.fileIsDirty(self.localPath(path))
+            },
+            openFile: { [weak self] path in
+                guard let self else { return }
+                _ = self.model.open(path: self.localPath(path), intent: .peek(takeFocus: false))
+            })
+    }
+
+    /// A path from an agent on a server, as this Mac knows it. An agent here says what it means.
+    private func localPath(_ path: String) -> String {
+        guard !RemoteRegistry.shared.isRemote(path), !FileManager.default.fileExists(atPath: path), let connection = model.activeConnection else { return path }
+        return connection.map.local(path)
     }
 
     /// Claude can ask around each edit, and an edit shouldn't wait for a server to start. It gets
     /// what's known, and asking gets the server going for next time.
     private func diagnostics(uri: String?) -> [(path: String, diagnostics: [LSPDiagnostic])] {
         let hub = model.languageServers
-        guard let uri, let path = LSP.path(from: uri) else { return hub.allKnownDiagnostics }
+        guard let uri, var path = LSP.path(from: uri) else {
+            return hub.allKnownDiagnostics.map { (RemoteRegistry.shared.displayPath($0.path), $0.diagnostics) }
+        }
+        path = localPath(path)
         hub.requestDiagnosticsSoon(for: path)
         return [(path, hub.knownDiagnostics(for: path))]
     }
@@ -202,6 +217,8 @@ final class EditorBridge {
     }
 
     static func realPath(_ path: String) -> String {
+        // A path on a server is the one that means something to an agent there.
+        if let connection = RemoteRegistry.shared.connection(forLocal: path), let remote = connection.map.remote(path) { return remote }
         guard let resolved = realpath(path, nil) else { return path }
         defer { free(resolved) }
         return String(cString: resolved)
@@ -212,7 +229,8 @@ final class EditorBridge {
     /// How Claude finds Tiri. It lists every workspace's folders, because any of them may have a session.
     func writeLock() {
         guard port != 0 else { return }
-        let folders = Array(Set(model.workspaces.flatMap(\.folders))).sorted()
+        // Folders on servers go in a lock file on that server.
+        let folders = Array(Set(model.workspaces.filter { $0.remote == nil }.flatMap(\.folders))).sorted()
         let directory = lockDirectory
         let url = directory.appendingPathComponent("\(port).lock")
         do {
@@ -338,6 +356,10 @@ extension AppModel {
 
     /// Images go in as a paste, which agents take as the image. Other files become mentions.
     func insert(_ paths: [String], into terminal: TerminalController, agent: AgentReference.Agent) {
+        if let destination = terminal.remoteDestination, paths.contains(where: { remote.existingConnection(destination)?.map.contains($0) != true || !$0.hasPrefix("/") }) {
+            remote.serverPaths(for: paths, on: destination) { [weak self] mapped in self?.insertOnServer(mapped, into: terminal, agent: agent) }
+            return
+        }
         for path in paths {
             if AgentReference.isImage(path: path) {
                 terminal.send(text: AgentReference.bracketedPaste(path) + " ")
@@ -357,6 +379,19 @@ extension AppModel {
     }
 
     /// The paperclip: pick files or images to add.
+    /// Named as they are on the server now, so they go in as they are.
+    private func insertOnServer(_ paths: [String], into terminal: TerminalController, agent: AgentReference.Agent) {
+        for path in paths {
+            if AgentReference.isImage(path: path) {
+                terminal.send(text: AgentReference.bracketedPaste(path) + " ")
+            } else if agent.profile?.speaksEditorProtocol == true, editorBridge.mention(path: path, firstLine: nil, lastLine: nil, in: terminal) {
+                continue
+            } else {
+                terminal.send(text: AgentReference.text(path: path, cwd: EditorBridge.realPath(terminal.currentDirectory), firstLine: nil, lastLine: nil, agent: agent))
+            }
+        }
+    }
+
     func chooseFilesForAgent() {
         guard let window else { return }
         let panel = NSOpenPanel()

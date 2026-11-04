@@ -2,7 +2,7 @@
 
 A neutral, native macOS workspace for people who do their work through CLI agents like Claude Code, Codex and Grok, and use the "IDE" to see, review and organize.
 
-Terminals, files and web previews are equal items in one tab and pane system. There is no bundled AI, and no bottom terminal panel. Your agents can drive the whole app through a local CLI.
+Terminals, files and web previews are equal items in one tab and pane system, on this Mac or a server. There is no bundled AI, and no bottom terminal panel. Your agents can drive the whole app through a local CLI.
 
 ## Build and run
 
@@ -23,6 +23,24 @@ TIRI_SIGN_IDENTITY="Apple Development: you@example.com (ABCDE12345)" ./build.sh
 ## Terminals outlive Tiri
 
 Quit Tiri, update it, or have it crash, and your agents keep working. When it comes back, each terminal reattaches and its screen is redrawn. Closing a terminal's tab is what ends it. A restart of your Mac still ends them, and then agents resume their conversations as before. You can turn this off in Settings, under Agents.
+
+## Work on a server
+
+Press **Connect to Server…** in the workspaces' + menu or the command palette, or run `tiri remote connect <host> [folder]`. Pick a host from your `~/.ssh/config` or type `user@host`, then pick a folder. It becomes a workspace like any other, starting with a terminal there.
+
+Everything works the same as a local folder: the tree, quick open, ⌘-click, the Peek, Changes, search, go to definition, language servers, review comments. So do agents, which run on the server. `tiri open report.md` in a terminal there floats a Peek on your Mac, and Quote in Agent reaches them too.
+
+- **Your agents keep working when your lid closes.** Programs run under a small helper on the server. When the connection comes back, or Tiri does, each terminal reattaches and nothing it printed is lost. Saves made while it's down wait, and go when it's back. Closing a tab is what ends a program.
+- **Nothing to set up, nothing installed but one file.** Tiri puts one small static program in `~/.tiri` on the server, about 90 KB for Linux on x86-64 or ARM, or on a Mac. It needs no root, compiler or Node. Other systems still get terminals and files, without programs surviving a dropped connection.
+- **OpenSSH does the connecting**, so your keys, agent, jump hosts and config just work. If it has a question (a passphrase, a password, a one-time code, an unknown host) Tiri shows it, and keeps none of the answers.
+- **Files come over when you open them.** The tree is real, and a large project costs nothing until you read it: the Linux kernel's 97,000 files appear in about ten seconds, and take no disk space. What you've read is cached under `~/Library/Caches/Tiri`, and goes when you delete the workspace.
+- **Pages on the server open here.** ⌘-click `http://localhost:3000` in a terminal on the server, or run `tiri preview http://localhost:3000` there, and the port is forwarded for you. Forward others from the server's name in the bottom bar, or with `tiri remote forward <port>`.
+- **Pictures and files you paste or drop are sent over first**, so an agent there can read them.
+- **A server is trusted less than your Mac.** `tiri` in a terminal there only reaches that server's own workspaces. It can't see or type into terminals on your Mac, change settings or hooks here, or quit the app.
+
+If a server forbids SSH forwarding, `tiri`, the Peek and agent status still work, and Tiri says when it can't forward a port. Claude Code then gets lines as text, rather than through the editor protocol.
+
+`tiri remote` lists the servers, and `tiri remote ports` what's forwarded.
 
 ## Give your agent lines, files and images
 

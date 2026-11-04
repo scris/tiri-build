@@ -248,7 +248,7 @@ struct TabContextMenu: View {
             Divider()
             Button("Copy Path") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(path, forType: .string)
+                NSPasteboard.general.setString(RemoteRegistry.shared.displayPath(path), forType: .string)
             }
             Button("Copy Relative Path") {
                 NSPasteboard.general.clearContents()

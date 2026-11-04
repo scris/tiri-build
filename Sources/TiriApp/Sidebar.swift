@@ -195,6 +195,7 @@ struct WorkspaceSwitcher: View {
                 Spacer()
                 Menu {
                     Button("New Workspace…") { model.newWorkspaceInteractive() }
+                    Button("Connect to Server…") { model.connectToServerInteractive() }
                     Button("Import .code-workspace…") { model.importWorkspaceInteractive() }
                 } label: {
                     Image(systemName: "plus")
@@ -232,12 +233,22 @@ struct WorkspaceRow: View {
 
     private var isActive: Bool { workspace.id == model.activeID }
 
+    /// A connection that's down shows here too, since its terminals may be behind this workspace.
+    private var connectionTint: Color? {
+        guard let host = workspace.remote else { return nil }
+        switch model.remote.state(of: host) {
+        case .reconnecting, .connecting: return .orange
+        case .failed: return .red
+        case .ready, .idle: return nil
+        }
+    }
+
     var body: some View {
         let counts = model.unseenCount(in: workspace)
         HStack(spacing: 8) {
-            Image(systemName: workspace.folders.count > 1 ? "square.stack.3d.up.fill" : "folder.fill")
+            Image(systemName: workspace.remote != nil ? "server.rack" : workspace.folders.count > 1 ? "square.stack.3d.up.fill" : "folder.fill")
                 .font(.system(size: 11))
-                .foregroundStyle(isActive ? Color.accentColor : .secondary)
+                .foregroundStyle(connectionTint ?? (isActive ? Color.accentColor : .secondary))
                 .frame(width: 16)
             Text(workspace.name)
                 .font(.system(size: 13, weight: isActive ? .medium : .regular))
@@ -269,7 +280,7 @@ struct WorkspaceRow: View {
             Divider()
             Button("Delete…", role: .destructive) { model.confirmDeleteWorkspace(workspace.id) }
         }
-        .help(workspace.folders.map { ($0 as NSString).abbreviatingWithTildeInPath }.joined(separator: "\n"))
+        .help(workspace.folders.map { model.prettyPath($0) }.joined(separator: "\n"))
     }
 }
 

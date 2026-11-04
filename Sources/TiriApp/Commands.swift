@@ -37,6 +37,7 @@ extension AppModel {
                 if let path = model.activeFilePath { model.revealInTree(path) }
             },
             AppCommand(id: "newTerminal", title: "New Terminal", category: "Terminal") { $0.startTerminal() },
+            AppCommand(id: "connectToServer", title: "Connect to Server…", category: "File") { $0.connectToServerInteractive() },
             AppCommand(id: "restartTerminal", title: "Restart Exited Terminal", category: "Terminal") { model in
                 if let id = model.active.focused.active {
                     (model.existingController(for: id) as? TerminalController)?.restart()
@@ -181,7 +182,40 @@ enum ControlHandler {
         return paths
     }
 
+    /// `tiri` on this Mac, about a workspace on a server: it speaks in the server's paths, both ways.
+    static func handleFromMac(_ request: ControlRequest) async -> ControlResponse {
+        let connection = await MainActor.run { AppModel.shared.activeConnection }
+        guard let connection else { return await handle(request) }
+        var localized = request
+        for key in ["path", "cwd"] {
+            guard let path = request.args[key]?.stringValue, path.hasPrefix("/"), !RemoteRegistry.shared.isRemote(path),
+                  !FileManager.default.fileExists(atPath: path) else { continue }
+            localized.args[key] = .string(connection.map.local(path))
+        }
+        var response = await handle(localized)
+        response.result = response.result.map { translate($0, map: connection.map) }
+        response.error = response.error.map { connection.map.remoteText($0) }
+        return response
+    }
+
+    private static func translate(_ value: JSONValue, map: RemotePathMap) -> JSONValue {
+        switch value {
+        case .string(let text): .string(map.remoteText(text))
+        case .array(let list): .array(list.map { translate($0, map: map) })
+        case .object(let fields): .object(fields.mapValues { translate($0, map: map) })
+        default: value
+        }
+    }
+
     static func handle(_ request: ControlRequest) async -> ControlResponse {
+        // These wait: for a person to answer, or for a server to come up.
+        if request.cmd == "askpass" {
+            let answer = await AppModel.shared.answerSSHQuestion(request.args["prompt"]?.stringValue ?? "", host: request.args["host"]?.stringValue ?? "")
+            guard let answer else { return ControlResponse.failure(id: request.id, "Cancelled.") }
+            return .success(id: request.id, .object(["answer": .string(answer)]))
+        }
+        if request.cmd == "remote.connect" { return await remoteConnect(request) }
+        if request.cmd == "remote.forward" { return await remoteForward(request) }
         let touched = paths(in: request)
         if !touched.isEmpty { _ = await FolderAccess.deniedPaths(touched) }
         // A language server may need a while to look.
@@ -206,9 +240,10 @@ enum ControlHandler {
         // These read a lot of files. The app keeps responding while they do.
         if request.cmd == "search", let query = request.args["query"]?.stringValue {
             let paths = await AppModel.shared.searchablePaths()
+            let (connection, folders, excludes) = await MainActor.run { (AppModel.shared.activeConnection, AppModel.shared.active.folders, AppModel.shared.settings.filesExclude) }
             let collector = SearchCollector()
             await Task.detached(priority: .userInitiated) {
-                ContentSearch.run(paths: paths, query: query, cancellation: ContentSearch.Cancellation()) { collector.add($0) }
+                AppModel.runSearch(query: query, on: connection, folders: folders, paths: paths, excludes: excludes, cancellation: ContentSearch.Cancellation()) { collector.add($0) }
             }.value
             return ControlResponse.success(id: request.id, .array(collector.sorted().map { match in
                 .object(["path": .string(match.path), "line": .int(match.line), "text": .string(match.text)])
@@ -317,6 +352,40 @@ enum ControlHandler {
         }
     }
 
+    @MainActor
+    private static func remoteConnect(_ request: ControlRequest) async -> ControlResponse {
+        let model = AppModel.shared
+        guard let typed = request.args["host"]?.stringValue, let destination = SSHConfigFile.destination(from: typed) else {
+            return .failure(id: request.id, "That isn't a host.")
+        }
+        let result: Result<RemoteConnection, RemoteFailure> = await withCheckedContinuation { continuation in
+            model.remote.whenReady(destination) { continuation.resume(returning: $0) }
+        }
+        switch result {
+        case .failure(let failure):
+            return .failure(id: request.id, failure.description)
+        case .success(let connection):
+            let wanted = request.args["folder"]?.stringValue ?? "~"
+            let resolved = await Task.detached { connection.resolveFolder(wanted) }.value
+            guard let resolved else { return .failure(id: request.id, "\(wanted) isn't a folder on \(typed).") }
+            let workspace = model.openRemoteFolder(resolved, on: destination)
+            return .success(id: request.id, .object(["workspace": .string(workspace.name), "folder": .string(resolved)]))
+        }
+    }
+
+    @MainActor
+    private static func remoteForward(_ request: ControlRequest) async -> ControlResponse {
+        let model = AppModel.shared
+        guard let port = request.args["port"]?.intValue else { return .failure(id: request.id, "Which port?") }
+        guard let destination = request.args["host"]?.stringValue ?? model.active.remote else {
+            return .failure(id: request.id, "This workspace isn't on a server.")
+        }
+        guard let local = await model.remote.forward(remotePort: port, on: destination) else {
+            return .failure(id: request.id, "Couldn't forward port \(port).")
+        }
+        return .success(id: request.id, .object(["local": .int(local), "remote": .int(port)]))
+    }
+
     private static func findWorkspace(_ name: String, model: AppModel) throws -> Workspace {
         if let match = model.workspaces.first(where: { $0.name == name || $0.id == name }) { return match }
         if let number = Int(name), number >= 1, number <= model.workspaces.count { return model.workspaces[number - 1] }
@@ -395,13 +464,36 @@ enum ControlHandler {
             let id = model.newTerminal(command: request.args["cmd"]?.stringValue, cwd: cwd, split: split(request), in: sourceWorkspace)
             return .object(["item": .string(id)])
 
+        case "remote.list":
+            let hosts = Set(model.workspaces.compactMap(\.remote))
+            return .array(hosts.sorted().map { host in
+                let state = model.remote.state(of: host)
+                var detail = ""
+                if case .failed(let message) = state { detail = message }
+                if case .reconnecting(let attempt) = state { detail = "attempt \(attempt)" }
+                return .object(["host": .string(host), "state": .string(state.label), "detail": .string(detail)])
+            })
+
+        case "remote.ports":
+            return .array(model.remote.forwards.map {
+                .object(["host": .string($0.destination), "remote": .int($0.remotePort), "local": .int($0.localPort)])
+            })
+
+        case "remote.disconnect":
+            let host = try string(request, "host")
+            let destination = SSHConfigFile.destination(from: host) ?? host
+            guard let connection = model.remote.existingConnection(destination) else { throw ControlFailure("Not connected to \(host).") }
+            connection.disconnect()
+            return .object([:])
+
         case "workspace.list":
             let list = model.workspaces.enumerated().map { index, workspace -> JSONValue in
                 let counts = model.unseenCount(in: workspace)
                 return .object([
                     "id": .string(workspace.id), "name": .string(workspace.name), "index": .int(index + 1),
                     "active": .bool(workspace.id == model.activeID),
-                    "folders": .array(workspace.folders.map(JSONValue.string)),
+                    "folders": .array(workspace.folders.map { JSONValue.string(RemoteRegistry.shared.displayPath($0)) }),
+                    "remote": workspace.remote.map(JSONValue.string) ?? .null,
                     "items": .int(workspace.items.count),
                     "needsInput": .int(counts.needsInput), "done": .int(counts.done),
                 ])

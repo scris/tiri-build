@@ -28,7 +28,9 @@ struct RootView: View {
         let folders = model.active.folders
         switch folders.count {
         case 0: return ""
-        case 1: return (folders[0] as NSString).abbreviatingWithTildeInPath
+        case 1:
+            if let host = model.active.remote { return SSHConfigFile.displayName(of: host) + ": " + model.prettyPath(folders[0]) }
+            return (folders[0] as NSString).abbreviatingWithTildeInPath
         default: return "\(folders.count) folders"
         }
     }
@@ -358,6 +360,7 @@ struct ItemHost: NSViewRepresentable {
     }
 
     func updateNSView(_ host: Host, context: Context) {
+        let _ = model.remote.revision
         if let group { model.groupHosts[group] = AppModel.WeakView(view: host) }
         // A view on its way out (a Peek fading after being promoted, a tab that just moved) still
         // gets updated. It must not pull the viewer back from where the item lives now.
@@ -720,7 +723,7 @@ struct Breadcrumbs: View {
             }
         } else {
             var current = ""
-            let abbreviated = (path as NSString).abbreviatingWithTildeInPath
+            let abbreviated = model.prettyPath(path)
             let components = abbreviated.split(separator: "/").map(String.init)
             for component in components {
                 current = component == "~" ? NSHomeDirectory() : current + "/" + component

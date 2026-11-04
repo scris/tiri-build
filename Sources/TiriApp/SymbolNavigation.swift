@@ -275,7 +275,7 @@ extension AppModel {
                                   emptyTitle: "No definition of \(symbol) found")
                 return
             }
-            let paths = await searchablePaths()
+            let paths = await symbolSearchPaths(for: symbol)
             let cancellation = ContentSearch.Cancellation()
             let found = await Task.detached(priority: .userInitiated) {
                 DefinitionSearch.run(paths: paths, symbol: symbol, near: path, cancellation: cancellation)
@@ -297,7 +297,7 @@ extension AppModel {
 
     private func searchForReferences(of symbol: String, near path: String) {
         Task {
-            let paths = await searchablePaths()
+            let paths = await symbolSearchPaths(for: symbol)
             let cancellation = ContentSearch.Cancellation()
             let found = await Task.detached(priority: .userInitiated) {
                 DefinitionSearch.references(paths: paths, symbol: symbol, near: path, cancellation: cancellation)

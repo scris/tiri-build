@@ -137,6 +137,74 @@ public enum ContentSearch {
     }
 }
 
+/// Search on a server, where the contents are. `git grep` leaves out what .gitignore does, as
+/// searching here does, and `grep` covers a folder that isn't a repository.
+public enum RemoteSearch {
+    static func script(folder: String, query: String, caseSensitive: Bool, excludes: [String], listOnly: Bool, wholeWord: Bool = false) -> String {
+        let flags = (caseSensitive ? "" : " -i") + (wholeWord ? " -w" : "") + (listOnly ? " -l" : " -n")
+        let quoted = ShellQuote.quote(query)
+        let skips = excludes.filter { !$0.contains("/") && !$0.contains("*") }.map { " --exclude-dir=\(ShellQuote.quote($0))" }.joined()
+        return """
+        cd \(ShellQuote.quote(folder)) || exit 0
+        if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          LC_ALL=C git grep -z -I --untracked --no-color -F\(flags) -e \(quoted) -- . 2>/dev/null
+        else
+          LC_ALL=C grep -r -I -F --null\(flags)\(skips) -e \(quoted) . 2>/dev/null
+        fi | head -c 8000000
+        """
+    }
+
+    /// One line per match: the path, a NUL, the line number, then the text.
+    public static func parse(_ output: Data, root: String, query: String) -> [ContentMatch] {
+        var results: [ContentMatch] = []
+        for rawLine in output.split(separator: 10) {
+            guard let nul = rawLine.firstIndex(of: 0) else { continue }
+            var relative = String(decoding: rawLine[rawLine.startIndex..<nul], as: UTF8.self)
+            if relative.hasPrefix("./") { relative.removeFirst(2) }
+            let rest = rawLine[rawLine.index(after: nul)...]
+            // `git grep` puts a NUL after the number as well, and `grep` a colon.
+            guard let end = rest.firstIndex(where: { $0 == 0 || $0 == UInt8(ascii: ":") }),
+                  let line = Int(String(decoding: rest[rest.startIndex..<end], as: UTF8.self)) else { continue }
+            let path = root + "/" + relative
+            let text = Data(rest[rest.index(after: end)...])
+            guard var match = ContentSearch.matches(in: text, path: path, query: query, limit: 1).first else { continue }
+            match.line = line
+            results.append(match)
+        }
+        return results
+    }
+
+    /// Searches each folder on its server. `found` gets what each one had.
+    public static func run(connection: RemoteConnection, folders: [String], query: String, excludes: [String], cancellation: ContentSearch.Cancellation,
+                           found: @escaping @Sendable ([ContentMatch]) -> Void) {
+        let caseSensitive = query.contains { $0.isUppercase }
+        for folder in folders {
+            if cancellation.isCancelled { return }
+            guard let remote = connection.map.remote(folder),
+                  let result = connection.run(script(folder: remote, query: query, caseSensitive: caseSensitive, excludes: excludes, listOnly: false), timeout: 60) else { continue }
+            if cancellation.isCancelled { return }
+            let matches = parse(result.output, root: folder, query: query)
+            if !matches.isEmpty { found(Array(matches.prefix(ContentSearch.maximumMatches))) }
+        }
+    }
+
+    /// The files on a server that mention a whole word, brought here so they can be read like any
+    /// other file. At most a sensible number, nearest the point of asking being the caller's concern.
+    public static func filesMentioning(_ word: String, connection: RemoteConnection, folders: [String], excludes: [String], limit: Int = 60) -> [String] {
+        var files: [String] = []
+        for folder in folders {
+            guard let remote = connection.map.remote(folder),
+                  let result = connection.run(script(folder: remote, query: word, caseSensitive: true, excludes: excludes, listOnly: true, wholeWord: true), timeout: 30) else { continue }
+            for raw in result.output.split(whereSeparator: { $0 == 0 || $0 == 10 }) {
+                var relative = String(decoding: raw, as: UTF8.self)
+                if relative.hasPrefix("./") { relative.removeFirst(2) }
+                files.append(folder + "/" + relative)
+            }
+        }
+        return Array(files.prefix(limit))
+    }
+}
+
 extension Git {
     /// The files git would consider part of the project, which leaves out what .gitignore does.
     public static func projectFiles(in folder: String) -> [String]? {

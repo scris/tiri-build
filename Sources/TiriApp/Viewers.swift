@@ -681,6 +681,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             diskChangedUnderEdits = false
             isDirty = false
             model.languageServers.unsavedText(nil, for: path)
+            model.remote.didSave(path)
             return .saved
         } catch {
             return .failed(error.localizedDescription)

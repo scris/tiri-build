@@ -77,6 +77,12 @@ final class LanguageServerHub {
     // MARK: Finding servers
 
     /// What the user's shell can find. A Mac app opened from Finder doesn't have their PATH.
+    private struct RemoteServers: Sendable {
+        var located: [String: String] = [:]
+        var path: String?
+    }
+    private var remoteLocated: [String: RemoteServers] = [:]
+
     private func locateServers() async {
         if lookedUp { return }
         if let lookup {
@@ -176,6 +182,9 @@ final class LanguageServerHub {
             existing.lastUsed = Date()
             return existing
         }
+        if let connection = RemoteRegistry.shared.connection(forLocal: path) {
+            return await remoteSession(key: key, definition: definition, root: root, connection: connection)
+        }
         guard (failedStarts[key] ?? 0) < 3, let found = command(for: definition, root: root) else { return nil }
         if found.isLocal, !model.languageTrust.isTrusted(found.executable) {
             guard asked, await model.confirmRunningLocalServer(found.executable, language: definition.language) else { return nil }
@@ -199,6 +208,13 @@ final class LanguageServerHub {
             failedStarts[key, default: 0] += 1
             return nil
         }
+        begin(session, key: key, root: root)
+        return session
+    }
+
+    /// Everything after a server's process has started, wherever it's running.
+    private func begin(_ session: Session, key: Key, root: String) {
+        let client = session.client
         sessions[key] = session
         startIdleTimer()
         model.languageRevision += 1
@@ -208,6 +224,55 @@ final class LanguageServerHub {
             let answer = await client.request("initialize", params, timeout: 60)
             finishStarting(session, answer: answer)
         }
+    }
+
+    /// Servers on a server: found with its shell, and run there, with its files. A server inside
+    /// the repository would be running the repository's code, so only ones on its PATH count.
+    private func remoteSession(key: Key, definition: LanguageServerDefinition, root: String, connection: RemoteConnection) async -> Session? {
+        guard (failedStarts[key] ?? 0) < 3, connection.state.isReady, let remoteRoot = connection.map.remote(root) else { return nil }
+        let names = Array(Set(LanguageServerCatalog.all.flatMap { $0.commands.compactMap(\.first) }))
+        if remoteLocated[connection.destination] == nil {
+            remoteLocated[connection.destination] = await Task.detached(priority: .utility) { () -> RemoteServers in
+                let script = names.filter(ShellLookup.isPlainName)
+                    .map { "command -v \($0) 2>/dev/null | sed 's|^|tiri-found:\($0)=|'" }.joined(separator: "; ") + "; echo tiri-path:$PATH"
+                let shell = connection.shell
+                guard let result = connection.run("\(ShellQuote.quote(shell)) -l -i -c \(ShellQuote.quote(script)) 2>/dev/null", timeout: 20) else { return RemoteServers() }
+                var servers = RemoteServers()
+                for line in result.text.split(whereSeparator: \.isNewline) {
+                    if line.hasPrefix("tiri-path:") { servers.path = String(line.dropFirst(10)) }
+                    guard line.hasPrefix("tiri-found:") else { continue }
+                    let parts = line.dropFirst(11).split(separator: "=", maxSplits: 1)
+                    if parts.count == 2, parts[1].hasPrefix("/") { servers.located[String(parts[0])] = String(parts[1]) }
+                }
+                return servers
+            }.value
+            model.languageRevision += 1
+        }
+        guard let servers = remoteLocated[connection.destination], sessions[key] == nil else { return sessions[key] }
+        guard let command = definition.commands.first(where: { $0.first.map { servers.located[$0] != nil } ?? false }),
+              let name = command.first, let executable = servers.located[name] else { return nil }
+        let assignment = servers.path.map { "PATH=\(ShellQuote.quote($0)) " } ?? ""
+        let script = "cd \(ShellQuote.quote(remoteRoot)) && \(assignment)exec \(RemoteShell.arguments([executable] + command.dropFirst()))"
+        let client = LSPClient(launch: .init(executable: connection.sshExecutable, arguments: connection.commandArguments(script: script),
+                                             directory: NSHomeDirectory(), path: nil, remoteMap: connection.map))
+        let session = Session(key: key, definition: definition, client: client, executable: executable)
+        client.onNotification = { [weak self] method, params in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.received(method, params) }
+            }
+        }
+        client.onExit = { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.sessionExited(key) }
+            }
+        }
+        do {
+            try client.start()
+        } catch {
+            failedStarts[key, default: 0] += 1
+            return nil
+        }
+        begin(session, key: key, root: root)
         return session
     }
 
@@ -688,7 +753,7 @@ extension AppModel {
         return languageServers.isRunning(definition) || languageServers.isStarting(definition) || !languageServers.knownDiagnostics(for: path).isEmpty
     }
 
-    var statusBarHasContent: Bool { barHasRepositories || languageHasNews }
+    var statusBarHasContent: Bool { barHasRepositories || languageHasNews || active.remote != nil }
 }
 
 struct LanguageStatusItem: View {

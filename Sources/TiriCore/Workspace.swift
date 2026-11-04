@@ -294,6 +294,9 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     public var name: String
     /// Absolute paths. Multi-root, as in a VS Code multi-root workspace.
     public var folders: [String]
+    /// The SSH destination, for a workspace on a server. Its folders are then paths in the local
+    /// copy of that server. See RemoteMirror.
+    public var remote: String?
     public var items: [Item]
     public var layout: PaneNode
     public var focusedGroup: GroupID {

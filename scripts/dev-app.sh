@@ -53,6 +53,9 @@ start)
   swift build -c "${TIRI_DEV_CONFIG:-debug}" --product tiri-session 2>&1 | tail -1
   BIN="$(swift build -c "${TIRI_DEV_CONFIG:-debug}" --show-bin-path)"
   "$CLI" quit >/dev/null 2>&1 || true; sleep 0.5
+  # A dialog can hold up a quit, and two copies can't share a socket.
+  [ -f "$DIR/pid" ] && kill -9 "$(cat "$DIR/pid")" 2>/dev/null || true
+  pkill -9 -f "$APP/Contents/MacOS/Tiri" 2>/dev/null || true
   rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin" "$TIRI_HOME" "$TIRI_CONFIG_HOME"
   cp "$BIN/TiriApp" "$APP/Contents/MacOS/Tiri"
   cp "$BIN/tiri" "$BIN/tiri-session" "$APP/Contents/Resources/bin/"

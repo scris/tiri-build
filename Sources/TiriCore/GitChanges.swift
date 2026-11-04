@@ -216,6 +216,9 @@ public enum Git {
     /// already exited, which would silently stop the changes list. A hung git gets killed.
     private static func run(_ arguments: [String], in directory: String, timeout: Double = 20,
                             includeErrors: Bool = false, extraEnvironment: [String: String] = [:]) -> (status: Int32, output: Data)? {
+        if let connection = RemoteRegistry.shared.connection(forLocal: directory) {
+            return runRemote(arguments, on: connection, in: directory, timeout: timeout, includeErrors: includeErrors, extraEnvironment: extraEnvironment)
+        }
         var pipes: [Int32] = [0, 0]
         guard pipe(&pipes) == 0 else { return nil }
         let (readEnd, writeEnd) = (pipes[0], pipes[1])
@@ -281,6 +284,26 @@ public enum Git {
         while waitpid(pid, &status, 0) < 0, errno == EINTR {}
         let exited = status & 0x7F == 0
         return (exited ? (status >> 8) & 0xFF : 128, output)
+    }
+
+    /// The same command, run where the repository is. What's said in local paths goes out in the
+    /// server's, and absolute paths in `rev-parse`'s answers come back as local ones.
+    private static func runRemote(_ arguments: [String], on connection: RemoteConnection, in directory: String, timeout: Double,
+                                  includeErrors: Bool, extraEnvironment: [String: String]) -> (status: Int32, output: Data)? {
+        guard let remote = connection.map.remote(directory) else { return nil }
+        var environment = ["GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C"]
+        for (key, value) in extraEnvironment where key != "PATH" {
+            environment[key] = value.split(separator: ":", omittingEmptySubsequences: false)
+                .map { connection.map.remote(String($0)) ?? String($0) }.joined(separator: ":")
+        }
+        let assignments = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\(ShellQuote.quote($0.value))" }.joined(separator: " ")
+        let script = "cd \(ShellQuote.quote(remote)) && env \(assignments) git \(RemoteShell.arguments(arguments))" + (includeErrors ? " 2>&1" : " 2>/dev/null")
+        guard let result = connection.run(script, timeout: timeout) else { return nil }
+        guard arguments.first == "rev-parse" else { return (result.status, result.output) }
+        let lines = result.text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            line.hasPrefix("/") ? connection.map.local(String(line)) : String(line)
+        }
+        return (result.status, Data(lines.joined(separator: "\n").utf8))
     }
 
     public static func repositoryRoot(of folder: String) -> String? {
@@ -426,6 +449,12 @@ public enum Git {
     }
 
     private static func untrackedDiff(_ path: String) -> FileDiff {
+        // Here it may be only a placeholder, and a new file is all contents.
+        if let connection = RemoteRegistry.shared.connection(forLocal: path), let remote = connection.map.remote(path) {
+            guard let result = connection.run("head -c 4194304 -- \(ShellQuote.quote(remote))", timeout: 30), result.succeeded else { return FileDiff() }
+            guard FileClassifier.isLikelyText(result.output.prefix(8192)) else { return FileDiff(isBinary: true) }
+            return .allAdded(result.text)
+        }
         guard let handle = FileHandle(forReadingAtPath: path) else { return FileDiff() }
         defer { try? handle.close() }
         let limit = 4 * 1024 * 1024
