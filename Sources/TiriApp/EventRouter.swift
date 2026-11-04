@@ -182,6 +182,7 @@ final class LayoutRegistry {
     private(set) var barFrames: [GroupID: CGRect] = [:]
     private(set) var contentFrames: [GroupID: CGRect] = [:]
     var peekFrame: CGRect?
+    var paletteFrame: CGRect?
 
     // When SwiftUI rebuilds a pane, the new view registers before the old one's onDisappear
     // runs. Entries remember who wrote them, so the old view can't erase the new one's.

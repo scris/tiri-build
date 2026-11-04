@@ -25,10 +25,13 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             WorkspaceSwitcher()
             sectionHeader("Explorer", isOpen: $explorerOpen) {
-                Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
-                    .help("New File")
-                Button { model.fileTree.beginCreating(.folder, in: nil) } label: { Image(systemName: "folder.badge.plus") }
-                    .help("New Folder")
+                // With no folder there's nowhere to put one.
+                if !model.active.folders.isEmpty {
+                    Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
+                        .help("New File")
+                    Button { model.fileTree.beginCreating(.folder, in: nil) } label: { Image(systemName: "folder.badge.plus") }
+                        .help("New Folder")
+                }
                 Button { model.addFolderInteractive() } label: { Image(systemName: "plus") }
                     .help("Add Folder to Workspace")
             }

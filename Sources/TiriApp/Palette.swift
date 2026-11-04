@@ -612,6 +612,7 @@ struct PaletteView: View {
         .frame(width: 620)
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
         .shadow(color: .black.opacity(0.22), radius: 22, y: 8)
+        .reportingFrame { model.layoutRegistry.paletteFrame = $0 }
         .onAppear {
             focused = true
             // In a window where it's the first thing to appear in a while, once isn't always enough.

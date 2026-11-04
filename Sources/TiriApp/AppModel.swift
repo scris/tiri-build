@@ -544,6 +544,14 @@ final class AppModel {
         tabDrag = nil
         tabDragCommitted = false
         let point = globalPoint(event)
+        // A click outside the palette closes it, and still does what it was for.
+        if palette != nil, let frame = layoutRegistry.paletteFrame, !frame.contains(point) {
+            closePalette(restoreFocus: false)
+            DispatchQueue.main.async { [weak self] in
+                // Chrome doesn't take the keyboard, and nothing else was left holding it.
+                if let window = self?.window, window.firstResponder === window { self?.requestFocus() }
+            }
+        }
         // A click outside the Peek dismisses it, except a ⌘-click, which may be
         // the next link being opened. Going through a list of files should stay fluid.
         if active.peek != nil, let frame = layoutRegistry.peekFrame {
@@ -956,6 +964,7 @@ final class AppModel {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.message = "Choose the folder \(purpose ?? "this terminal") will work in"
         panel.prompt = "Choose Folder"
@@ -1360,6 +1369,7 @@ final class AppModel {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = true
         panel.message = "Choose the folders for the new workspace"
         panel.prompt = "Create Workspace"
@@ -1447,6 +1457,7 @@ final class AppModel {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = true
         panel.prompt = "Add"
         guard panel.runModal() == .OK else { return }
