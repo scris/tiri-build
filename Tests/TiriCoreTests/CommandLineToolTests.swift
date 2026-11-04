@@ -86,3 +86,13 @@ import Testing
         #expect(CommandLineTool.problem(appPath: "/private/var/folders/x/AppTranslocation/y/d/Tiri.app") != nil)
     }
 }
+
+@Suite struct ShellPathTests {
+    @Test func readsThePathFromTheShellsSetup() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try "export PATH=\"/custom/with space:$PATH\"\necho noise\n".write(to: directory.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+        let path = await ShellLookup.path(shell: "/bin/zsh", environment: ["ZDOTDIR": directory.path, "HOME": directory.path, "PATH": "/usr/bin:/bin"])
+        #expect(path?.hasPrefix("/custom/with space:") == true)
+    }
+}

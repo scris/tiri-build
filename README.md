@@ -63,6 +63,14 @@ Explorer, Changes and Open Items each fold: click a section's name. What's still
 
 When a workspace folder is in a Git repository, the sidebar has a **Changes** section listing every file changed since the last commit, live as your agents work. Click one to see its diff as a tab, or double-click to keep it. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. They work the same in a Peek. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.
 
+The bar along the bottom of the window shows each repository's branch, a `*` if it has uncommitted changes, and how many commits there are to pull and push, like `feat/login* 2↓ 3↑`. The counts follow commits and pushes from your terminals.
+
+- The arrows button fetches. Tiri never fetches by itself, so `0↓` means nothing was new at the last fetch.
+- `2↓` pulls, only ever moving your branch forward. If the branch and the remote have both moved on, or your uncommitted changes touch the same files, Tiri says so and changes nothing.
+- `3↑` pushes, after asking which branch is going where. A branch that's never been pushed offers **Publish** instead.
+
+All three are in the command palette too, and `tiri git` shows the same status. A remote that needs a password can't ask from here, so Tiri offers a terminal in that repository. Merging, committing and switching branches are for you or your agent.
+
 ## Start with a folder
 
 Nothing runs until you've said where. A new workspace shows the agents your shell can find: press one, choose its folder, and it starts there. If it can't find any, it links to where to get them, and they appear when you come back. Any other first terminal or agent in a workspace without a folder asks too. In a workspace with several folders, the **+** menu asks which folder a new terminal or agent should use, and ⌃\` uses the folder of what you're looking at.

@@ -7,18 +7,21 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var model = model
-        NavigationSplitView(columnVisibility: $model.sidebarVisibility) {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 200, ideal: 270, max: 460)
-        } detail: {
-            DetailView()
-                .toolbar { MainToolbar() }
+        VStack(spacing: 0) {
+            NavigationSplitView(columnVisibility: $model.sidebarVisibility) {
+                SidebarView()
+                    .navigationSplitViewColumnWidth(min: 200, ideal: 270, max: 460)
+            } detail: {
+                DetailView()
+                    .toolbar { MainToolbar() }
+            }
+            .navigationTitle(model.active.name)
+            .navigationSubtitle(subtitle)
+            .background(WindowAccessor { window in model.windowDidAppear(window) })
+            .overlay(alignment: .top) { ChromeOverlays() }
+            .overlay { TabDragOverlay() }
+            StatusBar()
         }
-        .navigationTitle(model.active.name)
-        .navigationSubtitle(subtitle)
-        .background(WindowAccessor { window in model.windowDidAppear(window) })
-        .overlay(alignment: .top) { ChromeOverlays() }
-        .overlay { TabDragOverlay() }
     }
 
     private var subtitle: String {

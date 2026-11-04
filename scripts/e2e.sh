@@ -166,6 +166,11 @@ git -C "$PROJECT" -c user.name=t -c user.email=t@t commit -qm first
 printf 'changed\n' >> "$PROJECT/report.md"
 sleep 1
 expect "changes lists a modified file" "report.md" "$CLI" changes
+expect "git shows the repository" "$(basename "$PROJECT")" "$CLI" git
+git -C "$PROJECT" remote add origin "$WORK/origin.git"
+git init -q --bare "$WORK/origin.git"
+git -C "$PROJECT" push -q -u origin HEAD 2>/dev/null
+expect "git counts commits as numbers" "0↓ 0↑" "$CLI" git
 check "diff opens" "$CLI" diff "$PROJECT/report.md" --tab
 expect "diff is an item" "changes" "$CLI" items
 DIFF_ID=$("$CLI" items | grep -m1 'changes' | cut -f1)

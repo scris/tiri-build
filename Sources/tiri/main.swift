@@ -88,6 +88,12 @@ case "workspace.list":
         let folders = workspace["folders"]?.arrayValue?.compactMap(\.stringValue).joined(separator: ", ") ?? ""
         print("\(marker) \(cell(workspace["name"]))\t\(folders)")
     }
+case "git":
+    for repository in response.result?.arrayValue ?? [] {
+        let head = cell(repository["head"]) + (repository["dirty"]?.boolValue == true ? "*" : "")
+        let counts = repository["upstream"] == nil ? "no upstream" : "\(repository["behind"]?.intValue ?? 0)↓ \(repository["ahead"]?.intValue ?? 0)↑"
+        print([head, counts, cell(repository["root"])].joined(separator: "\t"))
+    }
 case "read":
     print(cell(response.result?["text"]))
 case "tree":

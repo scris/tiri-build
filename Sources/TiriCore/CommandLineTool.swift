@@ -32,6 +32,10 @@ public enum ShellLookup {
     /// hold a pipe open long after the shell has gone.
     public static func run(names: [String], shell: String, environment: [String: String]? = nil,
                            timeout: TimeInterval = 8) async -> Set<String>? {
+        await output(of: script(for: names), shell: shell, environment: environment, timeout: timeout).map(found(in:))
+    }
+
+    private static func output(of script: String, shell: String, environment: [String: String]?, timeout: TimeInterval) async -> String? {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("tiri-lookup-\(UUID().uuidString)")
         guard FileManager.default.createFile(atPath: file.path, contents: nil),
               let output = try? FileHandle(forWritingTo: file) else { return nil }
@@ -41,7 +45,7 @@ public enum ShellLookup {
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
-        process.arguments = ["-l", "-i", "-c", script(for: names)]
+        process.arguments = ["-l", "-i", "-c", script]
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
@@ -62,8 +66,17 @@ public enum ShellLookup {
                 if process.isRunning { process.terminate() }
             }
         }
-        guard finished, let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
-        return found(in: text)
+        guard finished else { return nil }
+        return try? String(contentsOf: file, encoding: .utf8)
+    }
+
+    /// The user's PATH, as their shell sets it up. Fish lists it with the marker on each part.
+    public static func path(shell: String, environment: [String: String]? = nil, timeout: TimeInterval = 8) async -> String? {
+        let pathMarker = "tiri-path:"
+        guard let text = await output(of: "echo \(pathMarker)$PATH", shell: shell, environment: environment, timeout: timeout) else { return nil }
+        guard let line = text.split(whereSeparator: \.isNewline).last(where: { $0.hasPrefix(pathMarker) }) else { return nil }
+        let value = line.dropFirst(pathMarker.count).replacingOccurrences(of: " " + pathMarker, with: ":")
+        return value.isEmpty ? nil : value
     }
 
     private final class Once: @unchecked Sendable {

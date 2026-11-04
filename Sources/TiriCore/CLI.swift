@@ -108,6 +108,10 @@ public enum CLIParser {
             guard args.isEmpty else { throw UsageError("usage: tiri changes") }
             return request("changes")
 
+        case "git":
+            guard args.isEmpty else { throw UsageError("usage: tiri git") }
+            return request("git")
+
         case "diff":
             var options = Options(args)
             let tab = options.flag("--tab")
@@ -353,6 +357,7 @@ public enum CLIParser {
       tiri search <text>           (across the workspace's files, as ⌘⇧F does)
       tiri select <item-id> <text> [--to <text>]   (select it in a file, diff or page, to point at it)
       tiri changes                 (files changed since the last commit)
+      tiri git                     (each repository's branch, and commits to pull and push)
       tiri diff <path> [--tab]     (what changed in one file; floats as a Peek)
       tiri follow <item-id> <row> <col>
       tiri quit                    (terminals keep running, and Tiri comes back to them)
@@ -553,6 +558,7 @@ public enum AgentGuide {
 
     ```sh
     tiri changes                          # files changed since the last commit
+    tiri git                              # each repository's branch, and commits to pull and push
     tiri diff src/app.ts                  # floats what changed over your terminal
     tiri diff src/app.ts --tab            # or keeps it as a tab
     ```

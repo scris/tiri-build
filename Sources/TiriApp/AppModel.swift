@@ -107,6 +107,12 @@ final class AppModel {
     @ObservationIgnored lazy var editorBridge = EditorBridge(model: self)
     @ObservationIgnored var lastAgentTerminal: ItemID?
     var changes: [ChangedFile] = []
+    /// Each repository the active workspace's folders are in, for the status bar.
+    var repositories: [RepositoryStatus] = []
+    /// Fetches and pushes under way, by repository.
+    var repositoryTransfers: [String: RepositoryTransfer] = [:]
+    @ObservationIgnored private var repositoryTokens: [String: FileWatchHub.Token] = [:]
+    @ObservationIgnored private var userPath: String?
     var detachedItems: Set<ItemID> = []
     @ObservationIgnored private var detachedWindows: [ItemID: NSWindow] = [:]
     @ObservationIgnored private var detachedDelegates: [ItemID: DetachedWindowDelegate] = [:]
@@ -1643,6 +1649,8 @@ final class AppModel {
         if changesWorkspace != activeID {
             changesWorkspace = activeID
             changes = []
+            repositories = []
+            repositoryTokens = [:]
         }
         changesTokens = active.folders.map { folder in
             FileWatchHub.shared.watch(path: folder, recursive: true) { [weak self] in self?.scheduleChangesRefresh() }
@@ -1667,10 +1675,15 @@ final class AppModel {
         let workspace = activeID
         Task.detached(priority: .userInitiated) { [weak self] in
             let found = Git.changesAcross(folders)
+            let repositories = Git.repositoriesAcross(folders)
             await MainActor.run {
                 guard let self else { return }
                 self.changesInFlight = false
                 if self.activeID == workspace, self.changes != found { self.changes = found }
+                if self.activeID == workspace, self.repositories != repositories {
+                    self.repositories = repositories
+                    self.watchGitDirectories(of: repositories, folders: folders)
+                }
                 // Whatever's on screen compares against the same new state.
                 for item in self.active.items + (self.active.peek.map { [$0] } ?? []) {
                     if case .diff = item.content { (self.existingController(for: item.id) as? DiffController)?.load() }
@@ -1678,6 +1691,112 @@ final class AppModel {
                 if self.changesAgain || self.activeID != workspace {
                     self.changesAgain = false
                     self.refreshChanges()
+                }
+            }
+        }
+    }
+
+    // MARK: Fetch, pull and push
+
+    /// A commit or a push from a terminal moves the counts. When git's folder is outside the
+    /// workspace, as for a subfolder of a repository or a worktree, nothing else would hear it.
+    private func watchGitDirectories(of repositories: [RepositoryStatus], folders: [String]) {
+        var tokens: [String: FileWatchHub.Token] = [:]
+        for directory in repositories.flatMap(\.gitDirectories)
+        where !folders.contains(where: { directory == $0 || directory.hasPrefix($0 + "/") }) {
+            tokens[directory] = repositoryTokens[directory]
+                ?? FileWatchHub.shared.watch(path: directory, recursive: true) { [weak self] in self?.scheduleChangesRefresh() }
+        }
+        repositoryTokens = tokens
+    }
+
+    /// The repository of what you're looking at, for the palette. The status bar names its own.
+    var frontRepository: RepositoryStatus? {
+        let directory = defaultTerminalDirectory()
+        return repositories.first { directory == $0.root || directory.hasPrefix($0.root + "/") } ?? repositories.first
+    }
+
+    func fetch(_ repository: RepositoryStatus) {
+        guard let remote = repository.remote else {
+            showToast(title: "Nothing to fetch from", detail: "\(repository.name) has no remote.", symbol: "exclamationmark.triangle", tint: .orange)
+            return
+        }
+        transfer(.fetching, repository: repository, arguments: ["fetch", remote], failure: "Couldn't fetch") { [weak self] updated in
+            guard let self else { return }
+            let new = (updated?.behind ?? 0) - repository.behind
+            let target = updated?.upstream ?? remote
+            self.showToast(title: new > 0 ? "\(Self.commits(new)) to pull from \(target)" : "\(target) has nothing new", detail: nil,
+                           symbol: "checkmark.circle.fill", tint: .green)
+        }
+    }
+
+    /// Doesn't ask: it only moves the branch forward to commits the remote already has, and the
+    /// way back is one `git reset`. Anything that would need a decision fails and says so.
+    func pull(_ repository: RepositoryStatus) {
+        guard repository.canPull, let target = repository.upstream else {
+            showToast(title: "Nothing to pull from", detail: "\(repository.title) doesn't track a remote branch yet.", symbol: "checkmark.circle", tint: .secondary)
+            return
+        }
+        transfer(.pulling, repository: repository, arguments: Git.pullArguments, failure: "Couldn't pull") { [weak self] updated in
+            self?.showToast(title: updated?.shortOID == repository.shortOID ? "\(target) has nothing new" : "Pulled from \(target)", detail: nil,
+                            symbol: "checkmark.circle.fill", tint: .green)
+        }
+    }
+
+    /// Asks first, every time: it's the one thing here that can't be taken back, and some remotes deploy what they receive.
+    func confirmPush(_ repository: RepositoryStatus) {
+        guard let window else { return }
+        guard repository.canPush || repository.canPublish, let branch = repository.branch else {
+            showToast(title: "Nothing to push", detail: repository.remote == nil ? "\(repository.name) has no remote." : "\(repository.title) has no commits to send.",
+                      symbol: "checkmark.circle", tint: .secondary)
+            return
+        }
+        let target = repository.upstream ?? "\(repository.remote ?? "origin")/\(branch)"
+        let alert = NSAlert()
+        alert.messageText = repository.upstream == nil ? "Publish \(branch) to \(repository.remote ?? "origin")?" : "Push \(Self.commits(repository.ahead)) to \(target)?"
+        var details = ["From \(repository.name)."]
+        if repository.isDirty { details.append("Uncommitted changes stay here.") }
+        if repository.behind > 0 { details.append("\(target) also has \(Self.commits(repository.behind)) you don't have, so it will probably refuse.") }
+        alert.informativeText = details.joined(separator: " ")
+        alert.addButton(withTitle: repository.upstream == nil ? "Publish" : "Push")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard response == .alertFirstButtonReturn, let self else { return }
+                self.transfer(.pushing, repository: repository, arguments: repository.pushArguments, failure: "Couldn't push") { [weak self] _ in
+                    self?.showToast(title: repository.upstream == nil ? "Published to \(target)" : "Pushed \(Self.commits(repository.ahead)) to \(target)",
+                                    detail: nil, symbol: "checkmark.circle.fill", tint: .green)
+                }
+            }
+        }
+    }
+
+    private static func commits(_ count: Int) -> String { count == 1 ? "1 commit" : "\(count) commits" }
+
+    private func transfer(_ kind: RepositoryTransfer, repository: RepositoryStatus, arguments: [String], failure: String,
+                          succeeded: @escaping @MainActor @Sendable (RepositoryStatus?) -> Void) {
+        let root = repository.root
+        guard repositoryTransfers[root] == nil else { return }
+        repositoryTransfers[root] = kind
+        let shell = settings.terminalShell.isEmpty ? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh" : settings.terminalShell
+        let known = userPath
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let path: String?
+            if let known { path = known } else { path = await ShellLookup.path(shell: shell) }
+            let result = Git.transfer(arguments, in: root, path: path)
+            let updated = Git.repositoryStatus(of: root)
+            await MainActor.run {
+                guard let self else { return }
+                self.userPath = path ?? self.userPath
+                self.repositoryTransfers[root] = nil
+                if let updated, let index = self.repositories.firstIndex(where: { $0.root == root }) { self.repositories[index] = updated }
+                switch result {
+                case .success:
+                    succeeded(updated)
+                case .failure(let problem):
+                    // A remote that wants a password can get one in a terminal, which this can't do.
+                    self.showToast(title: failure, detail: problem.message, symbol: "exclamationmark.triangle", tint: .orange,
+                                   actionTitle: "Open Terminal") { [weak self] in self?.newTerminal(cwd: root) }
                 }
             }
         }

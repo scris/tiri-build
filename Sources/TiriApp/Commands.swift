@@ -90,6 +90,15 @@ extension AppModel {
             AppCommand(id: "foldChanges", title: "Fold or Unfold Changes", category: "View") { _ in SidebarSection.changes.toggle() },
             AppCommand(id: "foldOpenItems", title: "Fold or Unfold Open Items", category: "View") { _ in SidebarSection.items.toggle() },
             AppCommand(id: "searchInFiles", title: "Search in Files", category: "Go") { $0.openSearch() },
+            AppCommand(id: "gitFetch", title: "Git: Fetch", category: "Git") { model in
+                if let repository = model.frontRepository { model.fetch(repository) }
+            },
+            AppCommand(id: "gitPull", title: "Git: Pull", category: "Git") { model in
+                if let repository = model.frontRepository { model.pull(repository) }
+            },
+            AppCommand(id: "gitPush", title: "Git: Push…", category: "Git") { model in
+                if let repository = model.frontRepository { model.confirmPush(repository) }
+            },
             AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 model.frontWebController?.reload()
@@ -544,6 +553,15 @@ enum ControlHandler {
         case "changes":
             return .array(Git.changesAcross(model.active.folders).map { change in
                 .object(["status": .string(change.status.letter), "path": .string(change.path)])
+            })
+
+        case "git":
+            return .array(Git.repositoriesAcross(model.active.folders).map { repository in
+                var object: [String: JSONValue] = ["root": .string(repository.root), "head": .string(repository.title),
+                                                   "ahead": .int(repository.ahead), "behind": .int(repository.behind),
+                                                   "dirty": .bool(repository.isDirty)]
+                if let upstream = repository.upstream { object["upstream"] = .string(upstream) }
+                return .object(object)
             })
 
         case "diff":

@@ -777,3 +777,222 @@ import Testing
         #expect(ExternalEditor.arguments(editor: "nano", path: "/a", line: 3, col: nil) == ["/a"])
     }
 }
+
+@Suite struct RepositoryStatusTests {
+    /// A clone of a bare repository in a temporary folder. Nothing here reaches a real remote.
+    private final class Place {
+        let base: String
+        var origin: String { base + "/origin.git" }
+        var work: String { base + "/work" }
+
+        init() throws {
+            base = FileManager.default.temporaryDirectory.appendingPathComponent("tiri-repo-\(UUID().uuidString)").path
+            try FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
+            try git(in: base, "init", "-q", "--bare", "-b", "main", origin)
+            try git(in: base, "clone", "-q", origin, work)
+            try git(in: work, "checkout", "-q", "-b", "main")
+            try commit("first", in: work)
+            try git(in: work, "push", "-q", "-u", "origin", "main")
+        }
+
+        deinit { try? FileManager.default.removeItem(atPath: base) }
+
+        func git(in directory: String, _ args: String...) throws {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-c", "user.name=t", "-c", "user.email=t@t"] + args
+            process.currentDirectoryURL = URL(fileURLWithPath: directory)
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            #expect(process.terminationStatus == 0)
+        }
+
+        func commit(_ name: String, in directory: String) throws {
+            try name.write(toFile: directory + "/\(name).txt", atomically: true, encoding: .utf8)
+            try git(in: directory, "add", ".")
+            try git(in: directory, "commit", "-qm", name)
+        }
+
+        func secondClone() throws -> String {
+            let other = base + "/other"
+            try git(in: base, "clone", "-q", origin, other)
+            return other
+        }
+    }
+
+    private func succeeded(_ result: Result<Void, Git.TransferFailure>) -> Bool {
+        if case .success = result { return true }
+        return false
+    }
+
+    @Test func readsTheStatusHeaders() {
+        var status = RepositoryStatus(root: "/r")
+        status.read(statusOutput: """
+        # branch.oid 1234567890abcdef
+        # branch.head feat/native-kotlin
+        # branch.upstream origin/feat/native-kotlin
+        # branch.ab +17 -2
+        1 .M N... 100644 100644 100644 aaa aaa file.txt
+        """)
+        #expect(status.branch == "feat/native-kotlin")
+        #expect(status.shortOID == "1234567")
+        #expect(status.upstream == "origin/feat/native-kotlin")
+        #expect(status.ahead == 17 && status.behind == 2)
+        #expect(status.isDirty)
+        #expect(status.title == "feat/native-kotlin")
+    }
+
+    @Test func aDetachedHeadShowsItsCommitAndCantPush() {
+        var status = RepositoryStatus(root: "/r")
+        status.read(statusOutput: "# branch.oid abcdef1234\n# branch.head (detached)\n")
+        status.remote = "origin"
+        #expect(status.title == "abcdef1")
+        #expect(!status.isDirty)
+        #expect(!status.canPush && !status.canPublish)
+    }
+
+    @Test func aBranchWithNoCommitsHasNothingToPublish() {
+        var status = RepositoryStatus(root: "/r")
+        status.read(statusOutput: "# branch.oid (initial)\n# branch.head main\n")
+        status.remote = "origin"
+        #expect(!status.canPublish)
+    }
+
+    @Test func prefersWhatTheBranchTracksThenOrigin() {
+        #expect(RepositoryStatus.chooseRemote(tracked: "fork", all: ["origin", "fork"]) == "fork")
+        #expect(RepositoryStatus.chooseRemote(tracked: nil, all: ["fork", "origin"]) == "origin")
+        #expect(RepositoryStatus.chooseRemote(tracked: nil, all: ["fork"]) == "fork")
+        #expect(RepositoryStatus.chooseRemote(tracked: nil, all: []) == nil)
+        // A branch tracking another local branch has "." as its remote.
+        #expect(RepositoryStatus.chooseRemote(tracked: ".", all: ["origin"]) == "origin")
+    }
+
+    @Test func countsAheadAndPushes() throws {
+        let place = try Place()
+        try place.commit("second", in: place.work)
+        try place.commit("third", in: place.work)
+        let before = try #require(Git.repositoryStatus(of: place.work))
+        #expect(before.branch == "main" && before.upstream == "origin/main" && before.remote == "origin")
+        #expect(before.ahead == 2 && before.behind == 0 && !before.isDirty)
+        #expect(before.canPush)
+        #expect(succeeded(Git.transfer(before.pushArguments, in: place.work, path: nil)))
+        let after = try #require(Git.repositoryStatus(of: place.work))
+        #expect(after.ahead == 0 && !after.canPush)
+    }
+
+    @Test func fetchFindsWhatsBehind() throws {
+        let place = try Place()
+        let other = try place.secondClone()
+        try place.commit("theirs", in: other)
+        try place.git(in: other, "push", "-q")
+        #expect(try #require(Git.repositoryStatus(of: place.work)).behind == 0)
+        #expect(succeeded(Git.transfer(["fetch", "origin"], in: place.work, path: nil)))
+        #expect(try #require(Git.repositoryStatus(of: place.work)).behind == 1)
+    }
+
+    @Test func aRefusedPushSaysWhatToDo() throws {
+        let place = try Place()
+        let other = try place.secondClone()
+        try place.commit("theirs", in: other)
+        try place.git(in: other, "push", "-q")
+        try place.commit("mine", in: place.work)
+        let status = try #require(Git.repositoryStatus(of: place.work))
+        guard case .failure(let failure) = Git.transfer(status.pushArguments, in: place.work, path: nil) else {
+            Issue.record("the push should be refused")
+            return
+        }
+        #expect(failure.message.contains("Pull them first"))
+    }
+
+    @Test func publishesANewBranch() throws {
+        let place = try Place()
+        try place.git(in: place.work, "checkout", "-q", "-b", "feat/new")
+        try place.commit("feature", in: place.work)
+        let before = try #require(Git.repositoryStatus(of: place.work))
+        #expect(before.upstream == nil && before.canPublish && !before.canPush)
+        #expect(succeeded(Git.transfer(before.pushArguments, in: place.work, path: nil)))
+        let after = try #require(Git.repositoryStatus(of: place.work))
+        #expect(after.upstream == "origin/feat/new" && after.ahead == 0)
+    }
+
+    @Test func aMissingRemoteFailsWithGitsReason() throws {
+        let place = try Place()
+        try place.git(in: place.work, "remote", "set-url", "origin", place.base + "/gone.git")
+        guard case .failure(let failure) = Git.transfer(["fetch", "origin"], in: place.work, path: nil) else {
+            Issue.record("the fetch should fail")
+            return
+        }
+        #expect(failure.message.contains("fatal:"))
+    }
+
+    @Test func aFolderInsideARepositoryCountsOnce() throws {
+        let place = try Place()
+        let inner = place.work + "/inner"
+        try FileManager.default.createDirectory(atPath: inner, withIntermediateDirectories: true)
+        #expect(Git.repositoriesAcross([place.work, inner]).count == 1)
+        #expect(Git.repositoriesAcross([place.base]).isEmpty)
+    }
+
+    /// Someone else pushes a commit, and this clone knows about it.
+    private func moveOriginOn(_ place: Place, file: String = "theirs") throws {
+        let other = place.base + "/other-\(file)"
+        try place.git(in: place.base, "clone", "-q", place.origin, other)
+        try place.commit(file, in: other)
+        try place.git(in: other, "push", "-q")
+        #expect(succeeded(Git.transfer(["fetch", "origin"], in: place.work, path: nil)))
+    }
+
+    @Test func pullsForward() throws {
+        let place = try Place()
+        try moveOriginOn(place)
+        #expect(try #require(Git.repositoryStatus(of: place.work)).behind == 1)
+        #expect(succeeded(Git.transfer(Git.pullArguments, in: place.work, path: nil)))
+        let after = try #require(Git.repositoryStatus(of: place.work))
+        #expect(after.behind == 0 && after.ahead == 0)
+        #expect(FileManager.default.fileExists(atPath: place.work + "/theirs.txt"))
+    }
+
+    @Test func pullKeepsUncommittedWorkInOtherFiles() throws {
+        let place = try Place()
+        try moveOriginOn(place)
+        try "mine".write(toFile: place.work + "/first.txt", atomically: true, encoding: .utf8)
+        #expect(succeeded(Git.transfer(Git.pullArguments, in: place.work, path: nil)))
+        #expect(try String(contentsOfFile: place.work + "/first.txt", encoding: .utf8) == "mine")
+        #expect(try #require(Git.repositoryStatus(of: place.work)).isDirty)
+    }
+
+    @Test func pullWontMergeDivergedBranches() throws {
+        let place = try Place()
+        try moveOriginOn(place)
+        try place.commit("mine", in: place.work)
+        let before = try #require(Git.repositoryStatus(of: place.work))
+        #expect(before.ahead == 1 && before.behind == 1)
+        guard case .failure(let failure) = Git.transfer(Git.pullArguments, in: place.work, path: nil) else {
+            Issue.record("the pull should be refused")
+            return
+        }
+        #expect(failure.message.contains("have moved on"))
+        // Nothing changed: not merged, and no merge left half done.
+        let after = try #require(Git.repositoryStatus(of: place.work))
+        #expect(after.ahead == 1 && after.behind == 1 && !after.isDirty && after.shortOID == before.shortOID)
+    }
+
+    @Test func pullWontOverwriteUncommittedWork() throws {
+        let place = try Place()
+        try moveOriginOn(place)
+        try "mine".write(toFile: place.work + "/theirs.txt", atomically: true, encoding: .utf8)
+        guard case .failure(let failure) = Git.transfer(Git.pullArguments, in: place.work, path: nil) else {
+            Issue.record("the pull should be refused")
+            return
+        }
+        #expect(failure.message.contains("Commit or stash"))
+        #expect(try String(contentsOfFile: place.work + "/theirs.txt", encoding: .utf8) == "mine")
+    }
+
+    @Test func gitsHintsArentTheReason() {
+        let message = Git.failureMessage("hint: try this\nremote: working\nfatal: could not read Username\n")
+        #expect(message == "fatal: could not read Username")
+    }
+}

@@ -28,6 +28,8 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | Ask Claude Code against the real agent | Tested with a stand-in command, to avoid a real session on your account | Press Ask Claude Code on the Settings tab |
 | Pressing the agent buttons on the empty screen, and agents appearing after you install one | Buttons don't take clicks in an unfocused window, so tested without taking your screen through the palette command, which runs the same code. Coming back to the app needs real focus | New workspace, press Claude Code, choose a folder |
 | A `codex exec` inside a Claude terminal | Covered by unit tests only, to avoid a real Codex run | Ask a Claude session to run one, then check `tiri items` |
+| Fetch, pull and push against a real remote | Tested with a local bare repository, so no real remote changed. SSH keys, the keychain and push hooks are unproven from the app | Fetch in a real repository, then push something you mean to |
+| Clicking the status bar's buttons | Clicks don't reach an unfocused window, so tested through the palette commands, which run the same code. The confirmation's buttons had real presses through accessibility | Click the arrows and the `↓` and `↑` counts |
 | Reduce Transparency, Increase Contrast | Left to the system's glass, as the spec asks, but not exercised | Turn them on in Accessibility settings |
 | Terminal translucency setting | Implemented, not looked at | Set `terminal.translucent` |
 
@@ -42,6 +44,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Sessions:** a small background server keeps each terminal's program running while Tiri is closed, and Tiri reattaches. Closing the tab ends it.
 - **Agent input:** selections reach Claude Code through its editor protocol. ⌘L, paste, drag and a picker add lines, files and images to Claude Code or Codex.
 - **Changes:** a sidebar section and diff items in the main window, live, in tabs and Peeks, with `tiri changes` and `tiri diff`. Read-only: no staging or committing.
+- **Fetch, pull and push:** a bar along the bottom of the window with each repository's branch, uncommitted marker and commits to pull and push, plus Fetch, Pull (fast-forward only), Push (asks first) and Publish, and `tiri git`. No merging, no force push, no automatic fetch.
 - **Path search:** a path that doesn't exist as written is searched for across the workspace's folders, its terminals' folders and its open files. One match opens, several offer a choice, none shows a toast. Never an alert.
 - **First run:** the empty screen offers the agents the user's own shell can find, or links to get them. Settings can link `tiri` into `~/.local/bin` for other terminals.
 - **Tree → terminal:** drag inserts a shell-quoted path.

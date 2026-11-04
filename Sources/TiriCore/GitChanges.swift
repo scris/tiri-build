@@ -151,7 +151,62 @@ public enum DiffParser {
     }
 }
 
-/// Runs git, read-only, for the changes view.
+/// Where a repository stands: what the status bar shows.
+public struct RepositoryStatus: Sendable, Equatable, Identifiable {
+    public var root: String
+    /// Nil when HEAD is detached.
+    public var branch: String?
+    public var shortOID: String?
+    /// What the branch tracks, like `origin/main`. Nil if it doesn't track anything yet.
+    public var upstream: String?
+    public var ahead = 0
+    public var behind = 0
+    public var isDirty = false
+    /// Where fetching and pushing go: what the branch tracks, or else `origin`, or else the only choice.
+    public var remote: String?
+    /// Git's own folders, which can be outside the workspace.
+    public var gitDirectories: [String] = []
+    public var id: String { root }
+
+    public init(root: String) { self.root = root }
+
+    public var name: String { (root as NSString).lastPathComponent }
+    public var title: String { branch ?? shortOID ?? "No commits" }
+    /// Pushing needs a branch with something on it, and somewhere to send it.
+    public var canPublish: Bool { branch != nil && upstream == nil && remote != nil && shortOID != nil }
+    public var canPush: Bool { branch != nil && upstream != nil && ahead > 0 }
+    public var canPull: Bool { branch != nil && upstream != nil }
+    /// `git push` with what it has to know: a new branch names where to go, and remembers it.
+    public var pushArguments: [String] { upstream != nil ? ["push"] : ["push", "-u", remote ?? "origin", "HEAD"] }
+
+    /// The headers of `git status --porcelain=v2 --branch`. Any other line is a change.
+    mutating func read(statusOutput output: String) {
+        for line in output.split(separator: "\n") {
+            guard line.hasPrefix("# ") else {
+                isDirty = true
+                continue
+            }
+            let fields = line.split(separator: " ").map(String.init)
+            guard fields.count >= 3 else { continue }
+            switch fields[1] {
+            case "branch.oid": shortOID = fields[2] == "(initial)" ? nil : String(fields[2].prefix(7))
+            case "branch.head": branch = fields[2] == "(detached)" ? nil : fields[2]
+            case "branch.upstream": upstream = fields[2]
+            case "branch.ab" where fields.count >= 4:
+                ahead = Int(fields[2].dropFirst()) ?? 0
+                behind = Int(fields[3].dropFirst()) ?? 0
+            default: break
+            }
+        }
+    }
+
+    static func chooseRemote(tracked: String?, all: [String]) -> String? {
+        if let tracked, tracked != "." { return tracked }
+        return all.contains("origin") ? "origin" : all.first
+    }
+}
+
+/// Runs git, for the changes view and the status bar. Only `transfer` touches a remote.
 public enum Git {
     static func runGit(_ arguments: [String], in directory: String) -> (status: Int32, output: Data)? {
         run(arguments, in: directory)
@@ -159,7 +214,8 @@ public enum Git {
 
     /// Spawned and waited for directly. Foundation's Process can wait forever for a child that has
     /// already exited, which would silently stop the changes list. A hung git gets killed.
-    private static func run(_ arguments: [String], in directory: String, timeout: Double = 20) -> (status: Int32, output: Data)? {
+    private static func run(_ arguments: [String], in directory: String, timeout: Double = 20,
+                            includeErrors: Bool = false, extraEnvironment: [String: String] = [:]) -> (status: Int32, output: Data)? {
         var pipes: [Int32] = [0, 0]
         guard pipe(&pipes) == 0 else { return nil }
         let (readEnd, writeEnd) = (pipes[0], pipes[1])
@@ -169,7 +225,11 @@ public enum Git {
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_addchdir_np(&actions, directory)
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
-        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        if includeErrors {
+            posix_spawn_file_actions_adddup2(&actions, writeEnd, 2)
+        } else {
+            posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        }
         posix_spawn_file_actions_adddup2(&actions, writeEnd, 1)
         posix_spawn_file_actions_addclose(&actions, readEnd)
         var attributes: posix_spawnattr_t?
@@ -183,6 +243,7 @@ public enum Git {
         // Looking at a repository shouldn't write to it, or the watcher hears git and asks again.
         environment["GIT_OPTIONAL_LOCKS"] = "0"
         environment["LC_ALL"] = "C"
+        environment.merge(extraEnvironment) { _, new in new }
         let argv: [UnsafeMutablePointer<CChar>?] = (["git"] + arguments).map { strdup($0) } + [nil]
         let envp: [UnsafeMutablePointer<CChar>?] = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer {
@@ -226,6 +287,72 @@ public enum Git {
         guard let result = run(["rev-parse", "--show-toplevel"], in: folder), result.status == 0 else { return nil }
         let text = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
+    }
+
+    /// Where a repository stands, or nil if the folder isn't in one.
+    public static func repositoryStatus(of folder: String) -> RepositoryStatus? {
+        guard let root = repositoryRoot(of: folder),
+              let result = run(["status", "--porcelain=v2", "--branch", "--untracked-files=normal"], in: root),
+              result.status == 0 else { return nil }
+        var status = RepositoryStatus(root: root)
+        status.read(statusOutput: String(decoding: result.output, as: UTF8.self))
+        func lines(_ arguments: [String]) -> [String] {
+            guard let result = run(arguments, in: root), result.status == 0 else { return [] }
+            return String(decoding: result.output, as: UTF8.self).split(whereSeparator: \.isNewline).map(String.init)
+        }
+        let tracked = status.branch.flatMap { lines(["config", "--get", "branch.\($0).remote"]).first }
+        status.remote = RepositoryStatus.chooseRemote(tracked: tracked, all: lines(["remote"]))
+        status.gitDirectories = Array(Set(lines(["rev-parse", "--absolute-git-dir", "--path-format=absolute", "--git-common-dir"]))).sorted()
+        return status
+    }
+
+    /// One for each repository the workspace's folders are in, in the order of the folders.
+    public static func repositoriesAcross(_ folders: [String]) -> [RepositoryStatus] {
+        var seen = Set<String>()
+        return folders.compactMap { folder in
+            guard let status = repositoryStatus(of: folder), seen.insert(status.root).inserted else { return nil }
+            return status
+        }
+    }
+
+    public struct TransferFailure: Error, Equatable, Sendable {
+        public var message: String
+        public init(message: String) { self.message = message }
+    }
+
+    /// Only ever moves a branch forward: a pull from here can't start a merge or leave conflicts.
+    public static let pullArguments = ["pull", "--ff-only"]
+
+    /// `git fetch`, `git pull` or `git push`. Nobody's there to answer, so a remote that needs a password fails
+    /// rather than waits. `path` is the user's own, because an app opened from Finder doesn't
+    /// have it, and credential helpers and push hooks do need it. Hooks can run a long time.
+    public static func transfer(_ arguments: [String], in root: String, path: String?, timeout: Double = 600) -> Result<Void, TransferFailure> {
+        var environment = ["GIT_TERMINAL_PROMPT": "0"]
+        if let path { environment["PATH"] = path }
+        guard let result = run(arguments, in: root, timeout: timeout, includeErrors: true, extraEnvironment: environment) else {
+            return .failure(TransferFailure(message: "Couldn't run git."))
+        }
+        guard result.status != 0 else { return .success(()) }
+        return .failure(TransferFailure(message: failureMessage(String(decoding: result.output, as: UTF8.self))))
+    }
+
+    /// What git said, in fewer words. Hints and progress aren't what went wrong.
+    static func failureMessage(_ output: String) -> String {
+        if output.contains("Not possible to fast-forward") || output.contains("Diverging branches") {
+            return "Both this branch and the remote have moved on. Merge or rebase first."
+        }
+        if output.contains("would be overwritten by merge") {
+            return "Uncommitted changes touch the same files. Commit or stash them first."
+        }
+        if output.contains("[rejected]") || output.contains("non-fast-forward") || output.contains("fetch first") {
+            return "The remote has commits you don't have yet. Pull them first, then push."
+        }
+        let lines = output.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("hint:") }
+        let reasons = lines.filter { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") || $0.hasPrefix("remote: error") }
+        let chosen = reasons.isEmpty ? Array(lines.suffix(2)) : Array(reasons.prefix(2))
+        let text = chosen.joined(separator: " ")
+        return text.isEmpty ? "Git stopped without saying why." : text
     }
 
     /// Changes under a workspace folder, reported by the path that folder is known by.
