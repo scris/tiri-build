@@ -12,6 +12,21 @@ import Testing
         return request
     }
 
+    @Test func notebooks() throws {
+        let run = try request("notebook", "run", "a.ipynb")
+        #expect(run.cmd == "notebook.run")
+        #expect(run.args["path"]?.stringValue == "/work/a.ipynb")
+        #expect(run.args["cell"] == nil)
+        #expect(try request("notebook", "run", "a.ipynb", "--cell", "3").args["cell"]?.intValue == 3)
+        for action in ["status", "interrupt", "restart", "stop"] {
+            #expect(try request("notebook", action, "a.ipynb").cmd == "notebook." + action)
+        }
+        #expect(throws: CLIParser.UsageError.self) { try request("notebook", "run") }
+        #expect(throws: CLIParser.UsageError.self) { try request("notebook", "explode", "a.ipynb") }
+        #expect(throws: CLIParser.UsageError.self) { try request("notebook", "status", "a.ipynb", "--cell", "1") }
+        #expect(throws: CLIParser.UsageError.self) { try request("notebook", "run", "a.ipynb", "--cell", "-1") }
+    }
+
     @Test func changesScopes() throws {
         #expect(try request("changes").cmd == "changes")
         #expect(try request("changes", "--branch").cmd == "changes.branch")

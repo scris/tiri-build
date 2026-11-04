@@ -6,6 +6,11 @@ cd "$(dirname "$0")/.."
 
 # TIRI_APP tests another copy, such as one kept apart from the app you're using.
 APP="${TIRI_APP:-$PWD/build/Tiri.app}"
+# Nothing to test is a stop, and so is a copy that's already open: this script kills what it starts,
+# and with no exact path to look for, that could be someone's own Tiri.
+if [ ! -x "$APP/Contents/MacOS/Tiri" ]; then echo "No app at $APP" >&2; exit 1; fi
+APP_REAL="$(cd "$APP" && pwd -P)"
+if pgrep -f "$APP_REAL/Contents/MacOS/Tiri" >/dev/null; then echo "$APP is already running. Test a copy: scripts/dev-app.sh start e2e" >&2; exit 1; fi
 CLI="$APP/Contents/Resources/bin/tiri"
 WORK="$(mktemp -d)"
 export TIRI_HOME="$WORK/home" TIRI_CONFIG_HOME="$WORK/config" TIRI_SOCKET="/tmp/tiri-e2e-$$.sock"
@@ -63,8 +68,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$APP/Contents/MacOS/Tiri" >/dev/null 2>&1 &
-APP_PID=$!
+# In the background, out of sight: someone may be using this Mac.
+launch_app() {
+  open -g -n -a "$APP" --env TIRI_HOME="$TIRI_HOME" --env TIRI_CONFIG_HOME="$TIRI_CONFIG_HOME" --env TIRI_SOCKET="$TIRI_SOCKET" --env TIRI_DEV_OFFSCREEN=1
+  for _ in $(seq 1 50); do
+    # By its whole path, checked above: this must never pick up an app it didn't start.
+    APP_PID="$(pgrep -n -f "$APP_REAL/Contents/MacOS/Tiri" || true)"
+    [ -n "$APP_PID" ] && break
+    sleep 0.1
+  done
+}
+
+launch_app
 for _ in $(seq 1 100); do "$CLI" ping >/dev/null 2>&1 && break; sleep 0.1; done
 
 expect "ping" "pong" "$CLI" ping
@@ -214,8 +229,7 @@ sleep 1
 sleep 1
 if pgrep -f "tiri-session attach .*$SESSION_ID" >/dev/null; then passed=$((passed + 1)); echo "ok    the session outlives the app"; else failed=$((failed + 1)); echo "FAIL  the session outlives the app"; fi
 sleep 3
-"$APP/Contents/MacOS/Tiri" >/dev/null 2>&1 &
-APP_PID=$!
+launch_app
 for _ in $(seq 1 100); do "$CLI" ping >/dev/null 2>&1 && break; sleep 0.1; done
 sleep 1
 check "focus the terminal after relaunch" "$CLI" focus "$SESSION_ID"

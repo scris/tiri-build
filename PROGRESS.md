@@ -35,6 +35,8 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | A Mac as the server | The helper is built and its commands were run on this Mac, but no full session against Remote Login | Connect to a Mac |
 | A password rather than a key, and one-time codes | Passphrases and unknown hosts had real keystrokes. Passwords and codes go through the same prompt | Connect to a host that asks |
 | Waking from real sleep on a server workspace | Dropped connections are tested, and wake triggers the same retry, but the Mac was kept awake | Close the lid, open it |
+| Running a notebook with a real mouse and keyboard | Everything runs for real, with a real kernel, but in a window that was kept in the background: ▶, double-click, ⇧↩ and Esc were sent to the page as events, and hover was only seen as a style. Answering an `input()` prompt was tested against the kernel, and the prompt was only seen | Run All, ▶ on hover, double-click, ⇧↩, a cell with `input()` |
+| A notebook on a Linux server | Tested through a private SSH server on this Mac: run, edit, dropped connection. Its changes reach the Mac on inotify on Linux, which hasn't run with this | Run one on a real server |
 | Quote in Agent from a notebook with a real agent | Tested with a stand-in command | Select in a notebook, press ⌘L with Claude Code running |
 | ⌘T with sourcekit-lsp on a built package | Tested with clangd. An unbuilt Swift package has no index, so it reports nothing | Build, press ⌘T, type a name |
 | The paperclip's picker, Back on a diff in a Peek, the pointer over a change mark | Everything else in these flows had real clicks. These weren't pressed through | Try each once |
@@ -85,7 +87,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 
 - Find doesn't cover images, video or Quick Look files. Web and markdown find has no match count.
 - One main window. Any tab can move to its own window, but a second window can't hold its own workspace. A second instance can't take the control socket and says so.
-- Notebooks are for reading. They don't run: an agent runs one with `jupyter nbconvert --execute`, and the view updates.
+- Notebook cells are edited as plain text, without highlighting until you leave the cell, and there's no completion in them.
 - Notebook outputs that need scripts (Plotly, widgets) show a picture if they have one, or a note. The Source button on a very large notebook can stall for seconds.
 - A server: a workspace is on one server, not several, and not a mixture with local folders. Agents can't be told apart between two Macs on one server's Claude settings. If the connection comes back on another forwarded port, an agent already running there needs `/ide` to find the editor again.
 

@@ -36,6 +36,12 @@ public enum CLIOutput {
             }
         case "askpass":
             say(cell(response.result?["answer"]))
+        case "notebook.status", "notebook.run", "notebook.interrupt", "notebook.restart", "notebook.stop":
+            var parts = [cell(response.result?["state"])]
+            if let running = response.result?["running"]?.intValue { parts.append("running cell \(running)") }
+            if let queued = response.result?["queued"]?.arrayValue, !queued.isEmpty { parts.append("\(queued.count) queued") }
+            if let python = response.result?["python"]?.stringValue { parts.append(python) }
+            say(parts.joined(separator: "\t"))
         case "remote.list":
             for entry in response.result?.arrayValue ?? [] {
                 say([cell(entry["host"]), cell(entry["state"]), cell(entry["detail"])].joined(separator: "\t"))

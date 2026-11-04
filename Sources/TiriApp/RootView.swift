@@ -679,6 +679,9 @@ struct FileActions: View {
             .font(.caption)
             .help("Open \((pdf as NSString).lastPathComponent) to the Side")
         }
+        if model.accessReady, let notebook = model.controller(for: item.id) as? MarkdownController, notebook.isNotebook, !notebook.showingSource, notebook.canToggleSource {
+            NotebookBar(viewer: notebook, kernel: model.notebookKernels.kernel(for: notebook.path))
+        }
         if model.accessReady, let markdown = model.controller(for: item.id) as? MarkdownController, markdown.canToggleSource {
             Button {
                 model.toggleMarkdownSource(item.id)
@@ -1068,5 +1071,65 @@ struct TabDragOverlay: View {
             case .down: return CGRect(x: frame.minX, y: frame.midY, width: frame.width, height: frame.height / 2)
             }
         }
+    }
+}
+
+/// Above a notebook: run it or stop it, and what's running it.
+private struct NotebookBar: View {
+    let viewer: MarkdownController
+    let kernel: NotebookKernel
+    @Environment(AppModel.self) private var model
+
+    private var status: String {
+        switch kernel.state {
+        case .off: kernel.title ?? "Kernel"
+        case .finding: "Finding Python…"
+        case .starting: "Starting…"
+        case .reconnecting: "Reconnecting…"
+        case .stopped: "Stopped"
+        case .idle, .busy: kernel.title ?? "Kernel"
+        }
+    }
+
+    var body: some View {
+        if kernel.isActive {
+            Button {
+                kernel.interrupt()
+            } label: {
+                Label("Stop", systemImage: "stop.fill").labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .font(.caption)
+            .help("Interrupt the kernel")
+        } else {
+            Button {
+                viewer.runAllCells()
+            } label: {
+                Label("Run All", systemImage: "play.fill").labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .font(.caption)
+            .help("Run every cell, top to bottom")
+        }
+        Menu {
+            Button("Restart Kernel") { kernel.restart() }.disabled(!kernel.hasKernel)
+            Button("Shut Down Kernel") { kernel.stop() }.disabled(!kernel.hasKernel)
+            Divider()
+            Button("Clear All Outputs") { viewer.clearOutputs() }
+            Button("Add Code Cell") { viewer.addCell(kind: .code) }
+            Button("Add Markdown Cell") { viewer.addCell(kind: .markdown) }
+            Button("Delete Cell") { viewer.deleteCurrentCell() }
+            Divider()
+            Button("Choose Python…") { model.notebookKernels.chooseKernel(for: viewer.path) }
+        } label: {
+            Text(status).font(.caption).foregroundStyle(.secondary)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(kernel.pythonPath ?? "Which Python runs this notebook")
     }
 }

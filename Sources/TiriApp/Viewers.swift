@@ -127,7 +127,7 @@ enum MarkdownWebViews {
     }
 }
 
-final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
+final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, WKScriptMessageHandler {
     nonisolated enum Format: Sendable { case markdown, notebook }
 
     let format: Format
@@ -162,6 +162,15 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     private var hasRenderedPage = false
     private var showingOpeningNote = false
     private lazy var noticeView = SourceNoticeView()
+    // A notebook's cells, when it's being run or typed in.
+    private var shownCells: [Notebook.Cell] = []
+    private var currentCell: Int?
+    private var editingCell: Int?
+    /// What the file held in that cell when typing began, or at the last save.
+    private var editingBase: String?
+    private var renderAfterEditing = false
+    private var editAfterRender: Int?
+    private var outputGenerations: [Int: Int] = [:]
 
     var view: NSView { container }
 
@@ -182,6 +191,10 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         super.init()
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.fileChanged() }
         render(keepScroll: false)
+        if format == .notebook {
+            model.notebookKernels.register(self)
+            model.notebookKernels.kernel(for: path).adoptIfRunning()
+        }
     }
 
     private func makeWebView() -> TiriWebView {
@@ -190,6 +203,11 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         view.navigationDelegate = self
         view.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         view.onSelectionChange = { [weak self] selection, top in self?.renderedSelectionChanged(selection, top: top) }
+        if format == .notebook {
+            let controller = view.configuration.userContentController
+            controller.removeScriptMessageHandler(forName: NotebookPage.handler, contentWorld: .defaultClient)
+            controller.add(WeakMessageHandler(self), contentWorld: .defaultClient, name: NotebookPage.handler)
+        }
         return view
     }
 
@@ -263,7 +281,9 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
                 await MainActor.run {
                     guard let self, self.renderGeneration == generation else { return }
                     switch result {
-                    case .success(let rendered): self.notebookRendered(rendered, base: base, keepScroll: keepScroll)
+                    case .success(let (rendered, cells)):
+                        self.shownCells = cells
+                        self.notebookRendered(rendered, base: base, keepScroll: keepScroll)
                     case .failure(let failure): self.notebookFailed(failure)
                     }
                 }
@@ -294,7 +314,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         }
     }
 
-    nonisolated private static func renderNotebook(path: String, base: URL, title: String, diagrams: [String: DocumentExtras.Diagram]) -> Result<RenderedDocument, Notebook.Failure> {
+    nonisolated private static func renderNotebook(path: String, base: URL, title: String, diagrams: [String: DocumentExtras.Diagram]) -> Result<(RenderedDocument, [Notebook.Cell]), Notebook.Failure> {
         let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int) ?? 0
         if size > Notebook.maximumBytes { return .failure(.tooLarge(bytes: size)) }
         // Not mapped: an agent cutting a mapped file short while it's being parsed would crash the app.
@@ -302,8 +322,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         do {
             let notebook = try Notebook.parse(data)
             let rendered = NotebookRenderer.render(notebook, baseHref: base.absoluteString, title: title, extras: extras(diagrams: diagrams),
-                                                   highlight: { CodeGrammar.shared.html(text: $0, language: $1) })
-            return .success(rendered)
+                                                   highlight: { CodeGrammar.shared.html(text: $0, language: $1) }, interactive: true)
+            return .success((rendered, notebook.cells))
         } catch {
             return .failure(error)
         }
@@ -420,6 +440,30 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         if !FileManager.default.fileExists(atPath: path) { return }
         if inSource { source?.reload() }
         guard !showingSource else { return }
+        if format == .notebook, fallbackNotice == nil {
+            // What's being typed stays until it's done with.
+            if editingCell != nil {
+                renderAfterEditing = true
+                return
+            }
+            // A kernel's results already showed as they came, and reloading the page for them would
+            // lose the reader's selection for nothing. So only what really differs from the page counts.
+            // While one runs, its saves lag behind what's showing, so then only the code counts.
+            let path = path
+            let shown = shownCells
+            let running = model.notebookKernels.existing(for: path)?.isActive == true
+            let generation = renderGeneration
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let cells = (try? Data(contentsOf: URL(fileURLWithPath: path))).flatMap { try? Notebook.parse($0) }?.cells
+                if let cells, cells == shown { return }
+                if let cells, running, cells.map(\.source) == shown.map(\.source) { return }
+                await MainActor.run {
+                    guard let self, self.renderGeneration == generation else { return }
+                    self.render(keepScroll: true)
+                }
+            }
+            return
+        }
         // Behind a notice, the source stays up unless the file now renders.
         render(keepScroll: fallbackNotice == nil, behindSource: fallbackNotice != nil)
     }
@@ -448,6 +492,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
             if let anchor { self.scrollTo(anchor: anchor) }
         }
         restorePlace()
+        if format == .notebook { preparePage() }
         if pageHasPendingDiagrams {
             pageHasPendingDiagrams = false
             drawDiagrams(generation: renderGeneration, restoring: restorePlace)
@@ -532,6 +577,9 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     func teardown() {
         token = nil
         fallbackWork?.cancel()
+        if format == .notebook, hasRenderedPage {
+            webView.configuration.userContentController.removeScriptMessageHandler(forName: NotebookPage.handler, contentWorld: .defaultClient)
+        }
         if hasRenderedPage { webView.stopLoading() }
     }
 
@@ -2701,5 +2749,190 @@ final class QuickLookController: ForceDarkCapable {
     func teardown() {
         token = nil
         preview.close()
+    }
+}
+
+// MARK: - Running a notebook
+
+extension MarkdownController {
+    private var kernel: NotebookKernel { model.notebookKernels.kernel(for: path) }
+    var isNotebook: Bool { format == .notebook }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], let operation = body["op"] as? String else { return }
+        let cell = (body["cell"] as? NSNumber)?.intValue
+        switch operation {
+        case "select":
+            currentCell = cell
+        case "run":
+            if let cell { runCell(cell) }
+        case "edit":
+            if let cell { beginEditing(cell) }
+        case "save":
+            if let cell, let source = body["source"] as? String { saveSource(cell, source) }
+        case "endEdit":
+            endEditing(run: body["run"] as? Bool ?? false, cell: cell)
+        case "cancelEdit":
+            if let cell, let source = body["source"] as? String { saveSource(cell, source) }
+            endEditing(run: false, cell: cell)
+        case "add":
+            addCell(kind: body["kind"] as? String == "markdown" ? .markdown : .code)
+        default:
+            break
+        }
+    }
+
+    /// Runs after every load: what's going on has to show on the new page.
+    private func preparePage() {
+        webView.evaluateJavaScript(NotebookPage.script, in: nil, in: .defaultClient) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let currentCell = self.currentCell, self.editAfterRender == nil { self.callPage("tiriNB.select(cell)", ["cell": currentCell]) }
+                self.kernelStatusChanged(self.kernel)
+                if let cell = self.editAfterRender {
+                    self.editAfterRender = nil
+                    self.beginEditing(cell)
+                }
+            }
+        }
+    }
+
+    private func callPage(_ code: String, _ arguments: [String: Any]) {
+        webView.callAsyncJavaScript(code, arguments: arguments, in: nil, in: .defaultClient) { _ in }
+    }
+
+    /// Working on a Peek or a preview means wanting to keep it.
+    private func keep() {
+        if model.active.peek?.id == itemID {
+            model.promotePeek()
+        } else {
+            model.updateWorkspace(containing: itemID) { $0.pin(itemID) }
+        }
+    }
+
+    func runCell(_ index: Int) {
+        keep()
+        kernel.run(cells: [index])
+    }
+
+    func runAllCells() {
+        keep()
+        kernel.runAll()
+    }
+
+    func runCurrentCell() {
+        if let currentCell { runCell(currentCell) }
+    }
+
+    private func cells() -> [Notebook.Cell]? {
+        (try? Data(contentsOf: URL(fileURLWithPath: path))).flatMap { try? Notebook.parse($0) }?.cells
+    }
+
+    private func beginEditing(_ index: Int) {
+        guard editingCell == nil, let cells = cells(), cells.indices.contains(index) else { return }
+        keep()
+        editingCell = index
+        editingBase = cells[index].source
+        callPage("tiriNB.beginEdit(cell, source)", ["cell": index, "source": cells[index].source])
+    }
+
+    private func saveSource(_ index: Int, _ source: String) {
+        guard let base = editingBase, base != source else { return }
+        let sent = kernel.edit(["action": "source", "index": .int(index), "expected": .string(base), "source": .string(source)])
+        if sent {
+            editingBase = source
+            return
+        }
+        write { data in try NotebookEditing.replacingSource(in: data, cell: index, expecting: base, with: source) }
+        editingBase = source
+    }
+
+    private func endEditing(run: Bool, cell: Int?) {
+        editingCell = nil
+        editingBase = nil
+        renderAfterEditing = false
+        // The highlighted version of what was typed.
+        render(keepScroll: true)
+        guard run, let cell else { return }
+        // Its save went first, so what runs is what's on the screen.
+        if kernel.isAttached || RemoteRegistry.shared.connection(forLocal: path) == nil {
+            kernel.run(cells: [cell])
+        } else if let connection = RemoteRegistry.shared.connection(forLocal: path) {
+            connection.push(path) { [weak self] _ in
+                DispatchQueue.main.async { self?.kernel.run(cells: [cell]) }
+            }
+        }
+    }
+
+    func addCell(kind: NotebookEditing.NewCell) {
+        let count = cells()?.count ?? 0
+        let after = currentCell.map { min($0, count - 1) } ?? count - 1
+        keep()
+        editAfterRender = after + 1
+        currentCell = after + 1
+        if !kernel.edit(["action": "insert", "after": .int(after), "kind": .string(kind == .code ? "code" : "markdown")]) {
+            write { data in try NotebookEditing.insertingCell(in: data, after: after, kind: kind) }
+        }
+    }
+
+    func deleteCurrentCell() {
+        guard let index = currentCell else {
+            model.showNotebookNotice("Click a cell first.")
+            return
+        }
+        keep()
+        currentCell = nil
+        if !kernel.edit(["action": "delete", "index": .int(index)]) {
+            write { data in try NotebookEditing.deletingCell(in: data, cell: index) }
+        }
+    }
+
+    func clearOutputs() {
+        keep()
+        if !kernel.edit(["action": "clear"]) {
+            write { data in try NotebookEditing.clearingOutputs(in: data) }
+        }
+    }
+
+    private func write(_ change: (Data) throws -> Data) {
+        do {
+            let data = try Data(contentsOf: URL(fileURLWithPath: path))
+            try change(data).write(to: URL(fileURLWithPath: path), options: .atomic)
+            model.remote.didSave(path)
+        } catch NotebookEditing.Failure.changedMeanwhile {
+            model.showNotebookNotice("Something else changed this cell while you were editing it, so your edit wasn't saved.")
+        } catch {
+            model.showNotebookNotice("Couldn't change this notebook: \(error.localizedDescription)")
+        }
+    }
+
+    func kernelStatusChanged(_ kernel: NotebookKernel) {
+        guard hasRenderedPageForKernel else { return }
+        callPage("tiriNB.status(running, queued)", ["running": kernel.running as Any? ?? NSNull(), "queued": kernel.queued])
+    }
+
+    func kernelOutput(index: Int, count: Int?, running: Bool, outputs: [Notebook.Output]) {
+        guard hasRenderedPageForKernel else { return }
+        if shownCells.indices.contains(index) {
+            shownCells[index].outputs = outputs
+            shownCells[index].executionCount = running ? nil : count
+        }
+        let generation = (outputGenerations[index] ?? 0) + 1
+        outputGenerations[index] = generation
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let extras = DocumentExtras(renderMath: { MathEngine.shared.markup(tex: $0, display: $1, document: UUID()) }, mathStylesheet: { MathEngine.stylesheet })
+            let html = NotebookRenderer.outputsHTML(outputs, extras: extras)
+            await MainActor.run {
+                guard let self, self.outputGenerations[index] == generation else { return }
+                self.callPage("tiriNB.outputs(cell, html, count)", ["cell": index, "html": html, "count": count as Any? ?? NSNull()])
+            }
+        }
+    }
+
+    private var hasRenderedPageForKernel: Bool { isNotebook && !showingSource }
+
+    /// For a test copy: what a click or a key press in the page would set off.
+    func runInPage(_ script: String) {
+        webView.evaluateJavaScript(script, in: nil, in: .defaultClient) { _ in }
     }
 }

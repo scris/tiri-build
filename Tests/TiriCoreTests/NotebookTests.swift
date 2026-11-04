@@ -255,3 +255,112 @@ private let stub = DocumentExtras(renderMath: { tex, display in
         #expect(TerminalText.html(source) == expected)
     }
 }
+
+@Suite struct NotebookEditingTests {
+    // As nbformat writes them, with one space per level.
+    private let file = """
+    {
+     "cells": [
+      {
+       "cell_type": "markdown",
+       "id": "m1",
+       "metadata": {},
+       "source": [
+        "# Title \\"quoted\\" ]}\\n",
+        "more"
+       ]
+      },
+      {
+       "cell_type": "code",
+       "execution_count": 3,
+       "id": "c1",
+       "metadata": {"a": [1, {"b": "]"}]},
+       "outputs": [
+        {"name": "stdout", "output_type": "stream", "text": ["hi\\n"]}
+       ],
+       "source": [
+        "x = 1\\n",
+        "x"
+       ]
+      }
+     ],
+     "metadata": {"language_info": {"name": "python"}},
+     "nbformat": 4,
+     "nbformat_minor": 5
+    }
+
+    """
+
+    private var data: Data { Data(file.utf8) }
+
+    @Test func changingACellChangesNothingElse() throws {
+        let result = try NotebookEditing.replacingSource(in: data, cell: 1, expecting: "x = 1\nx", with: "y = 2\n")
+        let text = String(decoding: result, as: UTF8.self)
+        let expected = file.replacingOccurrences(of: "\"x = 1\\n\",\n    \"x\"", with: "\"y = 2\\n\"")
+        #expect(text == expected)
+        #expect(try Notebook.parse(result).cells[1].source == "y = 2\n")
+    }
+
+    @Test func textOfEveryKindSurvives() throws {
+        let source = "print(\"a\\tb\")\n# 中文 🎉\n\ttab\n"
+        let result = try NotebookEditing.replacingSource(in: data, cell: 1, expecting: nil, with: source)
+        #expect(try Notebook.parse(result).cells[1].source == source)
+        #expect(String(decoding: result, as: UTF8.self).contains("中文"))
+    }
+
+    @Test func anEditCantOverwriteSomeoneElses() {
+        #expect(throws: NotebookEditing.Failure.changedMeanwhile) {
+            try NotebookEditing.replacingSource(in: data, cell: 1, expecting: "what I saw", with: "z")
+        }
+        #expect(throws: NotebookEditing.Failure.noSuchCell) {
+            try NotebookEditing.replacingSource(in: data, cell: 9, expecting: nil, with: "z")
+        }
+        #expect(throws: NotebookEditing.Failure.notANotebook) {
+            try NotebookEditing.replacingSource(in: Data("{\"a\": 1}".utf8), cell: 0, expecting: nil, with: "z")
+        }
+    }
+
+    @Test func addingACell() throws {
+        for (after, position) in [(-1, 0), (0, 1), (1, 2)] {
+            let result = try Notebook.parse(NotebookEditing.insertingCell(in: data, after: after, kind: .code))
+            #expect(result.cells.count == 3)
+            #expect(result.cells[position].kind == .code)
+            #expect(result.cells[position].source.isEmpty)
+            #expect(result.cells[position].id?.isEmpty == false)
+        }
+        let markdown = try Notebook.parse(NotebookEditing.insertingCell(in: data, after: 0, kind: .markdown))
+        #expect(markdown.cells[1].kind == .markdown)
+    }
+
+    @Test func addingToAnEmptyNotebookAndOneTooOldForIDs() throws {
+        let empty = Data("{\n \"cells\": [],\n \"metadata\": {},\n \"nbformat\": 4,\n \"nbformat_minor\": 2\n}\n".utf8)
+        let result = try Notebook.parse(NotebookEditing.insertingCell(in: empty, after: -1, kind: .code))
+        #expect(result.cells.count == 1)
+        #expect(result.cells[0].id == nil)
+    }
+
+    @Test func deletingACell() throws {
+        let first = try NotebookEditing.deletingCell(in: data, cell: 0)
+        #expect(try Notebook.parse(first).cells.map(\.id) == ["c1"])
+        let last = try NotebookEditing.deletingCell(in: data, cell: 1)
+        #expect(try Notebook.parse(last).cells.map(\.id) == ["m1"])
+        let none = try NotebookEditing.deletingCell(in: first, cell: 0)
+        #expect(try Notebook.parse(none).cells.isEmpty)
+    }
+
+    @Test func clearingOutputs() throws {
+        let result = try Notebook.parse(NotebookEditing.clearingOutputs(in: data))
+        #expect(result.cells[1].outputs.isEmpty)
+        #expect(result.cells[1].executionCount == nil)
+        #expect(result.cells[1].source == "x = 1\nx")
+        #expect(result.cells[0].source.hasPrefix("# Title"))
+    }
+
+    @Test func emptyCellsOnlyShowWhereTheyCanBeTyped() {
+        let notebook = Notebook(cells: [Notebook.Cell(kind: .code, source: "", executionCount: nil, outputs: [], attachments: [:])], language: "python")
+        #expect(NotebookRenderer.render(notebook, baseHref: nil).html.contains("nb-cell\" ") == false)
+        let interactive = NotebookRenderer.render(notebook, baseHref: nil, interactive: true).html
+        #expect(interactive.contains("nb-run"))
+        #expect(interactive.contains("nb-add-code"))
+    }
+}

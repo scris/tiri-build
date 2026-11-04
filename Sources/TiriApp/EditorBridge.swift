@@ -838,6 +838,9 @@ final class TiriWebView: WKWebView, WKScriptMessageHandler {
         controller.addUserScript(WKUserScript(source: WebSelectionScript.source, injectionTime: .atDocumentEnd,
                                               forMainFrameOnly: true, in: .defaultClient))
         let view = TiriWebView(frame: .zero, configuration: configuration)
+        // A page out of sight stops drawing, which is right for everyone but a test copy.
+        let keepDrawing = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+        if ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", view.responds(to: keepDrawing) { view.perform(keepDrawing, with: nil) }
         controller.add(WeakMessageHandler(view), contentWorld: .defaultClient, name: WebSelectionScript.handlerName)
         return view
     }

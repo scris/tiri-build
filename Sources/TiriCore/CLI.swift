@@ -97,6 +97,25 @@ public enum CLIParser {
             return request("askpass", ["prompt": .string(args.joined(separator: " ")),
                                        "host": .string(ProcessInfo.processInfo.environment["TIRI_ASKPASS_HOST"] ?? "")])
 
+        case "dev-page":
+            guard args.count == 1 else { throw UsageError("usage: tiri dev-page <script>   (test copies only)") }
+            return request("dev.page", ["script": .string(args[0])])
+
+        case "notebook":
+            let usage = "usage: tiri notebook status|interrupt|restart|stop <path> | run <path> [--cell N]   (cells count from 0; results go in the file)"
+            var options = Options(args)
+            let rawCell = try options.value("--cell")
+            guard let action = options.positional(), ["status", "run", "interrupt", "restart", "stop"].contains(action), let path = options.positional() else {
+                throw UsageError(usage)
+            }
+            try options.finish()
+            var payload: [String: JSONValue] = ["path": .string(absolute(path, environment))]
+            if let rawCell {
+                guard action == "run", let cell = Int(rawCell), cell >= 0 else { throw UsageError(usage) }
+                payload["cell"] = .int(cell)
+            }
+            return request("notebook." + action, payload)
+
         case "worktree":
             guard args.count == 1 else { throw UsageError("usage: tiri worktree <branch>   (a second checkout, as a workspace, for another agent)") }
             var payload: [String: JSONValue] = ["branch": .string(args[0])]
@@ -753,6 +772,8 @@ public enum AgentGuide {
     tiri git                              # each repository's branch, and commits to pull and push
     tiri remote connect gpu ~/project     # a workspace on a server: terminals, files, changes and search all work there
     tiri remote forward 3000              # reach a port on the server from this Mac, and print the address
+    tiri notebook run report.ipynb        # run every cell; --cell N for one, counting from 0
+    tiri notebook status report.ipynb     # is it still going? Results are in the file as they arrive
     tiri diff src/app.ts                  # floats what changed over your terminal
     tiri diff src/app.ts --tab            # or keeps it as a tab
     ```

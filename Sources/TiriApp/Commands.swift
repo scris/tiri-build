@@ -77,6 +77,16 @@ extension AppModel {
             AppCommand(id: "importWorkspace", title: "Import .code-workspace…", category: "Workspace") { $0.importWorkspaceInteractive() },
             AppCommand(id: "renameWorkspace", title: "Rename Workspace…", category: "Workspace") { $0.promptRenameWorkspace($0.activeID) },
             AppCommand(id: "deleteWorkspace", title: "Delete Workspace…", category: "Workspace") { $0.confirmDeleteWorkspace($0.activeID) },
+            AppCommand(id: "notebookRunCell", title: "Notebook: Run Cell", category: "Notebook") { $0.notebookCommand("notebookRunCell") },
+            AppCommand(id: "notebookRunAll", title: "Notebook: Run All", category: "Notebook") { $0.notebookCommand("notebookRunAll") },
+            AppCommand(id: "notebookInterrupt", title: "Notebook: Interrupt", category: "Notebook") { $0.notebookCommand("notebookInterrupt") },
+            AppCommand(id: "notebookRestart", title: "Notebook: Restart Kernel", category: "Notebook") { $0.notebookCommand("notebookRestart") },
+            AppCommand(id: "notebookStop", title: "Notebook: Shut Down Kernel", category: "Notebook") { $0.notebookCommand("notebookStop") },
+            AppCommand(id: "notebookClear", title: "Notebook: Clear All Outputs", category: "Notebook") { $0.notebookCommand("notebookClear") },
+            AppCommand(id: "notebookChoosePython", title: "Notebook: Choose Python…", category: "Notebook") { $0.notebookCommand("notebookChoosePython") },
+            AppCommand(id: "notebookAddCode", title: "Notebook: Add Code Cell", category: "Notebook") { $0.notebookCommand("notebookAddCode") },
+            AppCommand(id: "notebookAddMarkdown", title: "Notebook: Add Markdown Cell", category: "Notebook") { $0.notebookCommand("notebookAddMarkdown") },
+            AppCommand(id: "notebookDeleteCell", title: "Notebook: Delete Cell", category: "Notebook") { $0.notebookCommand("notebookDeleteCell") },
             AppCommand(id: "toggleMarkdownSource", title: "Markdown or Notebook: Toggle Source", category: "View") { $0.toggleMarkdownSource() },
             AppCommand(id: "openInExternalEditor", title: "Open in External Editor", category: "File") { model in
                 let item = model.active.peek ?? model.active.activeItem
@@ -530,6 +540,32 @@ enum ControlHandler {
         case "activate":
             NSApp.activate(ignoringOtherApps: true)
             return .object([:])
+
+        case "dev.page":
+            guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", let script = request.args["script"]?.stringValue,
+                  let viewer = model.frontNotebook else { throw ControlFailure("Only for a test copy.") }
+            viewer.runInPage(script)
+            return .object([:])
+
+        case "notebook.status", "notebook.run", "notebook.interrupt", "notebook.restart", "notebook.stop":
+            guard let path = request.args["path"]?.stringValue, path.hasSuffix(".ipynb"), FileManager.default.fileExists(atPath: path) else {
+                throw ControlFailure("That isn't a notebook.")
+            }
+            let kernel = model.notebookKernels.kernel(for: path)
+            switch request.cmd {
+            case "notebook.run":
+                if let cell = request.args["cell"]?.intValue { kernel.run(cells: [cell]) } else { kernel.runAll() }
+            case "notebook.interrupt": kernel.interrupt()
+            case "notebook.restart": kernel.restart()
+            case "notebook.stop": kernel.stop()
+            default: kernel.adoptIfRunning()
+            }
+            var result: [String: JSONValue] = ["state": .string(String(describing: kernel.state))]
+            if let running = kernel.running { result["running"] = .int(running) }
+            result["queued"] = .array(kernel.queued.map(JSONValue.int))
+            if let title = kernel.title { result["python"] = .string(title) }
+            if let python = kernel.pythonPath { result["path"] = .string(python) }
+            return .object(result)
 
         case "remote.list":
             let hosts = Set(model.workspaces.compactMap(\.remote))

@@ -101,13 +101,24 @@ In a terminal, ⌘K clears, ⌘← and ⌘→ go to the ends of the line, ⌘⌫
 
 ## Read anything
 
-**Notebooks:** `.ipynb` files render read-only, with highlighted code, execution counts, text, errors, tables and images. HTML outputs can't run scripts or restyle the page, and big outputs are cut and say so. Files that can't be rendered show their source and say why.
+**Notebooks:** `.ipynb` files render with highlighted code, execution counts, text, errors, tables and images. HTML outputs can't run scripts or restyle the page, and big outputs are cut and say so. Files that can't be rendered show their source and say why.
 
 **Math and diagrams:** `$…$`, `$$…$$`, `\( \)`, `\[ \]` and Mermaid code blocks render in markdown and notebooks, using libraries bundled with the app. A diagram that can't be drawn shows its source.
 
 **LaTeX:** a `.tex` file with a same-named PDF beside it or in a build folder gets a PDF button. The PDF keeps your page and zoom when an agent recompiles.
 
 **CSV and TSV:** files of millions of rows open quickly, with numbers lined up and a sticky header.
+
+## Run a notebook
+
+Press **Run All** above a notebook, or hover over a cell and press ▶. Output appears as it comes. Click a cell and ⇧↩ runs it and moves to the next. Double-click a cell, or press Return, to change it: ⇧↩ runs it, Esc puts it back, and it saves as you type. The menu beside **Run All** restarts the kernel, clears outputs, adds and deletes cells, and chooses the Python.
+
+- **Your Python, nothing bundled.** Tiri looks for the project's `.venv`, then what a terminal there would get, then conda and pyenv, and uses the first with `ipykernel`. If none has it, it offers to ask your agent to install it. A kernel gets the same environment as a terminal, API keys and all.
+- **It outlives the window.** A long cell keeps running if you quit Tiri, close the lid or lose the connection, and every result goes straight into the `.ipynb`, so it's there whether or not you were watching. Tiri picks it back up when you return. Closing the tab stops the kernel, and asks first if a cell is running.
+- **On a server it runs on the server,** with that server's Python, the same as an agent would.
+- **Agents can do all of this:** `tiri notebook run report.ipynb [--cell N]`, and `status`, `interrupt`, `restart` and `stop`. They can read the results from the file. If an agent changes a cell while you're typing in it, your edit isn't saved and Tiri says so.
+
+Widgets that need scripts in the page, like `ipywidgets`, show a picture or text where they have one.
 
 ## Follow a name
 

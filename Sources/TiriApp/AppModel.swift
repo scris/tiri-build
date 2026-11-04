@@ -102,6 +102,7 @@ final class AppModel {
     var palette: PaletteModel?
     var sidebarVisibility: NavigationSplitViewVisibility = .all
     var peekHasKeyboard = false
+    @ObservationIgnored lazy var notebookKernels = NotebookKernels(model: self)
     /// False while a privacy check for the active workspace's paths is outstanding.
     var accessReady = false
     var systemAppearanceRevision = 0
@@ -323,6 +324,11 @@ final class AppModel {
 
     func windowDidAppear(_ window: NSWindow) {
         self.window = window
+        // A test copy, out of sight, where it can't get in anyone's way and can still be captured.
+        if ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1" {
+            window.collectionBehavior.insert(.stationary)
+            window.setFrameOrigin(NSPoint(x: 30000, y: 200))
+        }
         window.acceptsMouseMovedEvents = true
         window.isRestorable = false
         if launchMilliseconds == nil {
@@ -371,7 +377,7 @@ final class AppModel {
         afterStructureChange()
     }
 
-    private func updateWorkspace(containing item: ItemID, _ change: (inout Workspace) -> Void) {
+    func updateWorkspace(containing item: ItemID, _ change: (inout Workspace) -> Void) {
         guard let index = workspaces.firstIndex(where: { $0.item(item) != nil || $0.peek?.id == item }) else { return }
         change(&workspaces[index])
         afterStructureChange()
@@ -911,6 +917,39 @@ final class AppModel {
 
     // MARK: Peek
 
+    func showNotebookNotice(_ text: String) {
+        _ = showToast(title: text, detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
+    }
+
+    var frontNotebook: MarkdownController? {
+        let target = active.peek?.id ?? active.focused.active
+        guard let target, let viewer = existingController(for: target) as? MarkdownController, viewer.isNotebook else { return nil }
+        return viewer
+    }
+
+    private func onFrontNotebook(_ act: (MarkdownController) -> Void) {
+        if let viewer = frontNotebook { act(viewer) } else { showNotebookNotice("There's no notebook in front.") }
+    }
+
+    func notebookCommand(_ id: String) {
+        onFrontNotebook { viewer in
+            let kernel = notebookKernels.kernel(for: viewer.path)
+            switch id {
+            case "notebookRunCell": viewer.runCurrentCell()
+            case "notebookRunAll": viewer.runAllCells()
+            case "notebookInterrupt": kernel.interrupt()
+            case "notebookRestart": kernel.restart()
+            case "notebookStop": kernel.stop()
+            case "notebookClear": viewer.clearOutputs()
+            case "notebookChoosePython": notebookKernels.chooseKernel(for: viewer.path)
+            case "notebookAddCode": viewer.addCell(kind: .code)
+            case "notebookAddMarkdown": viewer.addCell(kind: .markdown)
+            case "notebookDeleteCell": viewer.deleteCurrentCell()
+            default: break
+            }
+        }
+    }
+
     func setPeekKeyboard(_ value: Bool) {
         if peekHasKeyboard != value { peekHasKeyboard = value }
     }
@@ -1160,6 +1199,20 @@ final class AppModel {
             dismissPeek()
             return
         }
+        // A kernel doing work is the same as a terminal doing work, but only one of them says so.
+        if confirm, let window, let path = notebookPath(of: id), notebookKernels.existing(for: path)?.isActive == true, otherTab(showing: path, than: id) == nil {
+            let alert = NSAlert()
+            alert.messageText = "This notebook is still running"
+            alert.informativeText = "Closing it stops its kernel."
+            alert.addButton(withTitle: "Close")
+            alert.addButton(withTitle: "Cancel")
+            alert.beginSheetModal(for: window) { [weak self] response in
+                MainActor.assumeIsolated {
+                    if response == .alertFirstButtonReturn { self?.closeNow(id) }
+                }
+            }
+            return
+        }
         if confirm, let controller = existingController(for: id), controller.isDirty, let window, let item = anyItem(id) {
             let alert = NSAlert()
             alert.messageText = "Save your changes to \(title(for: item))?"
@@ -1196,7 +1249,22 @@ final class AppModel {
         closeNow(id)
     }
 
+    private func notebookPath(of id: ItemID) -> String? {
+        guard let item = anyItem(id), case .file(let spec) = item.content, spec.path.hasSuffix(".ipynb") else { return nil }
+        return spec.path
+    }
+
+    private func otherTab(showing path: String, than id: ItemID) -> ItemID? {
+        for workspace in workspaces {
+            for item in workspace.items where item.id != id {
+                if case .file(let spec) = item.content, spec.path == path { return item.id }
+            }
+        }
+        return nil
+    }
+
     func closeNow(_ id: ItemID) {
+        if let path = notebookPath(of: id), otherTab(showing: path, than: id) == nil { notebookKernels.stopIfUnused(path: path) }
         updateWorkspace(containing: id) { $0.close(id) }
         if find?.targetItem == id { find = nil }
         requestFocus()
@@ -1403,6 +1471,9 @@ final class AppModel {
         }
         let wasActive = id == activeID
         let removedRemote = workspaces[index].remote
+        for item in workspaces[index].items {
+            if case .file(let spec) = item.content, spec.path.hasSuffix(".ipynb") { notebookKernels.stopIfUnused(path: spec.path) }
+        }
         workspaces.remove(at: index)
         if wasActive {
             peekHasKeyboard = false

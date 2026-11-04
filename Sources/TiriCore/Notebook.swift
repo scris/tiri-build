@@ -1,6 +1,6 @@
 import Foundation
 
-/// A Jupyter notebook, read-only. nbformat 4 and later: older files have a different shape.
+/// A Jupyter notebook, as read. NotebookEditing changes the file. nbformat 4 and later: older files have a different shape.
 public struct Notebook: Sendable, Equatable {
     public enum CellKind: Sendable, Equatable { case markdown, code, raw }
 
@@ -18,6 +18,8 @@ public struct Notebook: Sendable, Equatable {
         public var outputs: [Output]
         /// `attachment:name` in a markdown cell, as a data URL.
         public var attachments: [String: String]
+        /// From nbformat 4.5.
+        public var id: String? = nil
     }
 
     public var cells: [Cell]
@@ -99,10 +101,10 @@ public struct Notebook: Sendable, Equatable {
         }
         return Cell(kind: kind, source: text(raw["source"]), executionCount: (raw["execution_count"] as? NSNumber)?.intValue,
                     outputs: (raw["outputs"] as? [Any] ?? []).compactMap { ($0 as? [String: Any]).flatMap(output) },
-                    attachments: attachments)
+                    attachments: attachments, id: raw["id"] as? String)
     }
 
-    private static func output(_ raw: [String: Any]) -> Output? {
+    public static func output(_ raw: [String: Any]) -> Output? {
         switch raw["output_type"] as? String {
         case "stream":
             return .stream(name: raw["name"] as? String ?? "stdout", text: text(raw["text"]))
@@ -323,19 +325,22 @@ public enum NotebookRenderer {
     }
 
     public static func render(_ notebook: Notebook, baseHref: String?, title: String = "", extras: DocumentExtras = DocumentExtras(),
-                              highlight: (@Sendable (_ code: String, _ language: String) -> String?)? = nil, limits: Limits = Limits()) -> RenderedDocument {
+                              highlight: (@Sendable (_ code: String, _ language: String) -> String?)? = nil, limits: Limits = Limits(),
+                              interactive: Bool = false) -> RenderedDocument {
         var fragments = MarkdownRenderer.Fragments(extras: extras)
         var budget = limits.page
         var main = ""
         for (index, cell) in notebook.cells.enumerated() {
             let isEmpty = cell.source.allSatisfy(\.isWhitespace) && cell.outputs.isEmpty
-            if isEmpty { continue }
+            // An empty cell is somewhere to type, when there's a way to.
+            if isEmpty, !interactive || cell.kind == .raw { continue }
             // These go on cells, not lines: a selection names the cell it came from.
             let line = "data-line=\"\(index)\" data-line-end=\"\(index)\""
             switch cell.kind {
             case .markdown:
                 let html = fragments.html(markdown: withAttachments(cell), lineOffset: nil)
-                main += "<section class=\"nb-cell\" \(line)><div class=\"nb-prompt\"></div><div class=\"nb-body nb-markdown\">\(html)</div></section>\n"
+                let empty = isEmpty ? "<p class=\"nb-note\">Empty. Double-click to write.</p>" : ""
+                main += "<section class=\"nb-cell\" data-kind=\"markdown\" \(line)><div class=\"nb-prompt\"></div><div class=\"nb-body nb-markdown\">\(html)\(empty)</div></section>\n"
             case .raw:
                 main += "<section class=\"nb-cell\" \(line)><div class=\"nb-prompt\"></div><div class=\"nb-body\"><pre class=\"nb-raw\"><code>\(MarkdownRenderer.escapeText(cell.source))</code></pre></div></section>\n"
             case .code:
@@ -346,13 +351,27 @@ public enum NotebookRenderer {
                 var body = "<pre class=\"nb-input\"><code>\(code)</code></pre>"
                 let outputs = self.outputs(cell.outputs, fragments: &fragments, budget: &budget, limits: limits)
                 if !outputs.isEmpty { body += "<div class=\"nb-outputs\">\(outputs)</div>" }
-                main += "<section class=\"nb-cell\" \(line)><div class=\"nb-prompt\">[\(count)]</div><div class=\"nb-body\">\(body)</div></section>\n"
+                // Scripts can't run in this page. Tiri's own, in a world of their own, see these buttons.
+                let run = interactive ? "<button class=\"nb-run\" title=\"Run Cell (⇧↩)\" aria-label=\"Run Cell\">▶</button>" : ""
+                main += "<section class=\"nb-cell\" data-kind=\"code\" \(line)><div class=\"nb-prompt\">\(run)<span class=\"nb-count\">[\(count)]</span></div><div class=\"nb-body\">\(body)</div></section>\n"
             }
         }
-        if main.isEmpty { main = "<p class=\"nb-note\">This notebook has no cells.</p>" }
+        if main.isEmpty, !interactive { main = "<p class=\"nb-note\">This notebook has no cells.</p>" }
+        if interactive {
+            main += "<div class=\"nb-add\"><button class=\"nb-add-code\">+ Code</button><button class=\"nb-add-markdown\">+ Markdown</button></div>\n"
+        }
         let styles = MarkdownRenderer.stylesheet + notebookStyles + fragments.extraStyles()
         return RenderedDocument(html: MarkdownRenderer.wrap(main: main, baseHref: baseHref, title: title, stylesheet: styles),
                                 hasDiagrams: fragments.hasDiagrams, hasPendingDiagrams: fragments.hasPendingDiagrams)
+    }
+
+    /// One cell's outputs alone, for showing them as they arrive.
+    public static func outputsHTML(_ outputs: [Notebook.Output], extras: DocumentExtras = DocumentExtras(), limits: Limits = Limits()) -> String {
+        var fragments = MarkdownRenderer.Fragments(extras: extras)
+        var budget = limits.page
+        let html = self.outputs(outputs, fragments: &fragments, budget: &budget, limits: limits)
+        let styles = fragments.extraStyles()
+        return styles.isEmpty ? html : "<style>\(styles)</style>\(html)"
     }
 
     private static func withAttachments(_ cell: Notebook.Cell) -> String {
@@ -518,7 +537,18 @@ public enum NotebookRenderer {
     @media (prefers-color-scheme: dark) { :root { --c-comment:#a1a1a6; --c-function:#82b5fa; --c-type:#6bd1d1; --c-attr:#ed9e78; --c-string:#73d48f; --c-number:#e6bf7a; --c-keyword:#c791eb; --err:#3a2526; --warn:#35301f; } }
     main { max-width:1000px; padding:20px 28px 80px 12px; }
     .nb-cell { display:grid; grid-template-columns:44px minmax(0,1fr); column-gap:8px; margin:0 0 14px; }
-    .nb-prompt { font:12px/1.5 ui-monospace,"SF Mono",Menlo,monospace; color:var(--muted); text-align:right; padding-top:11px; white-space:nowrap; user-select:none; -webkit-user-select:none; }
+    .nb-prompt { font:12px/1.5 ui-monospace,"SF Mono",Menlo,monospace; color:var(--muted); text-align:right; padding-top:11px; white-space:nowrap; user-select:none; -webkit-user-select:none; position:relative; }
+    .nb-run { display:none; width:22px; height:22px; margin:-3px 0 0; padding:0; border:0; border-radius:5px; background:none; color:var(--muted); font-size:11px; line-height:22px; cursor:default; }
+    .nb-run:hover { background:var(--code); color:inherit; }
+    .nb-cell:hover .nb-run { display:inline-block; }
+    .nb-cell:hover .nb-count { display:none; }
+    .nb-cell.nb-running .nb-count { color:var(--c-keyword); display:inline; }
+    .nb-cell.nb-running .nb-run { display:none; }
+    .nb-cell.nb-current .nb-body { box-shadow:-6px 0 0 -4px color-mix(in srgb, currentColor 22%, transparent); }
+    .nb-edit { display:block; box-sizing:border-box; width:100%; margin:0; padding:11px 13px; border:1px solid color-mix(in srgb, currentColor 28%, transparent); border-radius:8px; outline:none; resize:none; overflow:hidden; background:var(--code); color:inherit; font:.86em/1.686 ui-monospace,"SF Mono",Menlo,monospace; tab-size:4; }
+    .nb-add { display:flex; gap:6px; margin:4px 0 0 52px; opacity:.55; }
+    .nb-add:hover { opacity:1; }
+    .nb-add button { padding:3px 9px; border:0; border-radius:6px; background:var(--code); color:inherit; font:12px -apple-system,sans-serif; cursor:default; }
     .nb-body { min-width:0; }
     .nb-markdown > :first-child { margin-top:0; } .nb-markdown > :last-child { margin-bottom:0; }
     pre.nb-input, pre.nb-raw { margin:0; }
