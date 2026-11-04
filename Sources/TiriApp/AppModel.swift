@@ -2180,6 +2180,8 @@ final class AppModel {
             FileWatchHub.shared.excludedNames = Set(settings.filesExclude)
             fileTree.bind(active)
             fileIndex.invalidate()
+        } else if previous.explorerCompactFolders != settings.explorerCompactFolders {
+            fileTree.bind(active)
         }
     }
 

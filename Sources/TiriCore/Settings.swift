@@ -55,6 +55,7 @@ public struct TiriSettings: Equatable, Sendable {
     public var externalEditors = ["zed", "code", "cursor"]
     public var filesExclude = [".git", "node_modules", ".build", ".DS_Store"]
     public var explorerAutoReveal = true
+    public var explorerCompactFolders = true
     public var webForceDark = true
     public var documentsForceDark = true
     public var notificationsEnabled = true
@@ -103,6 +104,8 @@ public struct TiriSettings: Equatable, Sendable {
       // Names or globs hidden from the tree and quick open.
       "files.exclude": [".git", "node_modules", ".build", ".DS_Store"],
       "explorer.autoReveal": true,
+      // One row for folders that only hold another folder, as in src/main/java.
+      "explorer.compactFolders": true,
 
       // In dark mode, darken web previews that have no dark mode of their own.
       "web.forceDark": true,
@@ -209,6 +212,7 @@ public struct TiriSettings: Equatable, Sendable {
         try strings("externalEditors") { settings.externalEditors = $0 }
         try strings("files.exclude") { settings.filesExclude = $0 }
         try bool("explorer.autoReveal") { settings.explorerAutoReveal = $0 }
+        try bool("explorer.compactFolders") { settings.explorerCompactFolders = $0 }
         try bool("web.forceDark") { settings.webForceDark = $0 }
         try bool("documents.forceDark") { settings.documentsForceDark = $0 }
         try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }

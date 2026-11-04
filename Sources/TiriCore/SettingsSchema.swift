@@ -109,6 +109,10 @@ public enum SettingsSchema {
               explanation: "Reveal the file you're looking at in the explorer.",
               kind: .toggle, value: { .bool($0.explorerAutoReveal) }),
 
+        .init(key: "explorer.compactFolders", section: "Files", title: "Compact folders",
+              explanation: "Show a folder that only holds another folder on one row with it, like src/main/java.",
+              kind: .toggle, value: { .bool($0.explorerCompactFolders) }),
+
         .init(key: "notifications.enabled", section: "Notifications", title: "Agent notifications",
               explanation: "Notify you when an agent finishes or needs input in a terminal you aren't looking at.",
               kind: .toggle, value: { .bool($0.notificationsEnabled) }),
