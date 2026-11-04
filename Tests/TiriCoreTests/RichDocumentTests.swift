@@ -150,3 +150,51 @@ private let stub = DocumentExtras(renderMath: { tex, display in
         #expect(MarkdownRenderer.anchor(forLine: 3, in: source) == "tom--jerry")
     }
 }
+
+@Suite struct DiagramTests {
+    private let source = "Before\n\n```mermaid\ngraph TD\n  A-->B\n  B-->C[\"<x>\"]\n```\n"
+
+    @Test func waitsToBeDrawnWithItsSourceInPlace() {
+        let rendered = MarkdownRenderer.render(markdown: source, baseHref: nil)
+        #expect(rendered.hasDiagrams)
+        #expect(rendered.hasPendingDiagrams)
+        #expect(rendered.html.contains("figure class=\"mermaid pending\""))
+        #expect(rendered.html.contains("A--&gt;B"))
+        #expect(rendered.html.contains("data-diagram=\"graph TD"))
+        #expect(rendered.html.contains("&quot;&lt;x&gt;&quot;"))
+    }
+
+    @Test func noDiagramsNoStyles() {
+        let rendered = MarkdownRenderer.render(markdown: "```python\nx\n```\n", baseHref: nil)
+        #expect(!rendered.hasDiagrams)
+        #expect(!rendered.html.contains("figure.mermaid"))
+    }
+
+    private func key(_ markdown: String) -> String {
+        let html = MarkdownRenderer.render(markdown: markdown, baseHref: nil).html
+        let start = html.range(of: "data-key=\"")!.upperBound
+        return String(html[start...].prefix { $0 != "\"" })
+    }
+
+    @Test func aDrawnDiagramGoesStraightIn() {
+        let extras = DocumentExtras(diagrams: [key(source): .drawn(svg: "<svg id=\"s\"></svg>")])
+        let rendered = MarkdownRenderer.render(markdown: source, baseHref: nil, extras: extras)
+        #expect(rendered.hasDiagrams)
+        #expect(!rendered.hasPendingDiagrams)
+        #expect(rendered.html.contains("<svg id=\"s\"></svg>"))
+    }
+
+    @Test func aBrokenDiagramKeepsShowingItsSource() {
+        let extras = DocumentExtras(diagrams: [key(source): .failed(reason: "Can't <draw>")])
+        let rendered = MarkdownRenderer.render(markdown: source, baseHref: nil, extras: extras)
+        #expect(!rendered.hasPendingDiagrams)
+        #expect(rendered.html.contains("mermaid broken"))
+        #expect(rendered.html.contains("A--&gt;B\n"))
+        #expect(rendered.html.contains("Can't &lt;draw&gt;"))
+    }
+
+    @Test func keysDependOnlyOnTheSource() {
+        #expect(key(source) == key("Other text\n\n" + source))
+        #expect(key(source) != key(source.replacingOccurrences(of: "A-->B", with: "A-->D")))
+    }
+}

@@ -144,6 +144,11 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     private var pendingLine: (Int?, Int?)
     /// Each new render replaces any still under way.
     private var renderGeneration = 0
+    private var pageHasDiagrams = false
+    private var pageHasPendingDiagrams = false
+    private var renderedDark = false
+    /// Drawn diagrams for each theme, by source, so a reload shows them straight away.
+    private var drawnDiagrams: [Bool: [String: DocumentExtras.Diagram]] = [:]
 
     var view: NSView { container }
 
@@ -214,6 +219,9 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         let path = path
         let line = pendingLine.0
         pendingLine = (nil, nil)
+        let dark = model.effectiveDark
+        renderedDark = dark
+        let diagrams = drawnDiagrams[dark] ?? [:]
         let directory = (path as NSString).deletingLastPathComponent
         let base = LocalFileSchemeHandler.baseURL(forDirectory: directory)
         let title = (path as NSString).lastPathComponent
@@ -223,7 +231,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
                 ?? String(data: FileManager.default.contents(atPath: path) ?? Data(), encoding: .isoLatin1)
                 ?? ""
             let rendered = MarkdownRenderer.render(markdown: source, baseHref: base.absoluteString, title: title,
-                                                   extras: Self.extras())
+                                                   extras: Self.extras(diagrams: diagrams))
             // Rendered stays rendered: `report.md:40` lands on the section holding line 40.
             let anchor = line.flatMap { MarkdownRenderer.anchor(forLine: $0, in: source) }
             await MainActor.run {
@@ -233,13 +241,15 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         }
     }
 
-    nonisolated private static func extras() -> DocumentExtras {
+    nonisolated private static func extras(diagrams: [String: DocumentExtras.Diagram]) -> DocumentExtras {
         let document = UUID()
         return DocumentExtras(renderMath: { MathEngine.shared.markup(tex: $0, display: $1, document: document) },
-                              mathStylesheet: { MathEngine.stylesheet })
+                              mathStylesheet: { MathEngine.stylesheet }, diagrams: diagrams)
     }
 
     private func load(_ rendered: RenderedDocument, base: URL, anchor: String?, keepScroll: Bool) {
+        pageHasDiagrams = rendered.hasDiagrams
+        pageHasPendingDiagrams = rendered.hasPendingDiagrams
         if let anchor { pendingAnchor = anchor }
         if keepScroll {
             // Agents rewrite files as they work. A reload shouldn't lose your place.
@@ -253,6 +263,51 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         } else {
             webView.loadHTMLString(rendered.html, baseURL: base)
         }
+    }
+
+    /// Runs once the page is showing. Diagrams change its height, so a place it was asked to keep
+    /// gets restored again afterwards.
+    private func drawDiagrams(generation: Int, restoring place: @escaping @MainActor @Sendable () -> Void) {
+        let dark = renderedDark
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let library = WebLibrary.text("mermaid/mermaid.min.js")
+            await MainActor.run {
+                guard let self, self.renderGeneration == generation else { return }
+                guard let library else {
+                    self.webView.evaluateJavaScript(DiagramDrawing.giveUp, in: nil, in: DiagramDrawing.world) { _ in }
+                    return
+                }
+                self.webView.evaluateJavaScript(library + "\n;0", in: nil, in: DiagramDrawing.world) { _ in
+                    MainActor.assumeIsolated {
+                        guard self.renderGeneration == generation else { return }
+                        self.webView.callAsyncJavaScript(DiagramDrawing.draw, arguments: ["dark": dark], in: nil, in: DiagramDrawing.world) { result in
+                            MainActor.assumeIsolated {
+                                if case .success(let value) = result { self.remember(value, dark: dark) } else {
+                                    self.webView.evaluateJavaScript(DiagramDrawing.giveUp, in: nil, in: DiagramDrawing.world) { _ in }
+                                }
+                                if self.renderGeneration == generation { place() }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func remember(_ results: Any?, dark: Bool) {
+        guard let results = results as? [[String: Any]] else { return }
+        var known = drawnDiagrams[dark] ?? [:]
+        // Plenty for one document, and a file an agent keeps rewriting can't grow this for ever.
+        if known.count > 64 { known = [:] }
+        for result in results {
+            guard let key = result["key"] as? String else { continue }
+            if let svg = result["svg"] as? String {
+                known[key] = .drawn(svg: svg)
+            } else if let reason = result["reason"] as? String {
+                known[key] = .failed(reason: reason)
+            }
+        }
+        drawnDiagrams[dark] = known
     }
 
     private func fileChanged() {
@@ -277,13 +332,19 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         model.viewerReady(itemID)
-        if let y = pendingScrollY {
-            pendingScrollY = nil
-            webView.evaluateJavaScript("window.scrollTo(0, \(y))", completionHandler: nil)
+        let scrollY = pendingScrollY
+        let anchor = pendingAnchor
+        pendingScrollY = nil
+        pendingAnchor = nil
+        let restorePlace: @MainActor @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            if let scrollY { self.webView.evaluateJavaScript("window.scrollTo(0, \(scrollY))", completionHandler: nil) }
+            if let anchor { self.scrollTo(anchor: anchor) }
         }
-        if let anchor = pendingAnchor {
-            pendingAnchor = nil
-            scrollTo(anchor: anchor)
+        restorePlace()
+        if pageHasPendingDiagrams {
+            pageHasPendingDiagrams = false
+            drawDiagrams(generation: renderGeneration, restoring: restorePlace)
         }
     }
 
@@ -323,7 +384,11 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         if showingSource { source?.focus() } else { webView.window?.makeFirstResponder(webView) }
     }
 
-    func applySettings() { source?.applySettings() }
+    func applySettings() {
+        source?.applySettings()
+        // A drawn diagram's colors are fixed when it's drawn. Everything else follows by itself.
+        if !showingSource, pageHasDiagrams, renderedDark != model.effectiveDark { render(keepScroll: true) }
+    }
 
     private func scrollTo(anchor: String) {
         let escaped = anchor.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")

@@ -1,20 +1,34 @@
 import Foundation
 import Markdown
 
-/// What rich rendering needs from the app. Without it, math shows as its source.
+/// What rich rendering needs from the app. Without it, math and diagrams show as their source.
 public struct DocumentExtras: Sendable {
+    public enum Diagram: Sendable, Equatable {
+        case drawn(svg: String)
+        case failed(reason: String)
+    }
+
     /// Returns markup, or nil when the math doesn't parse.
     public var renderMath: (@Sendable (_ tex: String, _ display: Bool) -> String?)?
     /// Only asked for when a page has math.
     public var mathStylesheet: (@Sendable () -> String)?
-    public init(renderMath: (@Sendable (String, Bool) -> String?)? = nil, mathStylesheet: (@Sendable () -> String)? = nil) {
+    /// Diagrams already drawn, so a reload doesn't have to load the library again.
+    public var diagrams: [String: Diagram]
+
+    public init(renderMath: (@Sendable (String, Bool) -> String?)? = nil, mathStylesheet: (@Sendable () -> String)? = nil,
+                diagrams: [String: Diagram] = [:]) {
         self.renderMath = renderMath
         self.mathStylesheet = mathStylesheet
+        self.diagrams = diagrams
     }
 }
 
 public struct RenderedDocument: Sendable {
     public var html: String
+    /// The page has diagrams, whose colors depend on the theme.
+    public var hasDiagrams: Bool
+    /// Some of them still have to be drawn in the page.
+    public var hasPendingDiagrams: Bool
 }
 
 public enum MarkdownRenderer {
@@ -34,7 +48,8 @@ public enum MarkdownRenderer {
             main += "<pre class=\"front-matter\"><code>\(escapeText(frontMatter))</code></pre>\n"
         }
         main += html
-        return RenderedDocument(html: wrap(main: main, baseHref: baseHref, title: title, stylesheet: stylesheet + fragments.extraStyles()))
+        return RenderedDocument(html: wrap(main: main, baseHref: baseHref, title: title, stylesheet: stylesheet + fragments.extraStyles()),
+                                hasDiagrams: fragments.hasDiagrams, hasPendingDiagrams: fragments.hasPendingDiagrams)
     }
 
     static func wrap(main: String, baseHref: String?, title: String, stylesheet: String) -> String {
@@ -47,10 +62,12 @@ public enum MarkdownRenderer {
         return "<!DOCTYPE html><html><head>\(head)</head><body><main>\(main)</main></body></html>"
     }
 
-    /// Turns markdown into HTML, with its math, for a page or part of one.
+    /// Turns markdown into HTML, with its math and diagrams, for a page or part of one.
     struct Fragments {
         let extras: DocumentExtras
         private(set) var usesMath = false
+        private(set) var hasDiagrams = false
+        private(set) var hasPendingDiagrams = false
 
         init(extras: DocumentExtras) { self.extras = extras }
 
@@ -69,6 +86,7 @@ public enum MarkdownRenderer {
             }.joined()
             html = addHeadingAnchors(html, math: math.spans)
             html = convertTaskLists(html)
+            html = placeDiagrams(html)
             return MathText.restore(html, spans: math.spans) { span in renderedMath(span) }
         }
 
@@ -81,18 +99,68 @@ public enum MarkdownRenderer {
             return "<code class=\"math-failed\">\(escapeText(span.original))</code>"
         }
 
+        /// A diagram waits with its source in place, hidden, and is drawn in the page after it
+        /// loads. One that can't be drawn keeps showing its source.
+        private mutating func placeDiagrams(_ html: String) -> String {
+            guard html.contains(diagramOpening) else { return html }
+            hasDiagrams = true
+            var result = ""
+            var rest = html[...]
+            while let open = rest.range(of: diagramOpening), let close = rest[open.upperBound...].range(of: "</code></pre>") {
+                result += rest[..<open.lowerBound]
+                let code = String(rest[open.upperBound..<close.lowerBound])
+                rest = rest[close.upperBound...]
+                let key = diagramKey(code)
+                let attributes = "data-key=\"\(key)\" data-diagram=\"\(code.replacingOccurrences(of: "\"", with: "&quot;"))\""
+                switch extras.diagrams[key] {
+                case .drawn(let svg):
+                    result += "<figure class=\"mermaid\" \(attributes)>\(svg)</figure>"
+                case .failed(let reason):
+                    result += "<figure class=\"mermaid broken\" \(attributes)><pre><code>\(code)</code></pre><figcaption>\(escapeText(reason))</figcaption></figure>"
+                case nil:
+                    hasPendingDiagrams = true
+                    result += "<figure class=\"mermaid pending\" \(attributes)><pre><code>\(code)</code></pre></figure>"
+                }
+            }
+            result += rest
+            return result
+        }
+
+        private var diagramOpening: String { "<pre><code class=\"language-mermaid\">" }
+
         /// Styles only the page in question needs.
         func extraStyles() -> String {
             var styles = ""
             if usesMath { styles += mathStyles + (extras.mathStylesheet?() ?? "") }
+            if hasDiagrams { styles += diagramStyles }
             return styles
         }
+    }
+
+    /// Stable across launches, unlike `hashValue`.
+    static func diagramKey(_ source: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in source.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x0000_0100_0000_01b3
+        }
+        return String(hash, radix: 36)
     }
 
     static let mathStyles = """
     .math-display { display:block; margin:1em 0; overflow-x:auto; overflow-y:hidden; }
     .math-display .katex-display { margin:0; }
     code.math-failed { white-space:pre-wrap; color:var(--muted); }
+
+    """
+
+    static let diagramStyles = """
+    figure.mermaid { margin:0 0 1em; text-align:center; overflow-x:auto; }
+    figure.mermaid svg { max-width:100%; height:auto; }
+    figure.mermaid svg[aria-roledescription=pie] { max-width:520px !important; }
+    figure.mermaid pre { text-align:left; margin:0 0 .4em; }
+    figure.mermaid.pending pre { visibility:hidden; }
+    figure.mermaid figcaption { text-align:left; color:var(--muted); font-size:.85em; }
 
     """
 
