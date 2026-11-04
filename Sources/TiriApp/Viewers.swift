@@ -1319,25 +1319,114 @@ final class DarkPaperHost: NSView {
 
 // MARK: - PDF
 
-final class PDFController: ForceDarkCapable {
+/// Offers to quote what's selected when you right-click it.
+final class TiriPDFView: PDFView {
+    var onQuote: (() -> Void)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = super.menu(for: event)
+        guard let menu, currentSelection?.string?.isEmpty == false else { return menu }
+        let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteFromMenu), keyEquivalent: "")
+        item.target = self
+        menu.insertItem(item, at: 0)
+        menu.insertItem(.separator(), at: 1)
+        return menu
+    }
+
+    @objc private func quoteFromMenu() { onQuote?() }
+}
+
+final class PDFController: NSObject, ForceDarkCapable {
     let itemID: ItemID
     let path: String
-    private let pdfView = PDFView()
+    private let pdfView = TiriPDFView()
     private let host: DarkPaperHost
+    private unowned let model: AppModel
     private var token: FileWatchHub.Token?
+    private var observers: [NSObjectProtocol] = []
+    private var watchedScroll = false
+    // Outside the host, because in dark mode everything inside it is inverted.
+    private let container = HostContainer()
+    private lazy var quoteButton: QuoteButton = {
+        let button = QuoteButton(host: container)
+        button.onQuote = { [weak self] in self?.model.addFrontToAgent() }
+        return button
+    }()
 
-    var view: NSView { host }
+    var view: NSView { container }
 
     init(itemID: ItemID, spec: FileSpec, model: AppModel) {
         self.itemID = itemID
         self.path = spec.path
+        self.model = model
         host = DarkPaperHost(content: pdfView, forceDark: spec.forceDark, model: model)
+        super.init()
+        container.show(host)
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
+        pdfView.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         host.onChange = { [weak self] in self?.applyBackground() }
         applyBackground()
+        let update: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateQuoteButton() }
+        }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .PDFViewSelectionChanged, object: pdfView, queue: .main, using: update))
+        observers.append(center.addObserver(forName: .PDFViewScaleChanged, object: pdfView, queue: .main, using: update))
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
         load()
+    }
+
+    isolated deinit {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    func didAttach() { watchScrolling() }
+
+    /// The scroll view is PDFKit's own, and only exists once there's a document on screen.
+    private func watchScrolling() {
+        guard !watchedScroll, let clip = pdfView.documentView?.enclosingScrollView?.contentView else { return }
+        watchedScroll = true
+        clip.postsBoundsChangedNotifications = true
+        observers.append(NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateQuoteButton() }
+        })
+    }
+
+    /// Level with the first part of the selection that's on screen. None on screen, no button.
+    private func updateQuoteButton() {
+        watchScrolling()
+        guard let selection = pdfView.currentSelection, selection.string?.isEmpty == false else {
+            quoteButton.isHidden = true
+            return
+        }
+        for page in selection.pages {
+            let area = pdfView.convert(pdfView.convert(selection.bounds(for: page), from: page), to: container)
+            if area.intersects(container.bounds) {
+                let top = container.isFlipped ? area.minY : container.bounds.height - area.maxY
+                quoteButton.show(fromTop: max(top, 4))
+                return
+            }
+        }
+        quoteButton.isHidden = true
+    }
+
+    func select(text: String, to end: String?) -> Bool {
+        guard let document = pdfView.document,
+              let start = document.findString(text, fromSelection: nil, withOptions: [.caseInsensitive]) else { return false }
+        var selection = start
+        if let end {
+            guard let last = document.findString(end, fromSelection: start, withOptions: [.caseInsensitive]),
+                  let firstPage = start.pages.first, let lastPage = last.pages.last else { return false }
+            let from = start.range(at: 0, on: firstPage)
+            let to = last.range(at: 0, on: lastPage)
+            guard let whole = document.selection(from: firstPage, atCharacterIndex: from.location,
+                                                 to: lastPage, atCharacterIndex: NSMaxRange(to) - 1) else { return false }
+            selection = whole
+        }
+        pdfView.setCurrentSelection(selection, animate: false)
+        pdfView.scrollSelectionToVisible(nil)
+        return true
     }
 
     /// Inverted along with the page, so it has to be light to end up dark.
@@ -1374,8 +1463,12 @@ final class PDFController: ForceDarkCapable {
     var agentReference: AgentSelection? {
         guard let selection = pdfView.currentSelection, let text = selection.string, !text.isEmpty else { return nil }
         let name = (path as NSString).lastPathComponent
-        let page = selection.pages.first.flatMap { pdfView.document?.index(for: $0) }.map { " page \($0 + 1)" } ?? ""
-        return AgentSelection(path: path, quote: AgentReference.quotation(from: name + page, text: text))
+        let numbers = selection.pages.compactMap { pdfView.document?.index(for: $0) }.map { $0 + 1 }
+        var pages = ""
+        if let first = numbers.first, let last = numbers.last {
+            pages = first == last ? ", page \(first)" : ", pages \(first)-\(last)"
+        }
+        return AgentSelection(path: path, quote: AgentReference.quotation(from: name + pages, text: text))
     }
 
     func find(_ query: String, backwards: Bool) -> Bool {

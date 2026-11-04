@@ -28,11 +28,11 @@ Quit Tiri, update it, or have it crash, and your agents keep working. When it co
 
 Select lines in any file. Claude Code sees the selection the way it does in VS Code, because Tiri speaks its editor protocol: its status line shows what you've selected and it can read it. Run `/ide` in Claude if it isn't connected.
 
-Select something in a file, a diff, rendered markdown, an HTML file or a web page, and a **Quote in Agent** button appears beside it. It, ⌘L and right-click all do the same thing. With one agent running, your selection goes straight to it. With several, in any workspace, Tiri asks which session should get it, with the one you last used first. Then it moves you there.
+Select something in a file, a diff, rendered markdown, an HTML file, a web page or a PDF, and a **Quote in Agent** button appears beside it. It, ⌘L and right-click all do the same thing. With one agent running, your selection goes straight to it. With several, in any workspace, Tiri asks which session should get it, with the one you last used first. Then it moves you there.
 
 Claude Code gets a real mention. Codex gets the path and line range typed in, since it has no editor protocol. From a diff, both get the selected change itself, with its + and − marks, because a removed line isn't in the file any more.
 
-A selection in rendered markdown becomes the source lines it came from, so Claude gets `@report.md#L12-20` rather than a copy of the words. HTML and web pages have no lines to point at, so the selected text goes in as a quotation.
+A selection in rendered markdown becomes the source lines it came from, so Claude gets `@report.md#L12-20` rather than a copy of the words. HTML, web pages and PDFs have no lines to point at, so the selected text goes in as a quotation, with its page number from a PDF. Office files show through Quick Look, which doesn't let an app read a selection, so ⌘L adds the whole file.
 
 To add files and images, use whichever is closest:
 
