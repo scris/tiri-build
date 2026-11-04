@@ -156,6 +156,45 @@ public enum RelativeTime {
     }
 }
 
+/// Lines of a file that differ from the last commit, for the marks beside its line numbers.
+public struct LineChanges: Equatable, Sendable {
+    public enum Kind: Sendable { case added, modified }
+    /// Counting from 1.
+    public var lines: [Int: Kind] = [:]
+    /// Lines were deleted just before this one. Can be one past the end of the file.
+    public var deletions: Set<Int> = []
+    /// Where each change starts, in order.
+    public var starts: [Int] = []
+    public var isEmpty: Bool { lines.isEmpty && deletions.isEmpty }
+
+    public init() {}
+
+    /// `git diff -U0`: only its `@@ -12,3 +14,5 @@` headers matter.
+    public static func parse(_ output: String) -> LineChanges {
+        var result = LineChanges()
+        for line in output.split(separator: "\n") where line.hasPrefix("@@ ") {
+            let parts = line.split(separator: " ")
+            guard parts.count >= 3, parts[1].hasPrefix("-"), parts[2].hasPrefix("+") else { continue }
+            func range(_ part: Substring) -> (start: Int, count: Int)? {
+                let numbers = part.dropFirst().split(separator: ",")
+                guard let start = numbers.first.flatMap({ Int($0) }) else { return nil }
+                return (start, numbers.count > 1 ? (Int(numbers[1]) ?? 1) : 1)
+            }
+            guard let old = range(parts[1]), let new = range(parts[2]) else { continue }
+            if new.count == 0 {
+                // `+4,0` means after line 4.
+                result.deletions.insert(new.start + 1)
+                result.starts.append(new.start + 1)
+            } else {
+                let kind: Kind = old.count == 0 ? .added : .modified
+                for number in new.start..<(new.start + new.count) { result.lines[number] = kind }
+                result.starts.append(new.start)
+            }
+        }
+        return result
+    }
+}
+
 /// A file before and after, as bytes. For what can't be compared line by line, like an image.
 public struct FileVersions: Sendable {
     public var old: Data?
@@ -404,6 +443,12 @@ extension Git {
                             new: to.map { blob($0, relative, in: root) } ?? workingCopy(path))
     }
 
+    /// Which lines differ from the last commit, for a file in a repository. Nothing for a file
+    /// git doesn't track. git applies the repository's filters, so line endings aren't mistaken for changes.
+    public static func lineChanges(relative: String, root: String) -> LineChanges {
+        guard let output = text(["diff", "HEAD", "-U0", "--no-color", "--no-ext-diff", "--", relative], in: root) else { return LineChanges() }
+        return LineChanges.parse(output)
+    }
 }
 
 private extension String {

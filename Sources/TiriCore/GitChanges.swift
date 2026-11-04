@@ -182,6 +182,8 @@ public struct RepositoryStatus: Sendable, Equatable, Identifiable {
     public init(root: String) { self.root = root }
 
     public var name: String { (root as NSString).lastPathComponent }
+    /// Which repository, at which commit.
+    public var head: String { root + "@" + (shortOID ?? "") }
     public var title: String { branch ?? shortOID ?? "No commits" }
     /// Pushing needs a branch with something on it, and somewhere to send it.
     public var canPublish: Bool { branch != nil && upstream == nil && remote != nil && shortOID != nil }

@@ -1727,8 +1727,10 @@ final class AppModel {
                 if self.activeID == workspace { self.barHasRepositories = !repositories.isEmpty }
                 if self.activeID == workspace, self.changes != found { self.changes = found }
                 if self.activeID == workspace, self.repositories != repositories {
+                    let headsMoved = self.repositories.map(\.head) != repositories.map(\.head)
                     self.repositories = repositories
                     self.watchGitDirectories(of: repositories, folders: folders)
+                    if headsMoved { self.refreshChangeMarks() }
                 }
                 // Whatever's on screen compares against the same new state.
                 for item in self.active.items + (self.active.peek.map { [$0] } ?? []) {

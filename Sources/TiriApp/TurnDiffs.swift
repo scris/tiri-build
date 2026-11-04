@@ -180,13 +180,48 @@ extension AppModel {
     var canGoToChange: Bool {
         guard let item = active.peek ?? active.activeItem else { return false }
         if case .diff = item.content { return true }
-        return false
+        return textViewer(for: item.id)?.hasChangeMarks == true
     }
 
-    /// F7 and ⇧F7.
+    /// F7 and ⇧F7, in a diff or in a file with marks beside its lines.
     func goToChange(forward: Bool) {
         guard let item = active.peek ?? active.activeItem else { return }
-        (existingController(for: item.id) as? DiffController)?.goToChange(forward: forward)
+        if let diff = existingController(for: item.id) as? DiffController {
+            diff.goToChange(forward: forward)
+        } else {
+            textViewer(for: item.id)?.goToChange(forward: forward)
+        }
+    }
+
+    private func textViewer(for item: ItemID) -> TextController? {
+        let controller = existingController(for: item)
+        return controller as? TextController ?? (controller as? MarkdownController)?.shownSource
+    }
+
+    /// The repository a file is in and its path there, if it's one this workspace knows about.
+    /// Those are known already, so a file outside them costs nothing to look at.
+    func repositoryPlace(of path: String) -> (root: String, relative: String)? {
+        guard !repositories.isEmpty else { return nil }
+        let real = Git.real(path)
+        for repository in repositories {
+            let root = Git.real(repository.root)
+            if real.hasPrefix(root + "/") { return (repository.root, String(real.dropFirst(root.count + 1))) }
+        }
+        return nil
+    }
+
+    /// A commit, or a repository coming into view, changes what the files are compared with.
+    func refreshChangeMarks() {
+        for item in active.items + (active.peek.map { [$0] } ?? []) {
+            textViewer(for: item.id)?.refreshChangeMarks()
+        }
+    }
+
+    /// A mark beside a file's line: its change, floating over the file.
+    func peekChange(path: String, line: Int) {
+        peekDiff(DiffSpec(path: path), takeFocus: true)
+        guard let peek = active.peek else { return }
+        controller(for: peek.id)?.goTo(line: line, col: nil)
     }
 
     /// Turns from this workspace worth offering, newest first, a few for each terminal.
