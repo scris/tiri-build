@@ -42,7 +42,8 @@ enum FolderAccess {
                         return false
                     }
                 }
-                return errno == EPERM || errno == EACCES
+                // macOS refusing is EPERM. EACCES is the file's own permissions, which Privacy & Security can't help with.
+                return errno == EPERM
             }
         }.value
     }

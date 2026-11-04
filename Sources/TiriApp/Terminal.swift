@@ -784,6 +784,9 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         terminalView.processDelegate = self
         // Tiri does its own link detection: SwiftTerm's rejects relative paths and drops :line.
         terminalView.linkReporting = .none
+        // SwiftTerm underlines what it thinks is a link, dashed, over two paths at once, and leaves
+        // it there after a click. This keeps that to real hyperlinks a program marked as such.
+        terminalView.linkHighlightMode = .alwaysWithModifier
         terminalView.bellStyle = .none
         terminalView.registerDrops()
         container.host(terminalView)

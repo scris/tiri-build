@@ -845,7 +845,10 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             guard let self else { return }
             self.model.peekChange(path: self.path, line: line)
         }
-        container.onLayout = { [weak self] in self?.fitTextToWrapColumn() }
+        container.onLayout = { [weak self] in
+            self?.fitTextToPane()
+            self?.fitTextToWrapColumn()
+        }
         scrollObservation = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.markVisibleMatches() }
         }
@@ -889,6 +892,14 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         textView.needsDisplay = true
         ruler.needsDisplay = true
         textView.updateCursors()
+    }
+
+    /// A view that was hosted narrow, in a split or before its first layout, can stay narrow in a wider
+    /// pane, and the row with the cursor is only marked as far as the view goes.
+    private func fitTextToPane() {
+        let width = scrollView.contentSize.width
+        guard width > 0, wrap == .off ? textView.frame.width < width : abs(textView.frame.width - width) > 0.5 else { return }
+        textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
     }
 
     /// Bounded means the column, or the pane's edge if that comes first.
