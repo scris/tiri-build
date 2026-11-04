@@ -236,7 +236,7 @@ public enum FuzzyMatcher {
 // MARK: - File kinds
 
 public enum FileKind: String, Sendable, Equatable {
-    case markdown, text, image, svg, pdf, media, html, csv, office, quickLook
+    case markdown, notebook, text, image, svg, pdf, media, html, csv, office, quickLook
 }
 
 public enum FileClassifier {
@@ -258,7 +258,7 @@ public enum FileClassifier {
         "js", "jsx", "mjs", "cjs", "ts", "tsx", "css", "scss", "less", "vue", "svelte", "sh", "bash", "zsh", "fish",
         "sql", "graphql", "proto", "r", "jl", "dart", "scala", "ex", "exs", "erl", "hs", "ml", "clj", "tex", "bib", "rst",
         "adoc", "gradle", "lock", "gitignore", "gitattributes", "editorconfig", "dockerfile", "makefile", "cmake", "tf",
-        "code-workspace", "patch", "diff", "strings", "pbxproj", "entitlements", "xcconfig", "ipynb", "tsv",
+        "code-workspace", "patch", "diff", "strings", "pbxproj", "entitlements", "xcconfig", "tsv",
     ]
     private static let knownTextNames: Set<String> = [
         "makefile", "dockerfile", "license", "licence", "readme", "changelog", "authors", "copying", "gemfile", "rakefile",
@@ -276,6 +276,7 @@ public enum FileClassifier {
         if ext == "pdf" { return .pdf }
         if media.contains(ext) { return .media }
         if ext == "html" || ext == "htm" || ext == "xhtml" { return .html }
+        if ext == "ipynb" { return .notebook }
         if ext == "csv" { return .csv }
         if office.contains(ext) { return .office }
         if knownText.contains(ext) || knownTextNames.contains(name) { return .text }

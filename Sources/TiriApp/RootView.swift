@@ -655,7 +655,7 @@ struct FileActions: View {
             .foregroundStyle(document.forceDarkActive ? Color.accentColor : .secondary)
             .help(document.forceDarkActive ? "Showing dark. Click for true colors" : "Show this document dark")
         }
-        if model.accessReady, let markdown = model.controller(for: item.id) as? MarkdownController {
+        if model.accessReady, let markdown = model.controller(for: item.id) as? MarkdownController, markdown.canToggleSource {
             Button {
                 model.toggleMarkdownSource(item.id)
             } label: {
@@ -666,7 +666,7 @@ struct FileActions: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .font(.caption)
-            .help(markdown.showingSource ? "Show rendered markdown" : "Show markdown source")
+            .help(markdown.showingSource ? "Show rendered \(markdown.kindName)" : "Show \(markdown.kindName) source")
         }
         Button {
             model.openExternally(path: path, line: nil, col: nil)

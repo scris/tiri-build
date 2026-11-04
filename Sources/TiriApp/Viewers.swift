@@ -70,7 +70,9 @@ enum ViewerFactory {
         }
         switch kind {
         case .markdown:
-            return MarkdownController(itemID: itemID, spec: spec, model: model)
+            return MarkdownController(itemID: itemID, spec: spec, model: model, format: .markdown)
+        case .notebook:
+            return MarkdownController(itemID: itemID, spec: spec, model: model, format: .notebook)
         case .text:
             return TextController(itemID: itemID, spec: spec, model: model)
         case .image:
@@ -93,7 +95,7 @@ enum ViewerFactory {
     }
 }
 
-// MARK: - Markdown: rendered by default, source on request
+// MARK: - Markdown and notebooks: rendered by default, source on request
 
 /// Creating a WKWebView (and its web process) is most of the cost of opening a markdown file.
 /// One is kept warm, so the next open only has to render.
@@ -126,6 +128,9 @@ enum MarkdownWebViews {
 }
 
 final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
+    nonisolated enum Format: Sendable { case markdown, notebook }
+
+    let format: Format
     let itemID: ItemID
     let path: String
     unowned let model: AppModel
@@ -149,10 +154,22 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     private var renderedDark = false
     /// Drawn diagrams for each theme, by source, so a reload shows them straight away.
     private var drawnDiagrams: [Bool: [String: DocumentExtras.Diagram]] = [:]
+    /// Why this notebook is showing its source, when rendering it isn't possible.
+    private var fallbackNotice: String?
+    private var fallbackWork: DispatchWorkItem?
+    private var hasRenderedPage = false
+    private var showingOpeningNote = false
+    private lazy var noticeView = SourceNoticeView()
 
     var view: NSView { container }
 
-    init(itemID: ItemID, spec: FileSpec, model: AppModel) {
+    private var inSource: Bool { showingSource || fallbackNotice != nil }
+    /// There's nothing to switch to when the file can't be rendered.
+    var canToggleSource: Bool { fallbackNotice == nil }
+    var kindName: String { format == .notebook ? "notebook" : "markdown" }
+
+    init(itemID: ItemID, spec: FileSpec, model: AppModel, format: Format = .markdown) {
+        self.format = format
         self.itemID = itemID
         self.path = spec.path
         self.model = model
@@ -185,13 +202,13 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     }
 
     private func renderedLines(_ selection: WebSelection) -> (first: Int, last: Int)? {
-        guard selection.line >= 0, selection.lineEnd >= selection.line else { return nil }
+        guard format == .markdown, selection.line >= 0, selection.lineEnd >= selection.line else { return nil }
         let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
         return MarkdownRenderer.sourceLines(blockStart: selection.line, blockEnd: selection.lineEnd, selected: selection.text, source: text)
     }
 
     func select(text: String, to end: String?) -> Bool {
-        if showingSource { return source?.select(text: text, to: end) ?? false }
+        if inSource { return source?.select(text: text, to: end) ?? false }
         webView.evaluateJavaScript(WebSelectionScript.selecting(text, to: end), in: nil, in: .defaultClient) { _ in }
         return true
     }
@@ -203,22 +220,31 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         return controller
     }
 
-    private func render(keepScroll: Bool) {
-        if showingSource {
+    private func render(keepScroll: Bool, behindSource: Bool = false) {
+        if inSource, !behindSource {
             let text = sourceController()
-            container.show(text.view)
+            if let fallbackNotice {
+                noticeView.show(fallbackNotice, above: text.view)
+                container.show(noticeView)
+            } else {
+                container.show(text.view)
+            }
             if let line = pendingLine.0 {
                 text.goTo(line: line, col: pendingLine.1)
                 pendingLine = (nil, nil)
             }
             return
         }
-        container.show(webView)
         renderGeneration += 1
         let generation = renderGeneration
+        if !behindSource {
+            container.show(webView)
+            if !hasRenderedPage { showOpeningNote(generation: generation) }
+        }
         let path = path
-        let line = pendingLine.0
-        pendingLine = (nil, nil)
+        let format = format
+        let line = format == .markdown ? pendingLine.0 : nil
+        if format == .markdown { pendingLine = (nil, nil) }
         let dark = model.effectiveDark
         renderedDark = dark
         let diagrams = drawnDiagrams[dark] ?? [:]
@@ -227,6 +253,17 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         let title = (path as NSString).lastPathComponent
         // Off the main thread: a long document with lots of math shouldn't stall the app.
         Task.detached(priority: .userInitiated) { [weak self] in
+            if format == .notebook {
+                let result = Self.renderNotebook(path: path, base: base, title: title, diagrams: diagrams)
+                await MainActor.run {
+                    guard let self, self.renderGeneration == generation else { return }
+                    switch result {
+                    case .success(let rendered): self.notebookRendered(rendered, base: base, keepScroll: keepScroll)
+                    case .failure(let failure): self.notebookFailed(failure)
+                    }
+                }
+                return
+            }
             let source = (try? String(contentsOfFile: path, encoding: .utf8))
                 ?? String(data: FileManager.default.contents(atPath: path) ?? Data(), encoding: .isoLatin1)
                 ?? ""
@@ -241,6 +278,68 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         }
     }
 
+    /// A big document takes seconds to read. A blank pane for that long looks broken.
+    private func showOpeningNote(generation: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, self.renderGeneration == generation, !self.hasRenderedPage, self.fallbackNotice == nil else { return }
+            self.showingOpeningNote = true
+            self.webView.loadHTMLString("""
+            <!DOCTYPE html><meta charset="utf-8"><style>:root{color-scheme:light dark}html{height:100%}body{height:100%;margin:0;display:flex;align-items:center;justify-content:center;font:13px -apple-system;color:GrayText}</style>Opening…
+            """, baseURL: nil)
+        }
+    }
+
+    nonisolated private static func renderNotebook(path: String, base: URL, title: String, diagrams: [String: DocumentExtras.Diagram]) -> Result<RenderedDocument, Notebook.Failure> {
+        let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int) ?? 0
+        if size > Notebook.maximumBytes { return .failure(.tooLarge(bytes: size)) }
+        // Not mapped: an agent cutting a mapped file short while it's being parsed would crash the app.
+        let data = (try? Data(contentsOf: URL(fileURLWithPath: path))) ?? Data()
+        do {
+            let notebook = try Notebook.parse(data)
+            let rendered = NotebookRenderer.render(notebook, baseHref: base.absoluteString, title: title, extras: extras(diagrams: diagrams),
+                                                   highlight: { CodeGrammar.shared.html(text: $0, language: $1) })
+            return .success(rendered)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private func notebookRendered(_ rendered: RenderedDocument, base: URL, keepScroll: Bool) {
+        fallbackWork?.cancel()
+        fallbackWork = nil
+        if fallbackNotice != nil {
+            // Fixing it by hand here: what's being typed stays until it's saved.
+            if source?.isDirty == true { return }
+            fallbackNotice = nil
+            model.controllerRevision += 1
+        }
+        load(rendered, base: base, anchor: nil, keepScroll: keepScroll)
+    }
+
+    /// An agent writing a notebook can leave it half written for a moment. What was showing
+    /// stays until it's clear that the file really is broken.
+    private func notebookFailed(_ failure: Notebook.Failure) {
+        let show = { [weak self] in
+            guard let self else { return }
+            let hadKeyboard = self.view.window?.firstResponder === self.webView
+            self.fallbackNotice = failure.message
+            self.quoteButton.isHidden = true
+            self.sourceController().reload()
+            self.render(keepScroll: false)
+            if hadKeyboard { self.source?.focus() }
+            self.model.controllerRevision += 1
+            self.model.viewerReady(self.itemID)
+        }
+        fallbackWork?.cancel()
+        guard hasRenderedPage, fallbackNotice == nil else {
+            show()
+            return
+        }
+        let work = DispatchWorkItem(block: show)
+        fallbackWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
     nonisolated private static func extras(diagrams: [String: DocumentExtras.Diagram]) -> DocumentExtras {
         let document = UUID()
         return DocumentExtras(renderMath: { MathEngine.shared.markup(tex: $0, display: $1, document: document) },
@@ -248,6 +347,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     }
 
     private func load(_ rendered: RenderedDocument, base: URL, anchor: String?, keepScroll: Bool) {
+        container.show(webView)
+        hasRenderedPage = true
         pageHasDiagrams = rendered.hasDiagrams
         pageHasPendingDiagrams = rendered.hasPendingDiagrams
         if let anchor { pendingAnchor = anchor }
@@ -312,11 +413,10 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
 
     private func fileChanged() {
         if !FileManager.default.fileExists(atPath: path) { return }
-        if showingSource {
-            source?.reload()
-        } else {
-            render(keepScroll: true)
-        }
+        if inSource { source?.reload() }
+        guard !showingSource else { return }
+        // Behind a notice, the source stays up unless the file now renders.
+        render(keepScroll: fallbackNotice == nil, behindSource: fallbackNotice != nil)
     }
 
     func toggleSource() {
@@ -331,6 +431,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if showingOpeningNote, !hasRenderedPage { return }
         model.viewerReady(itemID)
         let scrollY = pendingScrollY
         let anchor = pendingAnchor
@@ -381,13 +482,13 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     }
 
     func focus() {
-        if showingSource { source?.focus() } else { webView.window?.makeFirstResponder(webView) }
+        if inSource { source?.focus() } else { webView.window?.makeFirstResponder(webView) }
     }
 
     func applySettings() {
         source?.applySettings()
         // A drawn diagram's colors are fixed when it's drawn. Everything else follows by itself.
-        if !showingSource, pageHasDiagrams, renderedDark != model.effectiveDark { render(keepScroll: true) }
+        if !inSource, pageHasDiagrams, renderedDark != model.effectiveDark { render(keepScroll: true) }
     }
 
     private func scrollTo(anchor: String) {
@@ -397,40 +498,97 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
 
     func goTo(line: Int?, col: Int?) {
         guard let line else { return }
-        if showingSource {
+        if inSource {
             source?.goTo(line: line, col: col)
             return
         }
+        // A notebook's lines are its JSON's, and don't exist in the rendered page.
+        guard format == .markdown else { return }
         let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
         if let anchor = MarkdownRenderer.anchor(forLine: line, in: text) { scrollTo(anchor: anchor) }
     }
 
     func teardown() {
         token = nil
-        if showingSource == false { webView.stopLoading() }
+        fallbackWork?.cancel()
+        if hasRenderedPage { webView.stopLoading() }
     }
 
     var supportsFind: Bool { true }
 
-    var selectedTextForFind: String? { showingSource ? source?.selectedTextForFind : nil }
+    var selectedTextForFind: String? { inSource ? source?.selectedTextForFind : nil }
     var agentReference: AgentSelection? {
-        if showingSource { return source?.agentReference }
-        guard let selection = webView.selection else { return nil }
+        if inSource { return source?.agentReference }
+        guard hasRenderedPage, let selection = webView.selection else { return nil }
         if let lines = renderedLines(selection) {
             return AgentSelection(path: path, firstLine: lines.first, lastLine: lines.last)
         }
-        return AgentSelection(path: path, quote: AgentReference.quotation(from: (path as NSString).lastPathComponent, text: selection.text))
+        var name = (path as NSString).lastPathComponent
+        if format == .notebook, selection.line >= 0 {
+            let first = selection.line + 1
+            let last = max(selection.lineEnd + 1, first)
+            name += first == last ? ", cell \(first)" : ", cells \(first)-\(last)"
+        }
+        return AgentSelection(path: path, quote: AgentReference.quotation(from: name, text: selection.text))
     }
     var isDirty: Bool { source?.isDirty ?? false }
     func save(overwriting: Bool) -> SaveResult { source?.save(overwriting: overwriting) ?? .saved }
 
     func find(_ query: String, backwards: Bool) -> Bool {
-        if showingSource { return source?.find(query, backwards: backwards) ?? false }
+        if inSource { return source?.find(query, backwards: backwards) ?? false }
         return WebFind.run(webView, query: query, backwards: backwards)
     }
 
     func clearFind() {
-        if showingSource { source?.clearFind() } else { WebFind.clear(webView) }
+        if inSource { source?.clearFind() } else { WebFind.clear(webView) }
+    }
+}
+
+/// A line of explanation above the source, when the source is showing because it has to be.
+final class SourceNoticeView: NSView {
+    private let label = NSTextField(wrappingLabelWithString: "")
+    private let line = NSBox()
+    private weak var content: NSView?
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+
+    init() {
+        super.init(frame: .zero)
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        label.isSelectable = false
+        line.boxType = .separator
+        addSubview(label)
+        addSubview(line)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    func show(_ notice: String, above view: NSView) {
+        label.stringValue = notice
+        if content !== view {
+            content?.removeFromSuperview()
+            content = view
+            // Scroll views draw past their edges, which would cover the line above.
+            view.clipsToBounds = true
+            addSubview(view, positioned: .below, relativeTo: label)
+        }
+        needsLayout = true
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        let width = max(bounds.width - 28, 40)
+        let height = ceil(label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 200)).height ?? 16)
+        label.frame = CGRect(x: 14, y: 8, width: width, height: height)
+        let top = height + 16
+        line.frame = CGRect(x: 0, y: top - 1, width: bounds.width, height: 1)
+        content?.frame = CGRect(x: 0, y: top, width: bounds.width, height: max(bounds.height - top, 0))
     }
 }
 
@@ -1164,6 +1322,16 @@ nonisolated final class CodeGrammar: @unchecked Sendable {
         context.evaluateScript(source)
         context.evaluateScript("var hl = globalThis.hljs || hljs; function tiriHighlight(t, l) { return hl.highlight(t, { language: l, ignoreIllegals: true }).value; }")
         self.context = context
+    }
+
+    /// highlight.js's own markup, for pages that style its classes.
+    func html(text: String, language: String) -> String? {
+        guard text.utf16.count <= Self.maximumLength else { return nil }
+        return queue.sync {
+            load()
+            guard let context, context.evaluateScript("!!hl.getLanguage(\(Self.quote(language)))")?.toBool() == true else { return nil }
+            return context.objectForKeyedSubscript("tiriHighlight")?.call(withArguments: [text, language])?.toString()
+        }
     }
 
     func spans(text: String, language: String) -> [SyntaxHighlighter.Span]? {
