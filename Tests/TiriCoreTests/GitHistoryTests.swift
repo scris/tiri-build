@@ -329,3 +329,65 @@ struct ScratchRepository {
         #expect(!DiffQuote.text(path: "/p/a.txt", rows: rows).contains("commit"))
     }
 }
+
+@Suite struct OtherWorkTests {
+    @Test func branchesAndWorktreesInPlainTerms() throws {
+        let repository = try ScratchRepository()
+        let worktree = repository.base + "/feat"
+        try repository.git("worktree", "add", "-q", "-b", "feat/login", worktree)
+        try "one\nTWO\nthree\n".write(toFile: worktree + "/a.txt", atomically: true, encoding: .utf8)
+        try repository.run(["add", "."], in: worktree)
+        try repository.run(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "Fix the login"], in: worktree)
+        try "new\n".write(toFile: worktree + "/c.txt", atomically: true, encoding: .utf8)
+        try repository.git("branch", "already-merged")
+        try repository.git("checkout", "-q", "-b", "fix/typo")
+        try repository.write("b.txt", "y\n")
+        try repository.commitAll("Fix a typo")
+        try repository.git("checkout", "-q", "main")
+
+        let lines = Git.otherWork(in: [repository.root])
+        #expect(Set(lines.map(\.branch)) == ["feat/login", "fix/typo"])
+        let login = try #require(lines.first { $0.branch == "feat/login" })
+        #expect(login.worktree == worktree)
+        #expect(login.commits == 1)
+        #expect(login.files == 1)
+        #expect(login.uncommitted == 1)
+        #expect(login.summary == "1 file changed · 1 not committed · 1 commit, not merged")
+        #expect(login.mergeRequest.contains("`feat/login` into `main`"))
+        #expect(login.mergeRequest.contains(worktree))
+
+        let typo = try #require(lines.first { $0.branch == "fix/typo" })
+        #expect(typo.worktree == nil)
+        let files = Git.changes(of: typo)
+        #expect(files.map(\.relative) == ["b.txt"])
+        // A branch that isn't checked out: its file doesn't exist here, and its diff still reads.
+        let diff = try #require(Git.diff(path: repository.root + "/b.txt", target: .range(from: typo.from, to: typo.tip)))
+        #expect(diff.lines.contains { $0.kind == .added && $0.text == "y" })
+        #expect(Git.versions(path: repository.root + "/b.txt", target: .range(from: typo.from, to: typo.tip)).new == Data("y\n".utf8))
+    }
+
+    @Test func anOldMergedBranchIsNotWork() throws {
+        let repository = try ScratchRepository()
+        try repository.git("branch", "old")
+        #expect(Git.otherWork(in: [repository.root]).isEmpty)
+    }
+
+    @Test func aMergedWorktreeOffersACleanUp() throws {
+        let repository = try ScratchRepository()
+        let worktree = repository.base + "/old"
+        try repository.git("worktree", "add", "-q", "-b", "old", worktree)
+        let line = try #require(Git.otherWork(in: [repository.root]).first)
+        #expect(line.merged)
+        #expect(!line.isUnfinished)
+        #expect(line.summary == "merged into main")
+        #expect(line.cleanUpRequest.contains(worktree))
+    }
+
+    @Test func aWorktreeThatIsTheWorkspaceIsNotOtherWork() throws {
+        let repository = try ScratchRepository()
+        let worktree = repository.base + "/feat"
+        try repository.git("worktree", "add", "-q", "-b", "feat", worktree)
+        #expect(!Git.otherWork(in: [worktree]).contains { $0.branch == "feat" })
+    }
+}
+

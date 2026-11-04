@@ -20,7 +20,11 @@ struct SidebarView: View {
         // With the explorer folded, what's still open takes the room it left.
         // In a repository, always: with everything committed, a branch and its commits are still there to read.
         let hasChangesSection = model.barHasRepositories || !model.changes.isEmpty || !model.offeredTurns.isEmpty
-        let rowHeight: CGFloat = { if case .recentCommits = model.changesScope { 37 } else { 25 } }()
+        let rowHeight: CGFloat = {
+            if case .recentCommits = model.changesScope { return 37 }
+            if case .otherWork = model.changesScope { return 37 }
+            return 25
+        }()
         let changesFill = !explorerOpen && changesOpen && hasChangesSection
         let itemsFill = !explorerOpen && !changesFill && itemsOpen
         VStack(spacing: 0) {
@@ -64,6 +68,11 @@ struct SidebarView: View {
                         BranchCaption(bases: model.branchBases)
                     } else if case .commit(let commit) = model.changesScope {
                         CommitCaption(commit: commit)
+                    } else if case .work(let work) = model.changesScope {
+                        WorkCaption(work: work)
+                    }
+                    if !model.otherWork.isEmpty, model.changesScope != .otherWork {
+                        if case .work = model.changesScope {} else { OtherWorkHint() }
                     }
                     if changesFill {
                         ChangesList()
@@ -217,7 +226,6 @@ struct WorkspaceSwitcher: View {
                 Menu {
                     Button("New Workspace…") { model.newWorkspaceInteractive() }
                     Button("Connect to Server…") { model.connectToServerInteractive() }
-                    Button("New Worktree…") { model.newWorktreeInteractive() }
                     Button("Import .code-workspace…") { model.importWorkspaceInteractive() }
                 } label: {
                     Image(systemName: "plus")

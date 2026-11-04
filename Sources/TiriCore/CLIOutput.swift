@@ -42,6 +42,10 @@ public enum CLIOutput {
             if let queued = response.result?["queued"]?.arrayValue, !queued.isEmpty { parts.append("\(queued.count) queued") }
             if let python = response.result?["python"]?.stringValue { parts.append(python) }
             say(parts.joined(separator: "\t"))
+        case "work":
+            for entry in response.result?.arrayValue ?? [] {
+                say([cell(entry["branch"]), cell(entry["summary"]), cell(entry["worktree"])].joined(separator: "\t"))
+            }
         case "activity":
             for entry in response.result?.arrayValue ?? [] {
                 var line = [cell(entry["item"]), cell(entry["agent"]), cell(entry["status"]), "[\(cell(entry["workspace"]))]"]

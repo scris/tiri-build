@@ -95,6 +95,7 @@ extension AppModel {
     /// How many rows the Changes section is listing, whatever they are.
     var visibleChangesCount: Int {
         if case .recentCommits = changesScope { return recentCommits.count }
+        if case .otherWork = changesScope { return otherWork.count }
         return visibleChanges.count
     }
 
@@ -103,6 +104,11 @@ extension AppModel {
         switch changesScope {
         case .branch: DiffSpec(path: path, branch: true)
         case .commit(let commit): DiffSpec(path: path, commit: commit.oid)
+        case .work(let work): work.worktree != nil ? DiffSpec(path: path, branch: true) : {
+            var spec = DiffSpec(path: path)
+            spec.range = [work.from, work.tip]
+            return spec
+        }()
         default: DiffSpec(path: path, turn: scopedTurn?.id)
         }
     }
@@ -114,6 +120,8 @@ extension AppModel {
         case .branch: branchBases.count == 1 ? branchBases[0].emptyDescription : "Nothing changed."
         case .recentCommits: "No commits yet."
         case .commit: "This commit didn't change any files here."
+        case .otherWork: "No other branches or worktrees."
+        case .work: "Nothing changed here."
         }
     }
 
@@ -159,6 +167,8 @@ extension AppModel {
             case .branch: (bases, files) = Git.branchChanges(in: folders)
             case .recentCommits: commits = Git.recentCommits(in: folders)
             case .commit(let commit): files = Git.commitChanges(commit.oid, root: commit.root, in: folders)
+            case .otherWork: break
+            case .work(let work): files = Git.changes(of: work)
             }
             await MainActor.run {
                 guard let self else { return }
@@ -260,6 +270,8 @@ struct ChangesScopeMenu: View {
         case .branch: "This branch"
         case .recentCommits: "Recent commits"
         case .commit(let commit): commit.shortOID
+        case .otherWork: "Other work"
+        case .work(let work): work.branch
         }
     }
 
@@ -268,6 +280,7 @@ struct ChangesScopeMenu: View {
             scopeButton("Since Last Commit", .sinceCommit)
             scopeButton("This Branch", .branch)
             scopeButton("Recent Commits", .recentCommits)
+            scopeButton(model.otherWork.isEmpty ? "Other Work" : "Other Work (\(model.otherWork.count))", .otherWork)
             let offered = model.offeredTurns
             if !offered.isEmpty || model.changesScope == .latestTurn {
                 scopeButton("Latest Turn", .latestTurn)
@@ -371,3 +384,169 @@ struct TurnCaption: View {
         .padding(.bottom, 3)
     }
 }
+
+// MARK: - Other work
+
+extension AppModel {
+    /// Agents make branches and worktrees for themselves. Nobody should have to go looking, so this
+    /// is looked at along with everything else, and it's only worked out in full when something moved.
+    func refreshOtherWork() {
+        // Agents save often, and each look asks git several things per branch.
+        var showing = changesScope == .otherWork
+        if case .work = changesScope { showing = true }
+        let now = ProcessClock.now()
+        let moved = otherWorkWorkspace != activeID
+        if moved {
+            otherWorkWorkspace = activeID
+            if !otherWork.isEmpty { otherWork = [] }
+        }
+        guard !otherWorkInFlight, moved || showing || now - otherWorkAt > 8000 else { return }
+        otherWorkAt = now
+        otherWorkInFlight = true
+        let folders = active.folders
+        let workspace = activeID
+        Task.detached(priority: .utility) { [weak self] in
+            let lines = Git.otherWork(in: folders)
+            await MainActor.run {
+                guard let self else { return }
+                self.otherWorkInFlight = false
+                guard self.activeID == workspace else {
+                    self.refreshOtherWork()
+                    return
+                }
+                if self.otherWork != lines { self.otherWork = lines }
+                // What a worktree outside the workspace's folders changed reaches nothing else.
+                if case .work(let shown) = self.changesScope, let current = lines.first(where: { $0.id == shown.id }), current != shown {
+                    self.changesScope = .work(current)
+                    self.refreshScopedChanges()
+                }
+            }
+        }
+    }
+
+    /// The agent already in that worktree, if there is one, since it knows the work. Otherwise any.
+    func askAgent(aboutWork work: WorkLine, prompt: String) {
+        let sessions = activeAgentSessions()
+        if let worktree = work.worktree,
+           let there = sessions.first(where: { EditorBridge.realPath($0.terminal.currentDirectory).hasPrefix(EditorBridge.realPath(worktree)) }) {
+            focusAgent(there.terminal)
+            there.terminal.send(text: AgentReference.bracketedPaste(prompt))
+            return
+        }
+        guard !sessions.isEmpty else {
+            if let preset = firstAgentPreset {
+                askAgent(preset: preset, prompt: prompt)
+            } else {
+                showToast(title: "No agent is running", detail: "Start one from the + button, then try again.", symbol: "sparkles", tint: .secondary)
+            }
+            return
+        }
+        withAgent(asking: "Which session should do this?") { [weak self] terminal, _ in
+            self?.focusAgent(terminal)
+            terminal.send(text: AgentReference.bracketedPaste(prompt))
+        }
+    }
+
+    /// Who's in a worktree, for the list.
+    func agentName(inWorktree worktree: String?) -> String? {
+        guard let worktree else { return nil }
+        let real = EditorBridge.realPath(worktree)
+        return agentRows.first { $0.directory.hasPrefix(real) }?.agent
+    }
+}
+
+/// A word under Changes when there's work elsewhere. It finds you, rather than the other way round.
+struct OtherWorkHint: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let unfinished = model.otherWork.filter(\.isUnfinished).count
+        Button {
+            model.setChangesScope(.otherWork)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.triangle.branch").font(.system(size: 9))
+                Text(unfinished == 0 ? "\(model.otherWork.count) merged, ready to clean up"
+                     : unfinished == 1 ? "1 more branch not merged" : "\(unfinished) more branches not merged")
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 10.5))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 3)
+    }
+}
+
+struct WorkRow: View {
+    let work: WorkLine
+    @Environment(AppModel.self) private var model
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            model.setChangesScope(.work(work))
+        } label: {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(work.branch)
+                    .font(.system(size: 12.5))
+                    .lineLimit(1)
+                Text(([model.agentName(inWorktree: work.worktree)].compactMap { $0 } + [work.summary]).joined(separator: " · "))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background {
+                RoundedRectangle(cornerRadius: 6).fill(hovering ? Color.primary.opacity(0.05) : .clear)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(work.subject)
+    }
+}
+
+/// Which branch the list is showing, and the one thing to do about it: ask.
+struct WorkCaption: View {
+    let work: WorkLine
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 6) {
+                Button {
+                    model.setChangesScope(.otherWork)
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 14, height: 14)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Back to Other Work")
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(work.summary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    Text(work.subject).foregroundStyle(.tertiary).lineLimit(1)
+                }
+            }
+            Button(work.isUnfinished ? "Ask Agent to Merge" : "Ask Agent to Clean Up") {
+                model.askAgent(aboutWork: work, prompt: work.isUnfinished ? work.mergeRequest : work.cleanUpRequest)
+            }
+            .controlSize(.small)
+            .padding(.leading, 20)
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
+    }
+}
+

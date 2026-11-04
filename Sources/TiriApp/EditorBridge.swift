@@ -363,6 +363,7 @@ extension AppModel {
         var doing: String?
         var message: String?
         var files: [String]
+        var directory: String
         var id: ItemID { item }
     }
 
@@ -375,7 +376,8 @@ extension AppModel {
             return AgentOverviewRow(item: session.item.id, agent: session.agent.title, symbol: session.agent.profile?.symbol ?? "terminal",
                                     title: title(for: session.item), workspace: session.workspace.name, workspaceID: session.workspace.id,
                                     isInActiveWorkspace: session.workspace.id == activeID, status: runtime?.status ?? .idle,
-                                    prompt: runtime?.prompt ?? AgentHookEvent.promptLine(turns.last { $0.item == session.item.id }?.prompt), doing: runtime?.activity, message: runtime?.message, files: runtime?.touched ?? [])
+                                    prompt: runtime?.prompt ?? AgentHookEvent.promptLine(turns.last { $0.item == session.item.id }?.prompt), doing: runtime?.activity, message: runtime?.message, files: runtime?.touched ?? [],
+                                    directory: EditorBridge.realPath(session.terminal.currentDirectory))
         }
     }
 

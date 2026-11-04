@@ -60,13 +60,17 @@ public enum ChangesScope: Hashable, Sendable {
     case recentCommits
     /// What one commit changed.
     case commit(CommitSummary)
+    /// Branches and worktrees besides this one, usually agents'.
+    case otherWork
+    /// What one of those has changed.
+    case work(WorkLine)
 }
 
 extension Array where Element == AgentTurn {
     /// The turn a scope means, among one workspace's turns.
     public func resolving(_ scope: ChangesScope, in workspace: WorkspaceID) -> AgentTurn? {
         switch scope {
-        case .sinceCommit, .branch, .recentCommits, .commit:
+        case .sinceCommit, .branch, .recentCommits, .commit, .otherWork, .work:
             return nil
         case .latestTurn:
             return last { $0.workspace == workspace && !$0.changedNothing }

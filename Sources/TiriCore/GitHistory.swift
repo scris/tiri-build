@@ -8,6 +8,97 @@ public enum DiffTarget: Hashable, Sendable {
     case branch
     /// What one commit did, by its full hash.
     case commit(String)
+    /// What a branch that isn't checked out here has done: from where it left its base, to its tip.
+    case range(from: String, to: String)
+}
+
+/// A branch or a worktree besides the one in front, usually an agent's, in plain terms.
+public struct WorkLine: Hashable, Identifiable, Sendable {
+    public var root: String
+    public var branch: String
+    /// Where it's checked out, if it is.
+    public var worktree: String?
+    public var base: String
+    /// Where it left its base, and its newest commit.
+    public var from: String
+    public var tip: String
+    public var commits: Int
+    public var files: Int
+    /// Changed in its worktree and not committed.
+    public var uncommitted: Int
+    public var merged: Bool
+    public var subject: String
+    public var date: Date
+
+    public var id: String { root + "#" + branch }
+
+    public init(root: String, branch: String, worktree: String?, base: String, from: String, tip: String, commits: Int, files: Int,
+                uncommitted: Int, merged: Bool, subject: String, date: Date) {
+        self.root = root
+        self.branch = branch
+        self.worktree = worktree
+        self.base = base
+        self.from = from
+        self.tip = tip
+        self.commits = commits
+        self.files = files
+        self.uncommitted = uncommitted
+        self.merged = merged
+        self.subject = subject
+        self.date = date
+    }
+
+    /// Whether there's anything to bring in.
+    public var isUnfinished: Bool { !merged || uncommitted > 0 }
+
+    public var summary: String {
+        var parts: [String] = []
+        if files > 0 { parts.append(files == 1 ? "1 file changed" : "\(files) files changed") }
+        if uncommitted > 0 { parts.append("\(uncommitted) not committed") }
+        if merged, uncommitted == 0 {
+            parts.append("merged into \(base)")
+        } else if commits > 0 {
+            parts.append(commits == 1 ? "1 commit, not merged" : "\(commits) commits, not merged")
+        } else if parts.isEmpty {
+            parts.append("nothing yet")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// `git worktree list --porcelain`: stanzas with `worktree`, `HEAD`, and `branch` or `detached`.
+    static func parseWorktrees(_ output: String) -> [(path: String, branch: String?)] {
+        var found: [(path: String, branch: String?)] = []
+        var path: String?
+        var branch: String?
+        func finish() {
+            if let path { found.append((path, branch)) }
+        }
+        for line in output.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("worktree ") {
+                finish()
+                path = String(line.dropFirst("worktree ".count))
+                branch = nil
+            } else if line.hasPrefix("branch refs/heads/") {
+                branch = String(line.dropFirst("branch refs/heads/".count))
+            }
+        }
+        finish()
+        return found
+    }
+
+    /// The agent's request, since Git is its job.
+    public var mergeRequest: String {
+        var text = "Please merge the branch `\(branch)` into `\(base)`"
+        if uncommitted > 0, let worktree { text += ", including what's not committed yet in \(worktree)" }
+        text += ". Resolve any conflicts, and tell me if anything needs my decision."
+        if let worktree { text += " Remove the worktree at \(worktree) once it's in." }
+        return text
+    }
+
+    public var cleanUpRequest: String {
+        if let worktree { return "The branch `\(branch)` is already merged into `\(base)`. Please remove its worktree at \(worktree) and delete the branch." }
+        return "The branch `\(branch)` is already merged into `\(base)`. Please delete it."
+    }
 }
 
 /// One row of the commit list.
@@ -348,6 +439,61 @@ extension Git {
         return (bases, files)
     }
 
+    /// Worktrees and recent unmerged branches besides what each folder has checked out.
+    public static func otherWork(in folders: [String], now: Date = Date()) -> [WorkLine] {
+        var roots: [String] = []
+        for folder in folders {
+            if let root = repositoryRoot(of: folder), !roots.contains(root) { roots.append(root) }
+        }
+        var lines: [WorkLine] = []
+        var seen = Set<String>()
+        for root in roots {
+            let connection = RemoteRegistry.shared.connection(forLocal: root)
+            let base: String
+            switch branchBase(root: root).state {
+            case .found(let name, _, _), .isBase(let name): base = name
+            default: continue
+            }
+            let current = line(["symbolic-ref", "--quiet", "--short", "HEAD"], in: root)
+            let worktrees = WorkLine.parseWorktrees(text(["worktree", "list", "--porcelain"], in: root) ?? "")
+            var byBranch: [String: String] = [:]
+            for worktree in worktrees {
+                guard let branch = worktree.branch else { continue }
+                // Paths come from git, so on a server they're the server's.
+                let local = connection.map { $0.learn(remote: worktree.path); return $0.map.local(worktree.path) } ?? worktree.path
+                byBranch[branch] = local
+            }
+            let listing = text(["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)%00%(objectname)%00%(committerdate:unix)%00%(subject)", "refs/heads"], in: root) ?? ""
+            for row in listing.split(whereSeparator: \.isNewline).prefix(200) {
+                let parts = row.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+                guard parts.count >= 4 else { continue }
+                let branch = parts[0]
+                let tip = parts[1]
+                let date = Date(timeIntervalSince1970: Double(parts[2]) ?? 0)
+                guard branch != current, branch != base, !folders.contains(where: { byBranch[branch] == $0 }) else { continue }
+                let worktree = byBranch[branch]
+                // Without a checkout, an old branch is history rather than work.
+                guard worktree != nil || now.timeIntervalSince(date) < 30 * 24 * 3600 else { continue }
+                let merged = runGit(["merge-base", "--is-ancestor", tip, base], in: root)?.status == 0
+                if merged, worktree == nil { continue }
+                guard seen.insert(root + "#" + branch).inserted, lines.count < 20 else { continue }
+                let from = line(["merge-base", base, tip], in: root) ?? tip
+                let commits = line(["rev-list", "--count", base + ".." + tip], in: root).flatMap { Int($0) } ?? 0
+                let files = text(["diff", "--name-only", "--no-ext-diff", from, tip], in: root)?.split(whereSeparator: \.isNewline).count ?? 0
+                let uncommitted = worktree.flatMap { text(["status", "--porcelain"], in: $0)?.split(whereSeparator: \.isNewline).count } ?? 0
+                lines.append(WorkLine(root: root, branch: branch, worktree: worktree, base: base, from: from, tip: tip, commits: commits,
+                                      files: files, uncommitted: uncommitted, merged: merged, subject: parts[3], date: date))
+            }
+        }
+        return lines
+    }
+
+    /// The files one of those has changed.
+    public static func changes(of work: WorkLine) -> [ChangedFile] {
+        if let worktree = work.worktree { return branchChanges(in: [worktree]).files }
+        return namesChanged([work.from, work.tip], in: work.root, root: work.root).sorted { $0.relative.localizedStandardCompare($1.relative) == .orderedAscending }
+    }
+
     /// What to compare a commit with. A merge is compared with its first parent, which shows
     /// what it brought in. A root commit is compared with nothing.
     static func parentForDiff(of oid: String, in root: String) -> String? {
@@ -383,6 +529,8 @@ extension Git {
         case .commit(let oid):
             guard resolveCommit(oid, in: root) != nil, let parent = parentForDiff(of: oid, in: root) else { return nil }
             return (parent, oid)
+        case .range(let from, let to):
+            return (from, to)
         }
     }
 

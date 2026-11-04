@@ -131,6 +131,11 @@ final class AppModel {
     /// For the scopes that aren't a turn: what each repository is compared with, and the commit list.
     var branchBases: [BranchBase] = []
     var recentCommits: [CommitSummary] = []
+    var otherWork: [WorkLine] = []
+    @ObservationIgnored var otherWorkInFlight = false
+    @ObservationIgnored var otherWorkAt: Double = 0
+    @ObservationIgnored var otherWorkWorkspace: WorkspaceID?
+    @ObservationIgnored private var watchTicks = 0
     var scopeIsLoading = false
     @ObservationIgnored let snapshots = TurnSnapshots()
     @ObservationIgnored let turnStore = TurnStore()
@@ -1084,7 +1089,13 @@ final class AppModel {
     /// An agent can start or end with no report at all, like one typed at a shell without hooks.
     func startWatchingAgents() {
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.scheduleAgentRows() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.scheduleAgentRows()
+                // An agent's worktree can be outside everything being watched. Less often over SSH.
+                self.watchTicks += 1
+                if self.watchTicks % (self.active.remote == nil ? 8 : 30) == 0 || self.otherWorkWorkspace != self.activeID { self.refreshOtherWork() }
+            }
         }
     }
 
@@ -2056,6 +2067,7 @@ final class AppModel {
                 self.changesInFlight = false
                 self.refreshReviewLines()
                 self.refreshScopedChanges()
+                self.refreshOtherWork()
                 if self.activeID == workspace { self.barHasRepositories = !repositories.isEmpty }
                 if self.activeID == workspace, self.changes != found { self.changes = found }
                 if self.activeID == workspace, self.repositories != repositories {

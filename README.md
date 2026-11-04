@@ -44,9 +44,19 @@ If a server forbids SSH forwarding, `tiri`, the Peek and agent status still work
 
 `tiri remote` lists the servers, and `tiri remote ports` what's forwarded.
 
-## Two agents, one repository
+## Other work
 
-**New Worktree…** in the workspaces' + menu, or `tiri worktree <branch>`, makes a second checkout of the repository on that branch, beside it in `<repo>.worktrees/`, and opens it as a workspace of its own. Their edits don't mix, so each one's Changes and turns show only its own work. It works on servers too. When you're done, delete the workspace and have an agent run `git worktree remove`.
+Agents make branches and worktrees for themselves, and they find you. A line under **Changes** says when there are branches here that aren't merged, and **Other Work** in its menu lists them in plain terms, like `3 files changed · 2 commits, not merged`, with the agent working there if there is one. Choose one to read what it changed. **Ask Agent to Merge** or **Ask Agent to Clean Up** hands the rest over, to the agent in that worktree if there is one. `tiri work` lists the same for agents, and `tiri worktree <branch>` makes a second checkout as a workspace of its own.
+
+Fetch, pull and push are one click in the bottom bar. If one of them can't do the simple thing, Tiri offers to ask your agent. Everything further in Git is your agent's.
+
+## See what your agents are doing
+
+The **Agents** section of the sidebar has every running agent, in every workspace: what you last asked it, what it just did, and how many files it's changed. Click one to go there. It reads what agents report through their hooks, and `tiri activity` prints the same.
+
+## Tell an agent about a change
+
+Hover over a change in a diff and press **Undo** or **Ask**, or right-click for those and **Undo All Changes in This File**. The request goes to the agent that made the change, typed into its input for you to send, with the change quoted. If Tiri can't tell who made it, it asks.
 
 ## Give your agent lines, files and images
 

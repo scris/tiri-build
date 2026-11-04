@@ -1318,7 +1318,14 @@ struct ChangesList: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 1) {
-                if case .recentCommits = model.changesScope {
+                if case .otherWork = model.changesScope {
+                    ForEach(model.otherWork) { work in
+                        WorkRow(work: work)
+                    }
+                    if model.otherWork.isEmpty {
+                        EmptyChangesRow(text: model.emptyChangesText)
+                    }
+                } else if case .recentCommits = model.changesScope {
                     ForEach(model.recentCommits) { commit in
                         CommitRow(commit: commit)
                     }

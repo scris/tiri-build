@@ -37,7 +37,6 @@ extension AppModel {
                 if let path = model.activeFilePath { model.revealInTree(path) }
             },
             AppCommand(id: "newTerminal", title: "New Terminal", category: "Terminal") { $0.startTerminal() },
-            AppCommand(id: "newWorktree", title: "New Worktree…", category: "Workspace") { $0.newWorktreeInteractive() },
             AppCommand(id: "connectToServer", title: "Connect to Server…", category: "File") { $0.connectToServerInteractive() },
             AppCommand(id: "restartTerminal", title: "Restart Exited Terminal", category: "Terminal") { model in
                 if let id = model.active.focused.active {
@@ -136,6 +135,7 @@ extension AppModel {
             AppCommand(id: "changesLatestTurn", title: "Changes: Latest Turn", category: "View") { $0.setChangesScope(.latestTurn) },
             AppCommand(id: "changesBranch", title: "Changes: This Branch", category: "View") { $0.setChangesScope(.branch) },
             AppCommand(id: "changesRecentCommits", title: "Changes: Recent Commits", category: "View") { $0.setChangesScope(.recentCommits) },
+            AppCommand(id: "changesOtherWork", title: "Changes: Other Work", category: "View") { $0.setChangesScope(.otherWork) },
             AppCommand(id: "nextChange", title: "Go to Next Change", category: "Go") { $0.goToChange(forward: true) },
             AppCommand(id: "previousChange", title: "Go to Previous Change", category: "Go") { $0.goToChange(forward: false) },
             AppCommand(id: "toggleDiffSideBySide", title: "Diff: Side by Side", category: "View") { model in
@@ -248,6 +248,7 @@ enum ControlHandler {
             return .success(id: request.id, .object(["answer": .string(answer)]))
         }
         if request.cmd == "worktree.add" { return await worktreeAdd(request) }
+        if request.cmd == "work" { return await work(request) }
         if request.cmd == "remote.connect" { return await remoteConnect(request) }
         if request.cmd == "remote.forward" { return await remoteForward(request) }
         let touched = paths(in: request)
@@ -408,6 +409,17 @@ enum ControlHandler {
     }
 
     @MainActor
+    private static func work(_ request: ControlRequest) async -> ControlResponse {
+        let folders = AppModel.shared.active.folders
+        let lines = await Task.detached(priority: .userInitiated) { Git.otherWork(in: folders) }.value
+        return .success(id: request.id, .array(lines.map { line in
+            var entry: [String: JSONValue] = ["branch": .string(line.branch), "summary": .string(line.summary), "merged": .bool(line.merged),
+                                              "base": .string(line.base), "subject": .string(line.subject)]
+            if let worktree = line.worktree { entry["worktree"] = .string(worktree) }
+            return .object(entry)
+        }))
+    }
+
     private static func worktreeAdd(_ request: ControlRequest) async -> ControlResponse {
         let model = AppModel.shared
         guard let branch = request.args["branch"]?.stringValue else { return .failure(id: request.id, "Which branch?") }

@@ -72,6 +72,8 @@ public struct DiffSpec: Codable, Hashable, Sendable {
     public var commit: String?
     /// Since the branch left its base.
     public var branch: Bool?
+    /// A branch that isn't checked out here: `from` and `to`, as commits.
+    public var range: [String]?
     public init(path: String, turn: String? = nil, commit: String? = nil, branch: Bool? = nil) {
         self.path = path
         self.turn = turn
@@ -82,12 +84,14 @@ public struct DiffSpec: Codable, Hashable, Sendable {
     /// What it compares, unless that's a turn: those have their own snapshots.
     public var target: DiffTarget {
         if let commit { return .commit(commit) }
+        if let range, range.count == 2 { return .range(from: range[0], to: range[1]) }
         return branch == true ? .branch : .head
     }
 
     /// Goes after the name in a tab.
     public var scopeWord: String {
         if let commit { return String(commit.prefix(7)) }
+        if range != nil { return "branch" }
         if turn != nil { return "turn" }
         return branch == true ? "branch" : "changes"
     }

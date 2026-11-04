@@ -126,6 +126,10 @@ public enum CLIParser {
             }
             return request("notebook." + action, payload)
 
+        case "work":
+            guard args.isEmpty else { throw UsageError("usage: tiri work   (branches and worktrees besides this one, in plain terms)") }
+            return request("work")
+
         case "activity":
             guard args.isEmpty else { throw UsageError("usage: tiri activity   (what every running agent is doing)") }
             return request("activity")
