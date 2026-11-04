@@ -113,7 +113,9 @@ env)
   echo "export TIRI_HOME='$TIRI_HOME' TIRI_CONFIG_HOME='$TIRI_CONFIG_HOME' TIRI_SOCKET='$TIRI_SOCKET' PATH='$APP/Contents/Resources/bin':\"\$PATH\""
   ;;
 cli)
-  shift 2; exec "$CLI" "$@"
+  # Never from the repository: a `tiri term` starts where it's run, and this copy touching ~/Documents
+  # makes macOS show a permission dialog on the screen of whoever's using this Mac.
+  shift 2; cd "$DIR"; exec "$CLI" "$@"
   ;;
 *) echo "unknown action $ACTION" >&2; exit 64 ;;
 esac

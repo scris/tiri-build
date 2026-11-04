@@ -14,6 +14,9 @@ if pgrep -f "$APP_REAL/Contents/MacOS/Tiri" >/dev/null; then echo "$APP is alrea
 CLI="$APP/Contents/Resources/bin/tiri"
 WORK="$(mktemp -d)"
 export TIRI_HOME="$WORK/home" TIRI_CONFIG_HOME="$WORK/config" TIRI_SOCKET="/tmp/tiri-e2e-$$.sock"
+# Never from the repository: a `tiri term` starts where it's run, and a test copy touching ~/Documents
+# makes macOS show a permission dialog on the screen of whoever's using this Mac.
+mkdir -p "$WORK"; cd "$WORK"
 PROJECT="$WORK/project"
 mkdir -p "$PROJECT/src" "$WORK/other"
 printf '# Report\n\nHello.\n' > "$PROJECT/report.md"

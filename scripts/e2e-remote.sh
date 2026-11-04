@@ -37,12 +37,12 @@ eventually "tree shows the server's files" "src/" 15 T tree
 hasnt "excluded names stay out" "node_modules" "$(T tree)"
 ID="$(term tiri-e2e)"; [ -n "$ID" ] && ok "starts with a terminal" || bad "starts with a terminal"
 eventually "terminal is on the server" "tiri-e2e" 15 T read "$ID" --lines 5
-eventually "changes come from the server's git" "/home" 15 T changes
+eventually "changes come from the server's git" "tiri-e2e/src/app.py" 15 T changes
 has "changes use the server's paths" "src/app.py" "$(T changes)"
 hasnt "no local copy's path in changes" "Remote.noindex" "$(T changes)"
 has "search on the server" "src/app.py" "$(T search hello)"
 hasnt "search speaks the server's paths" "Remote.noindex" "$(T search hello)"
-has "git status" "master" "$(T git)$(T git | grep -c main >/dev/null; T git)"
+has "git status" "tiri-e2e" "$(T git)"
 
 # tiri inside a terminal there
 T send "$ID" 'clear; which tiri; tiri ping' --enter

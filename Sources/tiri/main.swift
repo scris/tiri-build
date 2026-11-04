@@ -1,6 +1,15 @@
 import Foundation
 import TiriCore
 
+// In a terminal on a server that's also a Mac with Tiri installed, this is the wrong `tiri`: the one that
+// reaches the Mac at the other end of the connection is the helper.
+if let helper = ProcessInfo.processInfo.environment["TIRI_SERVER_HELPER"], !helper.isEmpty, FileManager.default.isExecutableFile(atPath: helper) {
+    var arguments = CommandLine.arguments
+    arguments[0] = helper
+    let argv = arguments.map { strdup($0) } + [nil]
+    execv(helper, argv)
+}
+
 func fail(_ message: String, code: Int32 = 1) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
     exit(code)

@@ -351,7 +351,11 @@ final class RemoteManager {
             environment.append(("ENABLE_IDE_INTEGRATION", "true"))
         }
         for (key, value) in environment { lines.append("export \(key)=\(ShellQuote.quote(value))") }
-        if let bin = connection.binDirectory { lines.append("export PATH=\(ShellQuote.quote(bin)):\"$PATH\"") }
+        if let bin = connection.binDirectory {
+            lines.append("export PATH=\(ShellQuote.quote(bin)):\"$PATH\"")
+            // A Mac can be a server too, and its own shell setup may put its own `tiri` first.
+            lines.append("export TIRI_SERVER_HELPER=\(ShellQuote.quote(bin + "/tiri"))")
+        }
         // A program outlives the connection that brought your SSH agent, so `git push` would find it
         // gone. So it's given a link that never moves, pointed at the live one on each connection.
         if let run = connection.runDirectory {
