@@ -1393,8 +1393,11 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         if hookActive, !hooksReportStarts, runningAgent != nil, let status = model.runtimes[itemID]?.status, status == .done || status == .idle {
             model.setStatus(itemID, .working, notify: false)
         }
-        // The user answered. Without hooks nothing else would clear the question.
-        if !hookActive, model.runtimes[itemID]?.status == .needsInput {
+        // The user answered, and that's the end of the question. Not every answer brings a report: a
+        // rejected tool can end a turn through an event some setups don't hear. If it did end the turn,
+        // the long silence below clears this.
+        if model.runtimes[itemID]?.status == .needsInput {
+            if hookActive { noteHookReport(status: .working) }
             model.setStatus(itemID, .working, notify: false)
         }
     }

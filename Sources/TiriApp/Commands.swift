@@ -622,6 +622,13 @@ enum ControlHandler {
             }
             return .object([:])
 
+        case "dev.notification":
+            // What a click on a notification does, past the part only the system can do.
+            guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", let item = request.args["item"]?.stringValue,
+                  let workspace = model.workspace(containing: item) else { throw ControlFailure("Only for a test copy.") }
+            model.focusFromNotification(workspace: workspace.id, item: item)
+            return .object([:])
+
         case "dev.page":
             guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", let script = request.args["script"]?.stringValue else { throw ControlFailure("Only for a test copy.") }
             if let web = model.frontWebController {

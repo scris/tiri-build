@@ -107,6 +107,10 @@ public enum CLIParser {
             if args.count > 1 { payload["action"] = .string(args[1]) }
             return request("dev.change", payload)
 
+        case "dev-notification":
+            guard args.count == 1 else { throw UsageError("usage: tiri dev-notification <item>   (test copies only)") }
+            return request("dev.notification", ["item": .string(args[0])])
+
         case "dev-page":
             guard args.count == 1 else { throw UsageError("usage: tiri dev-page <script>   (test copies only)") }
             return request("dev.page", ["script": .string(args[0])])
