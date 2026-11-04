@@ -150,11 +150,11 @@ check "hook payload is accepted" "$CLI" hook claude '{"hook_event_name":"Stop"}'
 (unset TIRI_ITEM_ID; check "notify outside a terminal stays quiet" "$CLI" notify done)
 
 expect "settings lists every setting" "terminal.linkOpens" "$CLI" settings
-expect "settings explains itself" "Accepts:" "$CLI" settings explain code.wordWrap
-expect "settings set takes effect" "on" "$CLI" settings set code.wordWrap on
-expect "settings get reads it back" "on" "$CLI" settings get code.wordWrap
-expect "settings reset restores it" "off" "$CLI" settings reset code.wordWrap
-refuses "settings set checks the value" "$CLI" settings set code.wordWrap maybe
+expect "settings explains itself" "Accepts:" "$CLI" settings explain editor.wordWrap
+expect "settings set takes effect" "on" "$CLI" settings set editor.wordWrap on
+expect "settings get reads it back" "on" "$CLI" settings get editor.wordWrap
+expect "settings reset restores it" "off" "$CLI" settings reset editor.wordWrap
+refuses "settings set checks the value" "$CLI" settings set editor.wordWrap maybe
 refuses "settings set checks the key" "$CLI" settings set no.such on
 check "settings open" "$CLI" settings open
 expect "settings is a tab" "settings" "$CLI" items
@@ -260,6 +260,33 @@ expect "commands lists actions" "splitRight" "$CLI" commands
 check "run a command" "$CLI" run toggleSidebar
 check "run it back" "$CLI" run toggleSidebar
 refuses "run a missing command" "$CLI" run nope
+
+# Editing commands through `tiri run`, read back from the saved file.
+printf 'first\n    second\nthird\n' > "$WORK/edit.py"
+"$CLI" open "$WORK/edit.py" --tab >/dev/null
+sleep 0.3
+run_and_save() { "$CLI" run "$1" >/dev/null && "$CLI" run saveFile >/dev/null && sleep 0.2 && cat "$WORK/edit.py"; }
+expect "run toggleLineComment" "# first" run_and_save toggleLineComment
+expect "run toggleLineComment again" "first" run_and_save toggleLineComment
+expect "run indentLines" "    first" run_and_save indentLines
+expect "run outdentLines" "first" run_and_save outdentLines
+expect "run moveLinesDown" $'second\nfirst' run_and_save moveLinesDown
+expect "run moveLinesUp" $'first\n    second' run_and_save moveLinesUp
+expect "run copyLinesDown" $'first\nfirst' run_and_save copyLinesDown
+expect "run deleteLine" $'first\n    second' run_and_save deleteLine
+expect "run insertLineBelow" $'second\n    \nthird' run_and_save insertLineBelow
+expect "run deleteLine after it" $'second\nthird' run_and_save deleteLine
+check "run toggleWordWrap" "$CLI" run toggleWordWrap
+check "run toggleWordWrap back" "$CLI" run toggleWordWrap
+check "run findReplace" "$CLI" run findReplace
+check "run goToLine" "$CLI" run goToLine
+check "run symbolsInFile" "$CLI" run symbolsInFile
+check "run symbolsInWorkspace" "$CLI" run symbolsInWorkspace
+expect "run zoomIn" "1" bash -c "'$CLI' run zoomIn >/dev/null; sleep 0.3; '$CLI' settings get window.zoomLevel"
+expect "run zoomOut" "0" bash -c "'$CLI' run zoomOut >/dev/null; sleep 0.3; '$CLI' settings get window.zoomLevel"
+check "run zoomReset" "$CLI" run zoomReset
+expect "compact folders on by default" "on" "$CLI" settings get explorer.compactFolders
+expect "keys list has the new ones" "⌘/" bash -c "'$CLI' keys | grep toggleLineComment"
 
 printf '{ broken' > "$TIRI_CONFIG_HOME/settings.json"
 sleep 0.5

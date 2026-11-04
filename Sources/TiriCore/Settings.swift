@@ -31,6 +31,16 @@ public struct TerminalPreset: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// How long lines show in a file.
+public enum WordWrap: String, Codable, Sendable, CaseIterable {
+    /// Scroll sideways.
+    case off
+    /// At the edge of the pane.
+    case on
+    /// At a column, or the pane's edge if that comes first.
+    case bounded
+}
+
 /// Settings use the flat dotted keys Cursor users already know. Unknown keys are ignored
 /// so a newer settings file can't break an older app.
 public struct TiriSettings: Equatable, Sendable {
@@ -52,10 +62,18 @@ public struct TiriSettings: Equatable, Sendable {
     public var terminalLinkOpens = LinkOpenTarget.peek
     public var codeFontFamily = "SF Mono"
     public var codeFontSize = 12.0
-    public var codeWordWrap = false
+    public var editorWordWrap = WordWrap.off
+    public var editorWordWrapColumn = 120
+    /// Steps of ⌘+ and ⌘-. Each is one point of text, in terminals and in files.
+    public var zoomLevel = 0
+    public var terminalFontSizeZoomed: Double { Self.zoomed(terminalFontSize, level: zoomLevel) }
+    public var codeFontSizeZoomed: Double { Self.zoomed(codeFontSize, level: zoomLevel) }
+    public static let zoomRange = -6...16
+    private static func zoomed(_ size: Double, level: Int) -> Double { min(max(size + Double(level), 6), 72) }
     public var externalEditors = ["zed", "code", "cursor"]
     public var filesExclude = [".git", "node_modules", ".build", ".DS_Store"]
     public var explorerAutoReveal = true
+    public var explorerCompactFolders = true
     public var webForceDark = true
     public var documentsForceDark = true
     public var notificationsEnabled = true
@@ -98,7 +116,12 @@ public struct TiriSettings: Equatable, Sendable {
 
       "code.fontFamily": "SF Mono",
       "code.fontSize": 12,
-      "code.wordWrap": false,
+      // "off", "on" (at the pane's edge) or "bounded" (at editor.wordWrapColumn).
+      "editor.wordWrap": "off",
+      "editor.wordWrapColumn": 120,
+
+      // Steps of ⌘+ and ⌘-.
+      "window.zoomLevel": 0,
 
       // "Open in External Editor" uses the first of these that is installed.
       "externalEditors": ["zed", "code", "cursor"],
@@ -106,6 +129,8 @@ public struct TiriSettings: Equatable, Sendable {
       // Names or globs hidden from the tree and quick open.
       "files.exclude": [".git", "node_modules", ".build", ".DS_Store"],
       "explorer.autoReveal": true,
+      // One row for folders that only hold another folder, as in src/main/java.
+      "explorer.compactFolders": true,
 
       // In dark mode, darken web previews that have no dark mode of their own.
       "web.forceDark": true,
@@ -208,10 +233,20 @@ public struct TiriSettings: Equatable, Sendable {
         }
         try string("code.fontFamily") { settings.codeFontFamily = $0 }
         try number("code.fontSize") { settings.codeFontSize = min(max($0, 6), 72) }
-        try bool("code.wordWrap") { settings.codeWordWrap = $0 }
+        // The older on-or-off setting still counts, until the new one is set.
+        try bool("code.wordWrap") { settings.editorWordWrap = $0 ? .on : .off }
+        if let raw = object["editor.wordWrap"] {
+            guard let text = raw as? String, let wrap = WordWrap(rawValue: text) else {
+                throw ParseError.wrongType(key: "editor.wordWrap", expected: "\"off\", \"on\" or \"bounded\"")
+            }
+            settings.editorWordWrap = wrap
+        }
+        try number("editor.wordWrapColumn") { settings.editorWordWrapColumn = min(max(Int($0), 20), 1_000) }
+        try number("window.zoomLevel") { settings.zoomLevel = min(max(Int($0), Self.zoomRange.lowerBound), Self.zoomRange.upperBound) }
         try strings("externalEditors") { settings.externalEditors = $0 }
         try strings("files.exclude") { settings.filesExclude = $0 }
         try bool("explorer.autoReveal") { settings.explorerAutoReveal = $0 }
+        try bool("explorer.compactFolders") { settings.explorerCompactFolders = $0 }
         try bool("web.forceDark") { settings.webForceDark = $0 }
         try bool("documents.forceDark") { settings.documentsForceDark = $0 }
         try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
@@ -375,6 +410,7 @@ public enum Keymap {
             ("cmd+shift+]", "nextTab"),
             ("cmd+shift+[", "previousTab"),
             ("cmd+f", "find"),
+            ("cmd+alt+f", "findReplace"),
             ("cmd+s", "saveFile"),
             ("cmd+l", "addToAgent"),
             ("cmd+shift+l", "attachToAgent"),
@@ -389,7 +425,32 @@ public enum Keymap {
             ("cmd+shift+f", "searchInFiles"),
             ("cmd+r", "webReload"),
             ("cmd+,", "openSettings"),
+            // A Peek keeps ⌘↩ when it's there. Otherwise, in a file, it's a new line.
             ("cmd+enter", "promotePeek"),
+            ("cmd+enter", "insertLineBelow"),
+            ("cmd+shift+enter", "insertLineAbove"),
+            ("cmd+/", "toggleLineComment"),
+            ("cmd+]", "indentLines"),
+            ("cmd+[", "outdentLines"),
+            ("alt+up", "moveLinesUp"),
+            ("alt+down", "moveLinesDown"),
+            ("shift+alt+up", "copyLinesUp"),
+            ("shift+alt+down", "copyLinesDown"),
+            ("cmd+shift+k", "deleteLine"),
+            ("cmd+d", "addNextOccurrence"),
+            ("ctrl+g", "goToLine"),
+            ("alt+z", "toggleWordWrap"),
+            ("cmd+shift+o", "symbolsInFile"),
+            ("cmd+t", "symbolsInWorkspace"),
+            ("cmd+=", "zoomIn"),
+            ("cmd+shift+=", "zoomIn"),
+            ("cmd+-", "zoomOut"),
+            ("cmd+0", "zoomReset"),
+            // Waits a moment in case it's the start of a two-press shortcut. See commandsSoFar.
+            ("cmd+k", "clearTerminal"),
+            ("cmd+left", "terminalLineStart"),
+            ("cmd+right", "terminalLineEnd"),
+            ("cmd+backspace", "terminalDeleteToLineStart"),
             ("cmd+alt+enter", "promotePeekToSide"),
             ("cmd+shift+u", "nextAttention"),
         ]
@@ -483,7 +544,9 @@ extension Keymap {
         if first.modifiers.subtracting(.shift).isEmpty, !isFunctionKey {
             return "A shortcut needs ⌘, ⌃ or ⌥, or typing that key would stop working."
         }
-        for binding in bindings where binding.command != command {
+        for binding in bindings where binding.command != command && command != "clearTerminal" {
+            // ⌘K can be both: it waits a moment to see whether a second press follows.
+            if binding.command == "clearTerminal" { continue }
             if binding.strokes.count > strokes.count, Array(binding.strokes.prefix(strokes.count)) == strokes {
                 return "\(strokes.map(\.symbol).joined(separator: " ")) already starts \(binding.symbol) (\(binding.command))."
             }
@@ -526,17 +589,18 @@ public struct KeyResolver: Sendable {
     public enum Outcome: Equatable, Sendable {
         case passThrough
         case pending
-        case command(String)
+        /// `otherwise` is who else wants this key, in order, if the first can't take it right now.
+        case command(String, otherwise: [String] = [])
         case cancelledChord
     }
 
-    private var exact: [[KeyStroke]: String] = [:]
+    private var exact: [[KeyStroke]: [String]] = [:]
     private var prefixes: Set<[KeyStroke]> = []
     private var pending: [KeyStroke] = []
 
     public init(bindings: [Keybinding]) {
         for binding in bindings {
-            exact[binding.strokes] = binding.command
+            exact[binding.strokes, default: []].append(binding.command)
             if binding.strokes.count > 1 {
                 for length in 1..<binding.strokes.count {
                     prefixes.insert(Array(binding.strokes.prefix(length)))
@@ -547,15 +611,18 @@ public struct KeyResolver: Sendable {
 
     public var isPending: Bool { !pending.isEmpty }
 
+    /// While waiting for a second press: what the presses so far would do on their own.
+    public var commandsSoFar: [String] { exact[pending] ?? [] }
+
     public mutating func handle(_ stroke: KeyStroke) -> Outcome {
         let sequence = pending + [stroke]
         if prefixes.contains(sequence) {
             pending = sequence
             return .pending
         }
-        if let command = exact[sequence] {
+        if let commands = exact[sequence], let first = commands.first {
             pending = []
-            return .command(command)
+            return .command(first, otherwise: Array(commands.dropFirst()))
         }
         if !pending.isEmpty {
             pending = []

@@ -208,7 +208,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     private func restoreExpansion(_ node: FileNode) {
         guard expanded.contains(node.path) else { return }
         outline.expandItem(node)
-        for child in children(of: node) where child.isDirectory {
+        for child in displayedChildren(of: node) where child.isDirectory {
             restoreExpansion(child)
         }
     }
@@ -249,6 +249,79 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             if node.isDirectory ? oldFolders[node.path] != folders[node.path] : oldFiles[node.path] != files[node.path] { rows.insert(row) }
         }
         if !rows.isEmpty { outline.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0)) }
+    }
+
+    // MARK: Compact folders
+
+    // A folder that only holds another folder shares a row with it. The tree of nodes stays as it
+    // is on disk. The outline's rows are "heads", and a row shows and acts on its "tail", the
+    // deepest folder in the run. A run only grows as far as what's been read, so a collapsed
+    // folder isn't listed just to name its row: expanding it finds out, as in VS Code.
+
+    private var compacts: Bool { model?.settings.explorerCompactFolders ?? false }
+
+    /// A folder's only child, if that child can share its row.
+    private func compactChild(of node: FileNode) -> FileNode? {
+        guard let children = node.children, children.count == 1, let only = children.first,
+              only.isDirectory, only.pendingCreation == nil else { return nil }
+        return only
+    }
+
+    /// The deepest folder on this node's row.
+    private func tail(of node: FileNode) -> FileNode {
+        guard compacts, node.isDirectory, !node.isRoot, node.pendingCreation == nil else { return node }
+        var current = node
+        // Links can loop, and a run has to end somewhere.
+        for _ in 0..<64 {
+            guard let next = compactChild(of: current) else { break }
+            current = next
+        }
+        return current
+    }
+
+    /// The row this node is on.
+    private func head(of node: FileNode) -> FileNode {
+        guard compacts, node.isDirectory else { return node }
+        var current = node
+        for _ in 0..<64 {
+            guard let parent = current.parent, !parent.isRoot, compactChild(of: parent) === current else { break }
+            current = parent
+        }
+        return current
+    }
+
+    private func run(from head: FileNode) -> [FileNode] {
+        var list = [head]
+        guard compacts, !head.isRoot, head.isDirectory else { return list }
+        var current = head
+        for _ in 0..<64 {
+            guard let next = compactChild(of: current) else { break }
+            list.append(next)
+            current = next
+        }
+        return list
+    }
+
+    /// What shows under a row. Reading it can make the run longer.
+    private func displayedChildren(of node: FileNode) -> [FileNode] {
+        guard compacts, !node.isRoot else { return children(of: node) }
+        var current = node
+        var list = children(of: current)
+        for _ in 0..<64 {
+            guard list.count == 1, list[0].isDirectory, list[0].pendingCreation == nil else { break }
+            current = list[0]
+            list = children(of: current)
+        }
+        return list
+    }
+
+    private func rowName(_ node: FileNode) -> String {
+        run(from: node).map(\.name).joined(separator: "/")
+    }
+
+    private func refreshRowLabel(_ head: FileNode) {
+        let row = outline.row(forItem: head)
+        if row >= 0 { outline.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0)) }
     }
 
     // MARK: Live updates
@@ -308,10 +381,14 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             if let existing = byPath[entry.path], existing.isDirectory == entry.isDirectory { return existing }
             return FileNode(path: entry.path, name: entry.name, isDirectory: entry.isDirectory, parent: node)
         }
-        outline.reloadItem(node, reloadChildren: true)
+        // A folder gaining or losing a sibling can join or leave a row, so its whole row reloads.
+        let row = head(of: node)
+        outline.reloadItem(row, reloadChildren: true)
         restoringExpansion = true
-        for child in node.children ?? [] where child.isDirectory && expanded.contains(child.path) {
-            restoreExpansion(child)
+        if outline.isItemExpanded(row) {
+            for child in displayedChildren(of: row) where child.isDirectory && expanded.contains(child.path) {
+                restoreExpansion(child)
+            }
         }
         restoringExpansion = false
         select(paths: selection)
@@ -319,8 +396,9 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     // MARK: Selection and reveal
 
+    /// What selected rows act on: on a compact row, its deepest folder.
     private func selectedNodes() -> [FileNode] {
-        outline.selectedRowIndexes.compactMap { outline.item(atRow: $0) as? FileNode }
+        outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? FileNode).map(tail) }
     }
 
     private func selectedPaths() -> [String] { selectedNodes().map(\.path) }
@@ -329,7 +407,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         var rows = IndexSet()
         for path in paths {
             if let node = findLoaded(path) {
-                let row = outline.row(forItem: node)
+                let row = outline.row(forItem: head(of: node))
                 if row >= 0 { rows.insert(row) }
             }
         }
@@ -346,10 +424,12 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         for component in components {
             guard let next = children(of: node).first(where: { $0.name == component }) else { return }
             node = next
-            if node.path != path, !outline.isItemExpanded(node) { outline.expandItem(node) }
+            if node.path != path, !outline.isItemExpanded(head(of: node)) { outline.expandItem(head(of: node)) }
         }
-        if expand, node.isDirectory { outline.expandItem(node) }
-        let row = outline.row(forItem: node)
+        if expand, node.isDirectory { outline.expandItem(head(of: node)) }
+        // Reading on the way down can have made its row's run longer.
+        refreshRowLabel(head(of: node))
+        let row = outline.row(forItem: head(of: node))
         guard row >= 0 else { return }
         outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         outline.scrollRowToVisible(row)
@@ -377,7 +457,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     func visibleRows() -> [String] {
         (0..<outline.numberOfRows).compactMap { row in
             guard let node = outline.item(atRow: row) as? FileNode else { return nil }
-            return String(repeating: "  ", count: outline.level(forRow: row)) + node.name + (node.isDirectory ? "/" : "")
+            return String(repeating: "  ", count: outline.level(forRow: row)) + rowName(node) + (node.isDirectory ? "/" : "")
         }
     }
 
@@ -403,7 +483,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     func openSelected(pin: Bool) {
         guard let node = selectedNodes().first else { return }
         if node.isDirectory {
-            if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
+            let row = head(of: node)
+            if outline.isItemExpanded(row) { outline.collapseItem(row) } else { outline.expandItem(row) }
         } else {
             model?.openFromTree(path: node.path, pin: pin)
             if !pin { outline.window?.makeFirstResponder(outline) }
@@ -472,25 +553,30 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     func beginCreating(_ kind: FileNode.PendingKind, in target: FileNode?) {
-        guard let directory = targetDirectory(for: target) else { return }
-        outline.expandItem(directory)
-        expanded.insert(directory.path)
+        guard let target = targetDirectory(for: target) else { return }
+        let row = head(of: target)
+        outline.expandItem(row)
+        // Expanding can show that the row's run goes further down, and the new item goes at its end.
+        let directory = tail(of: row)
+        for part in run(from: row) { expanded.insert(part.path) }
         let pending = FileNode(path: directory.path + "/", name: "", isDirectory: kind == .folder, parent: directory)
         pending.pendingCreation = kind
         var list = children(of: directory)
         let index = kind == .folder ? 0 : (list.firstIndex { !$0.isDirectory } ?? list.count)
         list.insert(pending, at: index)
         directory.children = list
-        outline.insertItems(at: IndexSet(integer: index), inParent: directory, withAnimation: [])
+        outline.insertItems(at: IndexSet(integer: index), inParent: row, withAnimation: [])
         beginEditing(pending)
     }
 
     private func beginEditing(_ node: FileNode) {
-        let row = outline.row(forItem: node)
+        let row = outline.row(forItem: head(of: node))
         guard row >= 0, let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView,
               let field = cell.textField else { return }
         editingNode = node
         cancelEdit = false
+        // On a compact row, it's the deepest folder's name being changed.
+        field.stringValue = node.name
         outline.scrollRowToVisible(row)
         outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         field.isEditable = true
@@ -535,14 +621,13 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         if let kind = node.pendingCreation {
             let parent = node.parent
             parent?.children?.removeAll { $0 === node }
-            if let parent { outline.reloadItem(parent, reloadChildren: true) }
+            if let parent { outline.reloadItem(head(of: parent), reloadChildren: true) }
             guard !cancelled, !name.isEmpty, let parent else { return }
             create(kind, name: name, in: parent)
             return
         }
         guard !cancelled, !name.isEmpty, name != node.name else {
-            let row = outline.row(forItem: node)
-            if row >= 0 { outline.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0)) }
+            refreshRowLabel(head(of: node))
             return
         }
         let destination = ((node.path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(name)
@@ -566,6 +651,10 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         do {
             try FileManager.default.moveItem(atPath: node.path, toPath: destination)
             model?.fileRenamed(from: node.path, to: destination)
+            // A renamed folder stays as open as it was.
+            let moved = expanded.filter { $0 == node.path || $0.hasPrefix(node.path + "/") }
+            expanded.subtract(moved)
+            expanded.formUnion(moved.map { destination + $0.dropFirst(node.path.count) })
         } catch {
             model?.showToast(title: "Couldn't rename \(node.name)", detail: error.localizedDescription,
                              symbol: "exclamationmark.triangle", tint: .orange)
@@ -621,7 +710,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     // MARK: Context menu
 
     func contextMenu(forRow row: Int) -> NSMenu? {
-        let node = row >= 0 ? outline.item(atRow: row) as? FileNode : nil
+        let node = row >= 0 ? (outline.item(atRow: row) as? FileNode).map(tail) : nil
         let menu = NSMenu()
         func add(_ title: String, _ action: Selector, key: String = "", modifiers: NSEvent.ModifierFlags = []) {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
@@ -710,12 +799,12 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         guard let node = item as? FileNode else { return roots.count }
-        return children(of: node).count
+        return displayedChildren(of: node).count
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         guard let node = item as? FileNode else { return roots[index] }
-        return children(of: node)[index]
+        return displayedChildren(of: node)[index]
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
@@ -724,18 +813,20 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let node = item as? FileNode, node.pendingCreation == nil else { return nil }
-        return URL(fileURLWithPath: node.path) as NSURL
+        return URL(fileURLWithPath: tail(of: node).path) as NSURL
     }
 
     func outlineViewItemDidExpand(_ notification: Notification) {
-        guard !restoringExpansion, let node = notification.userInfo?["NSObject"] as? FileNode else { return }
-        expanded.insert(node.path)
+        guard let node = notification.userInfo?["NSObject"] as? FileNode else { return }
+        refreshRowLabel(node)
+        guard !restoringExpansion else { return }
+        for part in run(from: node) { expanded.insert(part.path) }
         saveExpansion()
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
         guard !restoringExpansion, let node = notification.userInfo?["NSObject"] as? FileNode else { return }
-        expanded.remove(node.path)
+        for part in run(from: node) { expanded.remove(part.path) }
         saveExpansion()
     }
 
@@ -750,7 +841,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         let identifier = NSUserInterfaceItemIdentifier(node.isRoot ? "root" : "row")
         let cell = (outlineView.makeView(withIdentifier: identifier, owner: nil) as? FileTreeCell) ?? makeCell(identifier: identifier, isRoot: node.isRoot)
         let field = cell.textField
-        field?.stringValue = node.isRoot ? node.name.uppercased() : node.name
+        field?.stringValue = node.isRoot ? node.name.uppercased() : rowName(node)
         if node.isRoot {
             cell.imageView?.image = nil
         } else {

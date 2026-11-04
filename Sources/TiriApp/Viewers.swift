@@ -184,6 +184,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
 
     private func makeWebView() -> TiriWebView {
         let view = MarkdownWebViews.take()
+        view.pageZoom = model.webZoom
         view.navigationDelegate = self
         view.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         view.onSelectionChange = { [weak self] selection, top in self?.renderedSelectionChanged(selection, top: top) }
@@ -491,6 +492,22 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         source?.applySettings()
         // A drawn diagram's colors are fixed when it's drawn. Everything else follows by itself.
         if !inSource, pageHasDiagrams, renderedDark != model.effectiveDark { render(keepScroll: true) }
+        webView.pageZoom = model.webZoom
+    }
+
+    /// The source, when that's what's showing.
+    var sourceIfShowing: TextController? { showingSource ? source : nil }
+
+    /// The rendered page's scroll, for coming back to it. It can only be asked for and answered later.
+    func renderedScrollRestorer() -> (() -> Void)? {
+        var position: Double?
+        webView.evaluateJavaScript("window.scrollY") { value, _ in
+            MainActor.assumeIsolated { position = value as? Double }
+        }
+        return { [weak self] in
+            guard let position else { return }
+            self?.webView.evaluateJavaScript("window.scrollTo(0, \(position))", completionHandler: nil)
+        }
     }
 
     private func scrollTo(anchor: String) {
@@ -539,6 +556,22 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     func find(_ query: String, backwards: Bool) -> Bool {
         if inSource { return source?.find(query, backwards: backwards) ?? false }
         return WebFind.run(webView, query: query, backwards: backwards)
+    }
+
+    func findIncrementally(_ query: String, caseSensitive: Bool) -> Bool {
+        if showingSource { return source?.findIncrementally(query, caseSensitive: caseSensitive) ?? false }
+        return WebFind.run(webView, query: query, backwards: false)
+    }
+
+    var findCount: (current: Int, total: Int)? { showingSource ? source?.findCount : nil }
+    var supportsReplace: Bool { showingSource ? (source?.supportsReplace ?? false) : false }
+
+    func replaceCurrent(query: String, with replacement: String, caseSensitive: Bool) -> Bool {
+        source?.replaceCurrent(query: query, with: replacement, caseSensitive: caseSensitive) ?? false
+    }
+
+    func replaceAll(query: String, with replacement: String, caseSensitive: Bool) -> Int {
+        source?.replaceAll(query: query, with: replacement, caseSensitive: caseSensitive) ?? 0
     }
 
     func clearFind() {
@@ -616,12 +649,18 @@ enum WebFind {
 
 // MARK: - Plain text and code: read-only, monospaced
 
-final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewDelegate {
+final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewDelegate, NSTextStorageDelegate {
     let itemID: ItemID
     let path: String
     unowned let model: AppModel
-    private let scrollView = NSTextView.scrollableTextView()
-    private var textView: NSTextView { scrollView.documentView as! NSTextView }
+    private let scrollView = CodeTextView.makeScrollable()
+    private var textView: CodeTextView { scrollView.documentView as! CodeTextView }
+    var codeView: CodeTextView { textView }
+    /// Its own, so ⌘Z in one file can't undo something in another that isn't even showing.
+    private let undo = UndoManager()
+    /// ⌥Z, for this file while it's open. Settings say what happens otherwise.
+    private var wrapOverride: WordWrap?
+    private var bracketMarks: [NSRange] = []
     private let container: CodeContainer
     private var ruler: LineGutter { container.gutter }
     private var token: FileWatchHub.Token?
@@ -630,8 +669,20 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var highlightWork: DispatchWorkItem?
     private var quoteButton: QuoteButton?
     private var highlightGeneration = 0
+    /// Strings and comments, in order, as of the colors with this generation.
+    private var ignorableSpans: [NSRange] = []
+    private var spansGeneration = -1
+    private var scrollObservation: NSObjectProtocol?
     /// What's on disk, as far as this viewer knows.
     private var savedText = ""
+    private var findQuery = ""
+    private var findCaseSensitive = false
+    private var findMatches: [NSRange] = []
+    private var findIsStale = false
+    private var currentMatch: Int?
+    /// Where the cursor was when typing in the find box began.
+    private var findAnchor: Int?
+    private var markedMatches: [NSRange] = []
     private var diskChangedUnderEdits = false
     private var menuProblems: [LSPDiagnostic] = []
     private var folderToken: FileWatchHub.Token?
@@ -676,30 +727,24 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     }
 
     @objc private func selectionDidChange(_ notification: Notification) {
+        if textView.isSteering { return }
         reportSelection()
     }
 
     /// Tell Claude what's selected, as an editor would.
     private func reportSelection() {
+        markBrackets()
         guard textView.window != nil, loadedOnce else { return }
         model.editorBridge.selectionChanged(editorSelection)
     }
 
     private var editorSelection: EditorSelection {
-        let string = textView.string as NSString
+        let string = textView.nsText
         let range = textView.selectedRange()
         func position(_ location: Int) -> (Int, Int) {
-            var line = 0
-            var start = 0
-            var search = NSRange(location: 0, length: min(location, string.length))
-            while true {
-                let found = string.range(of: "\n", options: .literal, range: search)
-                if found.location == NSNotFound { break }
-                line += 1
-                start = NSMaxRange(found)
-                search = NSRange(location: start, length: min(location, string.length) - start)
-            }
-            return (line, location - start)
+            let table = ruler.lines
+            let line = table.line(containing: location)
+            return (line, location - table.starts[line])
         }
         let (startLine, startCharacter) = position(range.location)
         let (endLine, endCharacter) = position(NSMaxRange(range))
@@ -716,12 +761,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     var symbolTextView: NSTextView { textView }
 
     func fileLocation(ofCharacter index: Int) -> (line: Int, character: Int)? {
-        let string = textView.string as NSString
-        guard index <= string.length else { return nil }
-        let before = string.substring(to: index)
-        let line = before.utf16.reduce(0) { $0 + ($1 == 10 ? 1 : 0) }
-        let start = (before as NSString).range(of: "\n", options: .backwards)
-        return (line, start.location == NSNotFound ? index : index - NSMaxRange(start))
+        guard index <= textView.nsText.length else { return nil }
+        let line = ruler.lines.line(containing: index)
+        return (line, index - ruler.lines.starts[line])
     }
 
     /// With nothing selected, a comment is on the line the cursor is in.
@@ -729,7 +771,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         let selection = editorSelection
         let first = selection.startLine + 1
         let last = max(selection.lastLine + 1, first)
-        let string = textView.string as NSString
+        let string = textView.nsText
         let lines = string.lineRange(for: textView.selectedRange())
         let excerpt = string.substring(with: lines)
         return ReviewAnchor(path: path, firstLine: first, lastLine: last, excerpt: excerpt)
@@ -752,7 +794,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     }
 
     func select(text: String, to end: String?) -> Bool {
-        let string = textView.string as NSString
+        let string = textView.nsText
         let start = string.range(of: text)
         guard start.location != NSNotFound else { return false }
         var range = start
@@ -773,9 +815,11 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         quoteButton = QuoteButton(textView: textView, scrollView: scrollView, host: container)
         quoteButton?.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         let text = textView
+        text.editor = self
         text.isEditable = true
         text.allowsUndo = true
         text.delegate = self
+        text.textStorage?.delegate = self
         text.isSelectable = true
         text.isRichText = false
         // It's code. Quotes and dashes stay what was typed.
@@ -799,23 +843,107 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             guard let self else { return }
             self.model.peekChange(path: self.path, line: line)
         }
+        container.onLayout = { [weak self] in self?.fitTextToWrapColumn() }
+        scrollObservation = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.markVisibleMatches() }
+        }
         applySettings()
+    }
+
+    func undoManager(for view: NSTextView) -> UndoManager? { undo }
+
+    /// Keeps the line table up to date, looking only at what changed.
+    func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions, range editedRange: NSRange, changeInLength delta: Int) {
+        guard editedMask.contains(.editedCharacters) else { return }
+        ruler.textEdited(range: editedRange, delta: delta, in: textStorage.string as NSString)
+    }
+
+    // MARK: Wrapping
+
+    private var wrap: WordWrap { wrapOverride ?? model.settings.editorWordWrap }
+
+    private func applyWrap() {
+        let unlimited = NSSize(width: 10_000_000, height: 10_000_000)
+        guard let container = textView.textContainer else { return }
+        textView.minSize = .zero
+        textView.maxSize = unlimited
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        switch wrap {
+        case .off:
+            textView.isHorizontallyResizable = true
+            container.widthTracksTextView = false
+            container.containerSize = unlimited
+            scrollView.hasHorizontalScroller = true
+        case .on, .bounded:
+            textView.isHorizontallyResizable = false
+            scrollView.hasHorizontalScroller = false
+            var frame = textView.frame
+            frame.size.width = scrollView.contentSize.width
+            textView.frame = frame
+            container.widthTracksTextView = wrap == .on
+            fitTextToWrapColumn()
+        }
+        textView.needsDisplay = true
+        ruler.needsDisplay = true
+        textView.updateCursors()
+    }
+
+    /// Bounded means the column, or the pane's edge if that comes first.
+    private func fitTextToWrapColumn() {
+        guard wrap == .bounded, let container = textView.textContainer, let font = textView.font else { return }
+        let digit = ("0" as NSString).size(withAttributes: [.font: font]).width
+        let column = CGFloat(model.settings.editorWordWrapColumn) * digit + container.lineFragmentPadding * 2
+        let available = scrollView.contentSize.width - textView.textContainerInset.width * 2
+        let width = max(min(column, available), 40)
+        guard abs(container.containerSize.width - width) > 0.5 else { return }
+        container.containerSize = NSSize(width: width, height: 10_000_000)
+    }
+
+    func toggleWordWrap() {
+        // VS Code's: wrapped in any way goes off, and off goes to what settings say, or to the pane's edge.
+        let setting = model.settings.editorWordWrap
+        wrapOverride = wrap == .off ? (setting == .off ? .on : setting) : .off
+        applyWrap()
+        textView.scrollRangeToVisible(textView.selectedRange())
+    }
+
+    // MARK: Brackets
+
+    private func markBrackets() {
+        guard let layout = textView.layoutManager else { return }
+        let string = textView.nsText
+        for range in bracketMarks where NSMaxRange(range) <= string.length {
+            layout.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
+        }
+        bracketMarks = []
+        restoreMatchMarks()
+        let selection = textView.selectedRange()
+        guard selection.length == 0, string.length > 0, string.length < 8_000_000 else { return }
+        let spans = highlightGeneration == spansGeneration ? ignorableSpans : []
+        let found = BracketMatcher.match(in: string, caret: selection.location) { offset in
+            var low = 0
+            var high = spans.count
+            while low < high {
+                let mid = (low + high) / 2
+                if NSMaxRange(spans[mid]) <= offset { low = mid + 1 } else { high = mid }
+            }
+            return low < spans.count && spans[low].location <= offset
+        }
+        guard let found else { return }
+        let color = NSColor.labelColor.withAlphaComponent(0.16)
+        for offset in [found.open, found.close] {
+            let range = NSRange(location: offset, length: 1)
+            layout.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: range)
+            bracketMarks.append(range)
+        }
     }
 
     func applySettings() {
         let settings = model.settings
-        textView.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSize))
-        ruler.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSize) - 1)
-        let wrap = settings.codeWordWrap
-        let unlimited = NSSize(width: 10_000_000, height: 10_000_000)
-        textView.minSize = .zero
-        textView.maxSize = unlimited
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = !wrap
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = wrap
-        if !wrap { textView.textContainer?.containerSize = unlimited }
-        scrollView.hasHorizontalScroller = !wrap
+        textView.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSizeZoomed))
+        ruler.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSizeZoomed) - 1)
+        applyWrap()
         ruler.needsDisplay = true
         scheduleHighlight()
     }
@@ -875,14 +1003,19 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         }
         let origin = scrollView.contentView.bounds.origin
         let selection = textView.selectedRange()
+        textView.dropExtraCursors()
         textView.string = text
-        ruler.invalidateLineStarts()
+        // What undo remembers is about text that's gone.
+        undo.removeAllActions()
         reviewChanged()
         if loadedOnce {
             // A reload shouldn't lose your place.
             textView.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
             scrollView.contentView.scroll(to: origin)
             scrollView.reflectScrolledClipView(scrollView.contentView)
+        } else {
+            // A file opens at its top, with the cursor there.
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
         }
         loadedOnce = true
         applyPendingLocation()
@@ -962,16 +1095,21 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     @objc private func quoteProblems() { model.quoteDiagnostics(menuProblems, path: path) }
 
     func textDidChange(_ notification: Notification) {
-        isDirty = textView.string != savedText
+        // A different length says it without comparing every character of a large file.
+        isDirty = textView.nsText.length != (savedText as NSString).length || textView.string != savedText
         ruler.changesHidden = isDirty
         if isDirty { model.fileWasEdited(itemID) }
-        ruler.invalidateLineStarts()
         reviewChanged()
         ruler.needsDisplay = true
+        findIsStale = true
+        // Until the new colors arrive, what's known to be a string may have moved.
+        spansGeneration = -1
+        markBrackets()
         highlightWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.scheduleHighlight()
+            self.refreshFindAfterEdit()
             self.model.languageServers.unsavedText(self.isDirty ? self.textView.string : nil, for: self.path)
         }
         highlightWork = work
@@ -999,7 +1137,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         isDirty = false
         diskChangedUnderEdits = false
         model.languageServers.unsavedText(nil, for: path)
-        textView.undoManager?.removeAllActions()
+        undo.removeAllActions()
         reload()
     }
 
@@ -1014,13 +1152,16 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             await MainActor.run {
                 guard let self, self.highlightGeneration == generation else { return }
                 self.apply(spans)
+                self.ignorableSpans = spans.filter { $0.kind == .string || $0.kind == .comment }.map(\.range).sorted { $0.location < $1.location }
+                self.spansGeneration = generation
+                self.markBrackets()
             }
         }
     }
 
     private func apply(_ spans: [SyntaxHighlighter.Span]) {
         guard let layout = textView.layoutManager else { return }
-        let full = NSRange(location: 0, length: (textView.string as NSString).length)
+        let full = NSRange(location: 0, length: textView.nsText.length)
         layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: full)
         for span in spans where NSMaxRange(span.range) <= full.length {
             layout.addTemporaryAttribute(.foregroundColor, value: span.kind.color, forCharacterRange: span.range)
@@ -1035,7 +1176,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     }
 
     private func jump(line: Int, col: Int?) {
-        let string = textView.string as NSString
+        let string = textView.nsText
         var location = 0
         var current = 1
         while current < line, location < string.length {
@@ -1080,7 +1221,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func diagnosticsChanged() {
         let found = model.languageServers.knownDiagnostics(for: path)
         ProblemMarks.clear(textView)
-        let index = LineIndex(textView.string as NSString)
+        let index = LineIndex(textView.nsText)
         var lines: [Int: LSPDiagnostic.Severity] = [:]
         // Worst last, so it's what shows where they overlap.
         for problem in found.sorted(by: { $0.severity > $1.severity }) {
@@ -1097,35 +1238,211 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     var selectedTextForFind: String? {
         let range = textView.selectedRange()
         guard range.length > 0, range.length < 200 else { return nil }
-        let selected = (textView.string as NSString).substring(with: range)
+        let selected = textView.nsText.substring(with: range)
         return selected.contains("\n") ? nil : selected
     }
 
-    func find(_ query: String, backwards: Bool) -> Bool {
-        let string = textView.string as NSString
-        let current = textView.selectedRange()
-        var options: NSString.CompareOptions = [.caseInsensitive]
-        if backwards { options.insert(.backwards) }
-        let start = backwards ? current.location : NSMaxRange(current)
-        let first = backwards ? NSRange(location: 0, length: start)
-                              : NSRange(location: start, length: string.length - start)
-        var found = string.range(of: query, options: options, range: first)
-        if found.location == NSNotFound {
-            found = string.range(of: query, options: options)
+    // MARK: Find and replace
+
+    var supportsReplace: Bool { textView.isEditable }
+
+    private func updateFind(_ query: String, caseSensitive: Bool) {
+        quoteButton?.isSuppressed = true
+        // Next and previous don't change anything, and reading a large file again for them would show.
+        if query == findQuery, caseSensitive == findCaseSensitive, !findIsStale { return }
+        findQuery = query
+        findCaseSensitive = caseSensitive
+        findMatches = TextSearch.ranges(of: query, in: textView.nsText, caseSensitive: caseSensitive)
+        findIsStale = false
+    }
+
+    var findCount: (current: Int, total: Int)? {
+        guard !findQuery.isEmpty else { return nil }
+        return (currentMatch.map { $0 + 1 } ?? 0, findMatches.count)
+    }
+
+    /// As you type, the match stays where it starts. Next and previous move on from there.
+    func find(_ query: String, backwards: Bool, incremental: Bool, caseSensitive: Bool) -> Bool {
+        updateFind(query, caseSensitive: caseSensitive)
+        let selection = textView.selectedRange()
+        let index: Int?
+        if backwards {
+            index = TextSearch.index(before: selection.location, in: findMatches)
+        } else {
+            let from = incremental ? (findAnchor ?? selection.location) : NSMaxRange(selection)
+            index = TextSearch.index(atOrAfter: from, in: findMatches)
         }
-        guard found.location != NSNotFound else { return false }
+        if incremental, findAnchor == nil { findAnchor = selection.location }
+        if !incremental { findAnchor = nil }
+        currentMatch = index
+        markVisibleMatches()
+        guard let index else { return false }
+        let found = findMatches[index]
         textView.setSelectedRange(found)
         textView.scrollRangeToVisible(found)
-        textView.showFindIndicator(for: found)
+        if !incremental { textView.showFindIndicator(for: found) }
         return true
     }
+
+    func find(_ query: String, backwards: Bool) -> Bool {
+        find(query, backwards: backwards, incremental: false, caseSensitive: findCaseSensitive)
+    }
+
+    func findIncrementally(_ query: String, caseSensitive: Bool) -> Bool {
+        find(query, backwards: false, incremental: true, caseSensitive: caseSensitive)
+    }
+
+    func clearFind() {
+        quoteButton?.isSuppressed = false
+        findQuery = ""
+        findMatches = []
+        findIsStale = false
+        currentMatch = nil
+        findAnchor = nil
+        markVisibleMatches()
+    }
+
+    /// Replaces the match that's selected, then moves to the next. With none selected, finds one first.
+    func replaceCurrent(query: String, with replacement: String, caseSensitive: Bool) -> Bool {
+        guard textView.isEditable else { return false }
+        updateFind(query, caseSensitive: caseSensitive)
+        let selection = textView.selectedRange()
+        guard findMatches.contains(selection) else {
+            return find(query, backwards: false, incremental: false, caseSensitive: caseSensitive)
+        }
+        let after = selection.location + (replacement as NSString).length
+        textView.apply(TextEdit(changes: [TextChange(range: selection, text: replacement)], selection: NSRange(location: after, length: 0)), name: "Replace")
+        updateFind(query, caseSensitive: caseSensitive)
+        currentMatch = TextSearch.index(atOrAfter: after, in: findMatches)
+        if let currentMatch {
+            textView.setSelectedRange(findMatches[currentMatch])
+            textView.scrollRangeToVisible(findMatches[currentMatch])
+        }
+        markVisibleMatches()
+        return true
+    }
+
+    func replaceAll(query: String, with replacement: String, caseSensitive: Bool) -> Int {
+        guard textView.isEditable else { return 0 }
+        updateFind(query, caseSensitive: caseSensitive)
+        let count = findMatches.count
+        guard count > 0 else { return 0 }
+        textView.apply(TextSearch.replaceAll(findMatches, with: replacement, selection: textView.selectedRange()), name: "Replace All")
+        updateFind(query, caseSensitive: caseSensitive)
+        currentMatch = nil
+        markVisibleMatches()
+        return count
+    }
+
+    private func refreshFindAfterEdit() {
+        guard !findQuery.isEmpty else { return }
+        updateFind(findQuery, caseSensitive: findCaseSensitive)
+        currentMatch = findMatches.firstIndex(of: textView.selectedRange())
+        markVisibleMatches()
+        if model.find?.targetItem == itemID { model.findCountChanged() }
+    }
+
+    /// Only what's on screen is marked, so a hundred thousand matches cost the same as ten.
+    /// Temporary attributes never reach the file or undo.
+    private func markVisibleMatches() {
+        guard let layout = textView.layoutManager, let container = textView.textContainer else { return }
+        let length = textView.nsText.length
+        for range in markedMatches where NSMaxRange(range) <= length {
+            layout.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
+        }
+        markedMatches = []
+        defer { restoreBracketMarks() }
+        guard !findMatches.isEmpty else { return }
+        let glyphs = layout.glyphRange(forBoundingRect: textView.visibleRect, in: container)
+        let visible = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        guard var index = TextSearch.index(atOrAfter: visible.location, in: findMatches), findMatches[index].location >= visible.location else { return }
+        while index < findMatches.count, findMatches[index].location <= NSMaxRange(visible) {
+            let range = findMatches[index]
+            let color = index == currentMatch ? Self.currentMatchColor : Self.matchColor
+            layout.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: range)
+            markedMatches.append(range)
+            index += 1
+        }
+    }
+
+    private static let matchColor = NSColor.systemYellow.withAlphaComponent(0.28)
+    private static let currentMatchColor = NSColor.systemOrange.withAlphaComponent(0.55)
+
+    private func restoreBracketMarks() {
+        guard let layout = textView.layoutManager else { return }
+        let color = NSColor.labelColor.withAlphaComponent(0.16)
+        for range in bracketMarks where NSMaxRange(range) <= textView.nsText.length {
+            layout.addTemporaryAttribute(.backgroundColor, value: color, forCharacterRange: range)
+        }
+    }
+
+    private func restoreMatchMarks() {
+        guard !markedMatches.isEmpty, let layout = textView.layoutManager else { return }
+        for range in markedMatches where NSMaxRange(range) <= textView.nsText.length {
+            let isCurrent = currentMatch.map { findMatches.indices.contains($0) && findMatches[$0] == range } ?? false
+            layout.addTemporaryAttribute(.backgroundColor, value: isCurrent ? Self.currentMatchColor : Self.matchColor, forCharacterRange: range)
+        }
+    }
+
+    // MARK: Showing a line while choosing
+
+    private var previewMark: NSRange?
+
+    /// Shows a line in the middle of the view without moving the cursor, for jumping through a list.
+    func previewLine(_ line: Int) {
+        clearPreviewMark()
+        let table = ruler.lines
+        let index = min(max(line - 1, 0), table.count - 1)
+        let start = table.starts[index]
+        let string = textView.nsText
+        let lineRange = string.lineRange(for: NSRange(location: min(start, string.length), length: 0))
+        guard let layout = textView.layoutManager, let container = textView.textContainer else { return }
+        let glyphs = layout.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
+        var rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        rect.origin.y += textView.textContainerOrigin.y
+        let clip = scrollView.contentView
+        var origin = clip.bounds.origin
+        origin.x = 0
+        origin.y = max(rect.midY - clip.bounds.height / 2, 0)
+        clip.scroll(to: origin)
+        scrollView.reflectScrolledClipView(clip)
+        layout.addTemporaryAttribute(.backgroundColor, value: NSColor.controlAccentColor.withAlphaComponent(0.18), forCharacterRange: lineRange)
+        previewMark = lineRange
+        ruler.needsDisplay = true
+    }
+
+    func clearPreviewMark() {
+        guard let mark = previewMark else { return }
+        previewMark = nil
+        if NSMaxRange(mark) <= textView.nsText.length {
+            textView.layoutManager?.removeTemporaryAttribute(.backgroundColor, forCharacterRange: mark)
+        }
+        restoreBracketMarks()
+        restoreMatchMarks()
+    }
+
+    var scrollPosition: NSPoint {
+        get { scrollView.contentView.bounds.origin }
+        set {
+            scrollView.contentView.scroll(to: newValue)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            ruler.needsDisplay = true
+        }
+    }
+
+    var currentLine: Int { ruler.lines.line(containing: textView.selectedRange().location) + 1 }
+    var lineCount: Int { ruler.lines.count }
+    var text: String { textView.string }
 }
 
 /// Line numbers beside the text. A plain view rather than NSRulerView, which on macOS 26+
 /// covers the document it's attached to.
 final class LineGutter: NSView {
     var font: NSFont = .monospacedDigitSystemFont(ofSize: 11, weight: .regular) {
-        didSet { needsDisplay = true }
+        didSet {
+            updateThickness()
+            needsDisplay = true
+        }
     }
     weak var textView: NSTextView?
     /// Line, counting from 1, to the comments on it.
@@ -1146,7 +1463,8 @@ final class LineGutter: NSView {
     }
     var onChangeClicked: ((Int) -> Void)?
     private var changeHits: [(rect: NSRect, line: Int)] = []
-    private var lineStarts: [Int] = [0]
+    private(set) var lines = LineTable()
+    private var lineStarts: [Int] { lines.starts }
     private var observers: [NSObjectProtocol] = []
     private(set) var thickness: CGFloat = 48
     var onThicknessChange: (() -> Void)?
@@ -1169,39 +1487,29 @@ final class LineGutter: NSView {
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
     }
 
-    func invalidateLineStarts() {
-        guard let text = textView else { return }
-        let string = text.string as NSString
-        var starts = [0]
-        var location = 0
-        let length = string.length
-        while location < length {
-            let next = NSMaxRange(string.lineRange(for: NSRange(location: location, length: 0)))
-            if next >= length {
-                if next == length, length > 0, string.character(at: length - 1) == 10 { starts.append(length) }
-                break
-            }
-            starts.append(next)
-            location = next
+    /// Text changed: `range` is what's there now.
+    func textEdited(range: NSRange, delta: Int, in string: NSString) {
+        if range.location == 0, range.length == string.length {
+            lines.rebuild(string)
+        } else {
+            lines.update(editedRange: range, delta: delta, in: string)
         }
-        lineStarts = starts
-        let digits = max(String(starts.count).count, 3)
-        let width = CGFloat(digits) * 8 + 24
+        updateThickness()
+        needsDisplay = true
+    }
+
+    private func updateThickness() {
+        let digits = max(String(lines.count).count, 3)
+        let digit = ("0" as NSString).size(withAttributes: [.font: font]).width
+        let width = (CGFloat(digits) * digit + 18).rounded(.up)
         if width != thickness {
             thickness = width
             onThicknessChange?()
         }
-        needsDisplay = true
     }
 
     private func lineNumber(forCharacter index: Int) -> Int {
-        var low = 0
-        var high = lineStarts.count - 1
-        while low < high {
-            let mid = (low + high + 1) / 2
-            if lineStarts[mid] <= index { low = mid } else { high = mid - 1 }
-        }
-        return low + 1
+        lines.line(containing: index) + 1
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1222,7 +1530,8 @@ final class LineGutter: NSView {
             if start >= length {
                 line = layout.extraLineFragmentRect
             } else {
-                line = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: start), effectiveRange: nil, withoutAdditionalLayout: true)
+                // A wrapped line can start above the view, somewhere not laid out yet.
+                line = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: start), effectiveRange: nil)
             }
             if line.isEmpty, length == 0 { line = NSRect(x: 0, y: 0, width: 0, height: font.pointSize + 4) }
             let y = text.convert(NSPoint(x: 0, y: line.minY + text.textContainerInset.height), to: self).y
@@ -1299,6 +1608,7 @@ final class LineGutter: NSView {
 final class CodeContainer: NSView {
     let gutter = LineGutter()
     let scrollView: NSScrollView
+    var onLayout: (() -> Void)?
 
     init(scrollView: NSScrollView) {
         self.scrollView = scrollView
@@ -1316,6 +1626,7 @@ final class CodeContainer: NSView {
         gutter.frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
         scrollView.frame = CGRect(x: width, y: 0, width: max(bounds.width - width, 0), height: bounds.height)
         gutter.needsDisplay = true
+        onLayout?()
     }
 }
 

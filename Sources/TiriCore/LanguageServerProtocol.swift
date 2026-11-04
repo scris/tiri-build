@@ -179,6 +179,7 @@ public enum LSP {
                     "configuration": true,
                     "workspaceFolders": true,
                     "didChangeWatchedFiles": .object(["dynamicRegistration": false]),
+                    "symbol": .object([:]),
                 ]),
                 "window": .object(["workDoneProgress": false]),
                 "textDocument": .object([
@@ -186,6 +187,7 @@ public enum LSP {
                     "hover": .object(["contentFormat": .array(["markdown", "plaintext"])]),
                     "definition": .object(["linkSupport": true]),
                     "references": .object([:]),
+                    "documentSymbol": .object(["hierarchicalDocumentSymbolSupport": true]),
                     "publishDiagnostics": .object(["relatedInformation": false]),
                     "diagnostic": .object(["dynamicRegistration": false]),
                 ]),

@@ -278,6 +278,64 @@ struct LinkCase: Sendable, CustomTestStringConvertible {
         #expect(Keymap.problem(with: "cmd+k", command: "find", bindings: all) != nil)
         #expect(Keymap.problem(with: "cmd+b cmd+x", command: "find", bindings: all) != nil)
         #expect(Keymap.problem(with: "not a key!!", command: "find", bindings: all) != nil)
+        // ⌘K alone clears a terminal, and a two-press shortcut can still start with it.
+        #expect(Keymap.problem(with: "cmd+k cmd+j", command: "find", bindings: all) == nil)
+        #expect(Keymap.problem(with: "cmd+k", command: "clearTerminal", bindings: all) == nil)
+    }
+}
+
+@Suite struct LocationUnderPathTests {
+    private struct Case: Sendable {
+        var rows: [String]
+        var row: Int
+        var column: Int
+        var path: String?
+        var line: Int?
+        var col: Int?
+        var range: Range<Int>?
+    }
+
+    @Test(arguments: [
+        // ripgrep with headings.
+        Case(rows: ["src/app.ts", "16:5:  const x = 1"], row: 1, column: 0, path: "src/app.ts", line: 16, col: 5, range: 0..<4),
+        Case(rows: ["src/app.ts", "16:5:  const x = 1"], row: 1, column: 3, path: "src/app.ts", line: 16, col: 5, range: 0..<4),
+        // Off the number isn't a link.
+        Case(rows: ["src/app.ts", "16:5:  const x = 1"], row: 1, column: 4),
+        Case(rows: ["src/app.ts", "16:5:  const x = 1"], row: 1, column: 9),
+        // Line only, and further down a group.
+        Case(rows: ["src/app.ts", "16:const x", "20:const y"], row: 2, column: 1, path: "src/app.ts", line: 20, range: 0..<3),
+        // eslint: indented, and a path with no slash.
+        Case(rows: ["app.js", "  3:10  error  no", "  9:1  warning  no"], row: 2, column: 3, path: "app.js", line: 9, col: 1, range: 2..<5),
+        // Between groups of context lines.
+        Case(rows: ["a.rs", "1:x", "--", "9:y"], row: 3, column: 0, path: "a.rs", line: 9, range: 0..<2),
+        // A path with spaces, as the whole line.
+        Case(rows: ["My Documents/report final.md", "2:1:x"], row: 1, column: 0, path: "My Documents/report final.md", line: 2, col: 1, range: 0..<3),
+        // Nothing above to say where.
+        Case(rows: ["16:5: x"], row: 0, column: 1),
+        Case(rows: ["", "16:5: x"], row: 1, column: 1),
+        // Not a location at all.
+        Case(rows: ["src/app.ts", "hello 16:5"], row: 1, column: 7),
+        Case(rows: ["src/app.ts", "16"], row: 1, column: 0),
+        Case(rows: ["src/app.ts"], row: 5, column: 0),
+    ])
+    private func finds(_ test: Case) {
+        let found = PathLinkDetector.locationUnderPath(atColumn: test.column, row: test.row, in: test.rows)
+        #expect(found?.candidates.first?.path == test.path)
+        #expect(found?.candidates.first?.line == test.line)
+        #expect(found?.candidates.first?.col == test.col)
+        #expect(found?.range == test.range)
+    }
+
+    @Test func aDecoratedLineStillGivesThePath() {
+        let found = PathLinkDetector.locationUnderPath(atColumn: 0, row: 1, in: ["⎿  src/app.ts", "16:5: x"])
+        #expect(found?.candidates.map(\.path) == ["⎿  src/app.ts", "src/app.ts"])
+    }
+
+    @Test func itResolvesLikeAnyOtherPath() {
+        let found = PathLinkDetector.locationUnderPath(atColumn: 0, row: 1, in: ["src/main.swift", "7:2:x"])
+        let resolver = PathResolver(cwd: "/repo", workspaceFolders: [], probe: { disk[$0] })
+        let resolved = found.flatMap { resolver.resolve($0.candidates[0]) }
+        #expect(resolved?.path == "/repo/src/main.swift" && resolved?.line == 7 && resolved?.col == 2)
     }
 }
 

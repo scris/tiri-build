@@ -330,6 +330,8 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     public var closed: [Item]
     /// Expanded tree folders, so the explorer comes back the way it was left.
     public var expandedFolders: [String] = []
+    /// Files opened here, latest first, for quick open.
+    public var recentFiles: [String] = []
     /// The floating Peek: an item that isn't in any tab group until it's promoted.
     /// Deliberately not persisted, since a Peek is a glance, not part of the session.
     public var peek: Item?

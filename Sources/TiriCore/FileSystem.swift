@@ -132,6 +132,17 @@ public enum FileIndexer {
 
 // MARK: - Fuzzy matching
 
+public enum PaletteQuery {
+    /// `name:12`, `name:12:3`
+    public static func location(_ query: String) -> (query: String, line: Int?, col: Int?) {
+        if let match = query.wholeMatch(of: /(.*?):(\d+)(?::(\d+))?/) {
+            return (String(match.1), Int(match.2), match.3.flatMap { Int($0) })
+        }
+        if query.hasSuffix(":") { return (String(query.dropLast()), nil, nil) }
+        return (query, nil, nil)
+    }
+}
+
 public enum FuzzyMatcher {
     public struct Match: Sendable, Equatable {
         public var score: Int
@@ -215,6 +226,25 @@ public enum FuzzyMatcher {
         let bytes = Array(candidate.utf8)
         let start = nameStart ?? ((bytes.lastIndex(of: UInt8(ascii: "/")) ?? -1) + 1)
         return match(query: normalize(query), candidate: bytes, nameStart: start)
+    }
+
+    /// A query with spaces in it: each word has to match somewhere, in any order, as in VS Code.
+    public static func pieces(_ query: String) -> [[UInt8]] {
+        query.split(whereSeparator: \.isWhitespace).map { $0.utf8.map(lower) }
+    }
+
+    public static func match(pieces: [[UInt8]], candidate: [UInt8], nameStart: Int) -> Match? {
+        guard pieces.count > 1 else {
+            return match(query: pieces.first ?? [], candidate: candidate, nameStart: nameStart)
+        }
+        var total = 0
+        var positions = Set<Int>()
+        for piece in pieces {
+            guard let found = match(query: piece, candidate: candidate, nameStart: nameStart) else { return nil }
+            total += found.score
+            positions.formUnion(found.positions)
+        }
+        return Match(score: total, positions: positions.sorted())
     }
 
     public static func normalize(_ query: String) -> [UInt8] {

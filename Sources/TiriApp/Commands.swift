@@ -52,6 +52,18 @@ extension AppModel {
                 if let id = model.active.focused.active { model.updateActive { $0.pin(id) } }
             },
             AppCommand(id: "find", title: "Find", category: "Edit") { $0.openFind() },
+            AppCommand(id: "findReplace", title: "Replace", category: "Edit") { $0.openFind(replace: true) },
+            AppCommand(id: "toggleWordWrap", title: "Toggle Word Wrap", category: "View") { $0.frontEditor?.toggleWordWrap() },
+            AppCommand(id: "goToLine", title: "Go to Line…", category: "Go") { $0.openPalette(typing: ":") },
+            AppCommand(id: "symbolsInFile", title: "Go to Symbol in File…", category: "Go") { $0.openPalette(typing: "@") },
+            AppCommand(id: "symbolsInWorkspace", title: "Go to Symbol in Workspace…", category: "Go") { $0.openPalette(typing: "#") },
+            AppCommand(id: "zoomIn", title: "Zoom In", category: "View") { $0.zoom(by: 1) },
+            AppCommand(id: "zoomOut", title: "Zoom Out", category: "View") { $0.zoom(by: -1) },
+            AppCommand(id: "zoomReset", title: "Reset Zoom", category: "View") { $0.zoomReset() },
+            AppCommand(id: "clearTerminal", title: "Clear", category: "Terminal") { $0.frontTerminal?.clearScreen() },
+            AppCommand(id: "terminalLineStart", title: "Go to Start of Line", category: "Terminal") { $0.frontTerminal?.sendLineStart() },
+            AppCommand(id: "terminalLineEnd", title: "Go to End of Line", category: "Terminal") { $0.frontTerminal?.sendLineEnd() },
+            AppCommand(id: "terminalDeleteToLineStart", title: "Delete to Start of Line", category: "Terminal") { $0.frontTerminal?.sendDeleteToLineStart() },
             AppCommand(id: "openSettings", title: "Open Settings…", category: "Preferences") { $0.openSettings() },
             AppCommand(id: "openKeybindings", title: "Open Keyboard Shortcuts", category: "Preferences") { $0.openKeyboardShortcuts() },
             AppCommand(id: "themeSystem", title: "Theme: Follow System", category: "Preferences") { $0.setTheme(.system) },
@@ -123,6 +135,9 @@ extension AppModel {
                 model.frontWebController?.reload()
             },
         ]
+        for command in EditorCommand.allCases {
+            list.append(AppCommand(id: command.rawValue, title: command.title, category: "Edit") { $0.frontEditor?.run(command) })
+        }
         for number in 1...9 {
             list.append(AppCommand(id: "focusGroup\(number)", title: "Focus Group \(number)", category: "View") { model in
                 model.updateActive { $0.focusGroup(index: number - 1) }

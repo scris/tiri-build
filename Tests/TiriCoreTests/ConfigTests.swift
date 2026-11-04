@@ -393,13 +393,24 @@ import Testing
 
     @Test func changingAValueIsSeenByTheParser() throws {
         var text = TiriSettings.defaultFileContents
-        text = SettingsFile.setting("code.wordWrap", toJSON: "true", in: text)
+        text = SettingsFile.setting("editor.wordWrap", toJSON: "\"on\"", in: text)
         text = SettingsFile.setting("code.fontSize", toJSON: "15", in: text)
         text = SettingsFile.setting("files.exclude", toJSON: #"[".git","dist"]"#, in: text)
         text = SettingsFile.setting("terminal.presets", toJSON: #"[{"command":"x, y","name":"A"}]"#, in: text)
         text = SettingsFile.setting("terminal.resume", toJSON: #"{"claude":"claude -c"}"#, in: text)
         let parsed = try TiriSettings.parse(text)
-        #expect(parsed.codeWordWrap && parsed.codeFontSize == 15)
+        #expect(parsed.editorWordWrap == .on && parsed.codeFontSize == 15)
+        // The older setting counts until the new one says otherwise.
+        #expect(try TiriSettings.parse("{\"code.wordWrap\": true}").editorWordWrap == .on)
+        #expect(try TiriSettings.parse("{\"code.wordWrap\": true, \"editor.wordWrap\": \"bounded\"}").editorWordWrap == .bounded)
+        #expect(throws: TiriSettings.ParseError.self) { try TiriSettings.parse("{\"editor.wordWrap\": \"sometimes\"}") }
+        #expect(try TiriSettings.parse("{\"editor.wordWrapColumn\": 5}").editorWordWrapColumn == 20)
+        #expect(try TiriSettings.parse("{\"window.zoomLevel\": 99}").zoomLevel == TiriSettings.zoomRange.upperBound)
+        var zoomed = TiriSettings()
+        zoomed.zoomLevel = 3
+        #expect(zoomed.codeFontSizeZoomed == zoomed.codeFontSize + 3 && zoomed.terminalFontSizeZoomed == zoomed.terminalFontSize + 3)
+        zoomed.zoomLevel = -100
+        #expect(zoomed.codeFontSizeZoomed == 6)
         #expect(parsed.filesExclude == [".git", "dist"])
         #expect(parsed.terminalPresets == [TerminalPreset(name: "A", command: "x, y")])
         #expect(parsed.terminalResume == ["claude": "claude -c"])
@@ -407,11 +418,11 @@ import Testing
     }
 
     @Test func typedValuesAreChecked() throws {
-        #expect(try SettingsSchema.value(from: "on", for: "code.wordWrap") == .bool(true))
+        #expect(try SettingsSchema.value(from: "on", for: "explorer.autoReveal") == .bool(true))
         #expect(try SettingsSchema.value(from: "tab", for: "terminal.linkOpens") == .string("tab"))
         #expect(try SettingsSchema.value(from: "14", for: "code.fontSize") == .int(14))
         #expect(try SettingsSchema.value(from: "zed, code", for: "externalEditors") == .array([.string("zed"), .string("code")]))
-        #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "maybe", for: "code.wordWrap") }
+        #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "maybe", for: "explorer.autoReveal") }
         #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "sideways", for: "terminal.linkOpens") }
         #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "500", for: "code.fontSize") }
         #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "x", for: "no.such.setting") }
@@ -513,6 +524,13 @@ import Testing
         #expect(resolver.handle(stroke("cmd+k")) == .pending)
         #expect(resolver.isPending)
         #expect(resolver.handle(stroke("cmd+\\")) == .command("splitDown"))
+        // While waiting for the second press, ⌘K alone has something to do too.
+        _ = resolver.handle(stroke("cmd+k"))
+        #expect(resolver.commandsSoFar == ["clearTerminal"])
+        resolver.reset()
+        #expect(resolver.commandsSoFar.isEmpty)
+        // One key, two commands: whichever can take it, in order.
+        #expect(resolver.handle(stroke("cmd+enter")) == .command("promotePeek", otherwise: ["insertLineBelow"]))
         #expect(!resolver.isPending)
     }
 

@@ -317,11 +317,11 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     }
 
     private var textFont: NSFont {
-        TerminalTheme.font(family: model.settings.codeFontFamily, size: CGFloat(model.settings.codeFontSize))
+        TerminalTheme.font(family: model.settings.codeFontFamily, size: CGFloat(model.settings.codeFontSizeZoomed))
     }
 
     private var gutterFont: NSFont {
-        TerminalTheme.font(family: model.settings.codeFontFamily, size: CGFloat(model.settings.codeFontSize) - 1)
+        TerminalTheme.font(family: model.settings.codeFontFamily, size: CGFloat(model.settings.codeFontSizeZoomed) - 1)
     }
 
     func applySettings() {

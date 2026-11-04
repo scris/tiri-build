@@ -21,6 +21,7 @@ public struct WorkspaceStore: Sendable {
         var focusedGroup: GroupID
         var closed: [Item]
         var expandedFolders: [String]?
+        var recentFiles: [String]?
         var groupMRU: [GroupID]?
         var review: [ReviewComment]?
     }
@@ -82,6 +83,7 @@ public struct WorkspaceStore: Sendable {
                 workspace.focusedGroup = layout.focusedGroup
                 workspace.closed = layout.closed
                 workspace.expandedFolders = layout.expandedFolders ?? []
+                workspace.recentFiles = layout.recentFiles ?? []
                 workspace.groupMRU = layout.groupMRU ?? []
                 workspace.review = layout.review ?? []
             }
@@ -102,7 +104,7 @@ public struct WorkspaceStore: Sendable {
         for workspace in snapshot.workspaces {
             let layout = LayoutFile(items: workspace.items, layout: workspace.layout,
                                     focusedGroup: workspace.focusedGroup, closed: workspace.closed,
-                                    expandedFolders: workspace.expandedFolders, groupMRU: workspace.groupMRU,
+                                    expandedFolders: workspace.expandedFolders, recentFiles: workspace.recentFiles, groupMRU: workspace.groupMRU,
                                     review: workspace.review.isEmpty ? nil : workspace.review)
             try encoder.encode(layout).write(to: layoutURL(workspace.id), options: .atomic)
         }

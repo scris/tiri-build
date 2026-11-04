@@ -36,7 +36,15 @@ protocol ItemController: AnyObject {
     func save(overwriting: Bool) -> SaveResult
     /// Returns false when nothing matches.
     func find(_ query: String, backwards: Bool) -> Bool
+    /// While it's being typed, a match already found stays found.
+    func findIncrementally(_ query: String, caseSensitive: Bool) -> Bool
     func clearFind()
+    /// Which match this is and how many there are, where that's known.
+    var findCount: (current: Int, total: Int)? { get }
+    var findReturnGoesBackwards: Bool { get }
+    var supportsReplace: Bool { get }
+    func replaceCurrent(query: String, with replacement: String, caseSensitive: Bool) -> Bool
+    func replaceAll(query: String, with replacement: String, caseSensitive: Bool) -> Int
 }
 
 extension ItemController {
@@ -63,7 +71,13 @@ extension ItemController {
     var isDirty: Bool { false }
     func save(overwriting: Bool) -> SaveResult { .saved }
     func find(_ query: String, backwards: Bool) -> Bool { false }
+    func findIncrementally(_ query: String, caseSensitive: Bool) -> Bool { find(query, backwards: false) }
     func clearFind() {}
+    var findCount: (current: Int, total: Int)? { nil }
+    var findReturnGoesBackwards: Bool { false }
+    var supportsReplace: Bool { false }
+    func replaceCurrent(query: String, with replacement: String, caseSensitive: Bool) -> Bool { false }
+    func replaceAll(query: String, with replacement: String, caseSensitive: Bool) -> Int { 0 }
 }
 
 // MARK: - Spawning, behind a protocol so a remote (SSH) backend can be added
@@ -175,7 +189,16 @@ final class TiriTerminalView: LocalProcessTerminalView {
         // resolves and hands back through `requestOpenLink`.
         if event.modifierFlags.contains(.command) {
             let variants = logicalLines(atWindowPoint: event.locationInWindow)
-            if followLink(in: variants, forceTab: event.modifierFlags.contains(.shift)) {
+            let forceTab = event.modifierFlags.contains(.shift)
+            var followed = followLink(in: variants, forceTab: forceTab)
+            if !followed {
+                let local = convert(event.locationInWindow, from: nil)
+                let size = cellSize
+                if size.width > 0, size.height > 0 {
+                    followed = followLocationUnderPath(row: Int((bounds.height - local.y) / size.height), column: Int(local.x / size.width), forceTab: forceTab)
+                }
+            }
+            if followed {
                 swallowNextMouseUp = true
                 return
             }
@@ -241,7 +264,14 @@ final class TiriTerminalView: LocalProcessTerminalView {
     /// What a ⌘-click does, and what `tiri follow` does.
     /// Returns false when the text there isn't a link and doesn't look like a path at all.
     func followLink(row: Int, column: Int, forceTab: Bool) -> Bool {
-        followLink(in: logicalLines(row: row, column: column), forceTab: forceTab)
+        if followLink(in: logicalLines(row: row, column: column), forceTab: forceTab) { return true }
+        return followLocationUnderPath(row: row, column: column, forceTab: forceTab)
+    }
+
+    private func followLocationUnderPath(row: Int, column: Int, forceTab: Bool) -> Bool {
+        guard let found = locationUnderPath(row: row, column: column) else { return false }
+        open(found.target, forceTab: forceTab)
+        return true
     }
 
     private func followLink(in variants: [(line: LogicalLine, column: Int)], forceTab: Bool) -> Bool {
@@ -349,6 +379,28 @@ final class TiriTerminalView: LocalProcessTerminalView {
         for variant in logicalLines(atWindowPoint: point) {
             if let (target, range) = resolveLink(in: variant.line, column: variant.column) {
                 return (target, variant.line, range)
+            }
+        }
+        let local = convert(point, from: nil)
+        let size = cellSize
+        guard size.width > 0, size.height > 0 else { return nil }
+        let row = Int((bounds.height - local.y) / size.height)
+        let column = Int(local.x / size.width)
+        if let found = locationUnderPath(row: row, column: column), let line = logicalLines(row: row, column: column).first?.line {
+            return (found.target, line, found.range)
+        }
+        return nil
+    }
+
+    /// `16:5` with its path on a line above, the way ripgrep's headings and eslint print them.
+    private func locationUnderPath(row: Int, column: Int) -> (target: LinkTarget, range: Range<Int>)? {
+        let rows = terminalStateSnapshot().visibleRows
+        guard let found = PathLinkDetector.locationUnderPath(atColumn: column, row: row, in: rows.map(\.text)),
+              let resolver = pathResolver() else { return nil }
+        for candidate in found.candidates {
+            let matches = resolver.resolveAll(candidate)
+            if let first = matches.first {
+                return (matches.count == 1 ? .path(first) : .choice(matches), found.range)
             }
         }
         return nil
@@ -506,6 +558,109 @@ final class TiriTerminalView: LocalProcessTerminalView {
             layer.addSublayer(line)
             underlines.append(line)
         }
+    }
+
+    // MARK: Find marks
+
+    private var findMarks: [CALayer] = []
+    private var findTimer: Timer?
+    private var findSeen = ""
+    private(set) var findQuery: String?
+
+    /// Marks every match on screen. The terminal itself selects the current one. Output and
+    /// scrolling move things, so this looks again while find is open.
+    func markFindMatches(of query: String?) {
+        findQuery = query?.isEmpty == true ? nil : query
+        findSeen = ""
+        guard findQuery != nil else {
+            findTimer?.invalidate()
+            findTimer = nil
+            findMarks.forEach { $0.removeFromSuperlayer() }
+            findMarks = []
+            return
+        }
+        redrawFindMarks()
+        if findTimer == nil {
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.redrawFindMarks() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            findTimer = timer
+        }
+    }
+
+    private func redrawFindMarks() {
+        guard let query = findQuery, let layer, window != nil else { return }
+        let snapshot = terminalStateSnapshot()
+        let rows = snapshot.visibleRows
+        let seen = query + "\u{0}" + rows.map(\.text).joined(separator: "\n")
+        guard seen != findSeen else { return }
+        findSeen = seen
+        findMarks.forEach { $0.removeFromSuperlayer() }
+        findMarks = []
+        let size = cellSize
+        let needle = Array(query.lowercased())
+        guard !needle.isEmpty else { return }
+        var index = 0
+        while index < rows.count {
+            var last = index
+            while last + 1 < rows.count, rows[last + 1].isWrapped { last += 1 }
+            var characters: [Character] = []
+            var cells: [(row: Int, col: Int, width: Int)] = []
+            for rowIndex in index...last {
+                var cursor = 0
+                for character in rows[rowIndex].text {
+                    let width = cursor < rows[rowIndex].cellWidths.count ? max(rows[rowIndex].cellWidths[cursor], 1) : 1
+                    characters.append(character)
+                    cells.append((rowIndex, cursor, width))
+                    cursor += width
+                }
+            }
+            let folded = characters.map { $0.lowercased().first ?? $0 }
+            var start = 0
+            while start + needle.count <= folded.count {
+                guard folded[start] == needle[0], Array(folded[start..<(start + needle.count)]) == needle else {
+                    start += 1
+                    continue
+                }
+                for run in Self.runs(of: cells[start..<(start + needle.count)]) {
+                    let mark = CALayer()
+                    mark.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.35).cgColor
+                    mark.frame = CGRect(x: CGFloat(run.first) * size.width, y: bounds.height - CGFloat(run.row + 1) * size.height,
+                                        width: CGFloat(run.last - run.first) * size.width, height: size.height)
+                    mark.zPosition = 90
+                    mark.actions = ["position": NSNull(), "bounds": NSNull(), "contents": NSNull(), "opacity": NSNull()]
+                    layer.addSublayer(mark)
+                    findMarks.append(mark)
+                }
+                start += needle.count
+            }
+            index = last + 1
+        }
+    }
+
+    private static func runs(of cells: ArraySlice<(row: Int, col: Int, width: Int)>) -> [(row: Int, first: Int, last: Int)] {
+        var runs: [(row: Int, first: Int, last: Int)] = []
+        for cell in cells {
+            if let last = runs.last, last.row == cell.row {
+                runs[runs.count - 1].last = max(last.last, cell.col + cell.width)
+            } else {
+                runs.append((cell.row, cell.col, cell.col + cell.width))
+            }
+        }
+        return runs
+    }
+
+    // MARK: Clearing
+
+    /// Scrolls the cursor's line to the top and forgets what was above it. False in a full-screen program.
+    func clearKeepingCursorLine() -> Bool {
+        guard let state = terminalContentSnapshot(region: .history(maximumScrollbackRows: 0)), !state.inputState.isAlternateBuffer else { return false }
+        let row = state.cursorRow - state.liveTopRow
+        // Scroll Up moves the screen without moving the cursor, then the cursor follows its line.
+        if row > 0 { feed(text: "\u{1B}[\(row)S\u{1B}[\(row)A") }
+        clearScrollback()
+        return true
     }
 
     // MARK: Drop a file from the tree or Finder
@@ -897,7 +1052,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     func applySettings() {
         let settings = model.settings
         let family = settings.terminalFontFamily
-        let size = CGFloat(settings.terminalFontSize)
+        let size = CGFloat(settings.terminalFontSizeZoomed)
         terminalView.font = TerminalTheme.font(family: family, size: size)
         terminalView.changeScrollback(settings.terminalScrollback)
         TerminalTheme.apply(to: terminalView, dark: model.effectiveDark, translucent: settings.terminalTranslucent)
@@ -1186,11 +1341,45 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     }
 
     func find(_ query: String, backwards: Bool) -> Bool {
-        backwards ? terminalView.findPrevious(query) : terminalView.findNext(query)
+        let found = backwards ? terminalView.findPrevious(query) : terminalView.findNext(query)
+        terminalView.markFindMatches(of: query)
+        return found
     }
+
+    /// From the newest output, as in Cursor. Each letter starts again from there.
+    func findIncrementally(_ query: String, caseSensitive: Bool) -> Bool {
+        terminalView.clearSearch()
+        let found = terminalView.findPrevious(query)
+        terminalView.markFindMatches(of: query)
+        return found
+    }
+
+    /// Output reads from the bottom up, so Return goes further back. ⇧Return comes forward.
+    var findReturnGoesBackwards: Bool { true }
 
     func clearFind() {
         terminalView.clearSearch()
+        terminalView.markFindMatches(of: nil)
+    }
+
+    var findCount: (current: Int, total: Int)? {
+        guard let query = terminalView.findQuery else { return nil }
+        let summary = terminalView.searchMatchSummary(query, limit: 10_000)
+        return (summary.index, summary.total)
+    }
+
+    // MARK: Keys a shell expects
+
+    /// ⌘← and ⌘→ go to the ends of the line, and ⌘⌫ deletes back to its start, as in Cursor.
+    func sendLineStart() { send(text: "\u{01}") }
+    func sendLineEnd() { send(text: "\u{05}") }
+    func sendDeleteToLineStart() { send(text: "\u{15}") }
+
+    /// ⌘K, as in Cursor: everything above the cursor's line goes. A full-screen program keeps its screen.
+    func clearScreen() {
+        guard terminalView.clearKeepingCursorLine() else { return }
+        // At a prompt, or in an agent's input, a redraw puts back whatever spans several lines.
+        if !isShellBusy || runningAgent != nil { terminalView.send(txt: "\u{0C}") }
     }
 
     // MARK: Control API
