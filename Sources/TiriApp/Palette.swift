@@ -25,6 +25,8 @@ final class PaletteModel {
         let title: String
         var positions: [Int] = []
         var detail: String?
+        /// A second line, with what matched between `ConversationIndex`'s marks.
+        var excerpt: String?
         var shortcut: String?
         var symbol: String?
         /// Shows it without leaving where you were, for arrowing through a list.
@@ -607,7 +609,7 @@ struct PaletteView: View {
                         .padding(6)
                     }
                     // A list that fits its rows: a lone result shouldn't sit in a tall empty panel.
-                    .frame(height: min(CGFloat(palette.rows.count) * 29 + 12, 380))
+                    .frame(height: min(palette.rows.reduce(CGFloat(12)) { $0 + ($1.excerpt?.isEmpty == false ? 45 : 29) }, 380))
                     .onChange(of: palette.selection) { _, value in
                         if palette.rows.indices.contains(value) {
                             proxy.scrollTo(palette.rows[value].id)
@@ -653,6 +655,24 @@ struct PaletteRowView: View {
         return text
     }
 
+    /// What matched stands out, and starts the line if it would otherwise be cut off.
+    private static func marked(_ excerpt: String) -> AttributedString {
+        var text = AttributedString()
+        var rest = Substring(excerpt)
+        while let open = rest.range(of: ConversationIndex.markOpen) {
+            text += AttributedString(String(rest[..<open.lowerBound]))
+            rest = rest[open.upperBound...]
+            guard let close = rest.range(of: ConversationIndex.markClose) else { break }
+            var match = AttributedString(String(rest[..<close.lowerBound]))
+            match.foregroundColor = .accentColor
+            match.inlinePresentationIntent = .stronglyEmphasized
+            text += match
+            rest = rest[close.upperBound...]
+        }
+        text += AttributedString(String(rest))
+        return text
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             if let symbol = row.symbol {
@@ -661,16 +681,27 @@ struct PaletteRowView: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 16)
             }
-            Text(attributedTitle)
-                .font(.system(size: 13))
-                .lineLimit(1)
-                .layoutPriority(1)
-            if let detail = row.detail, !detail.isEmpty {
-                Text(detail)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(attributedTitle)
+                        .font(.system(size: 13))
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    if let detail = row.detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                if let excerpt = row.excerpt, !excerpt.isEmpty {
+                    Text(Self.marked(excerpt))
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
             Spacer(minLength: 8)
             if let shortcut = row.shortcut {
@@ -680,7 +711,7 @@ struct PaletteRowView: View {
             }
         }
         .padding(.horizontal, 8)
-        .frame(height: 28)
+        .frame(height: row.excerpt?.isEmpty == false ? 44 : 28)
         .background {
             if selected {
                 RoundedRectangle(cornerRadius: 7).fill(Color.accentColor.opacity(0.22))

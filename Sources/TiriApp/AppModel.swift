@@ -136,6 +136,11 @@ final class AppModel {
     @ObservationIgnored var otherWorkAt: Double = 0
     @ObservationIgnored var conversationsLoaded: [ConversationSummary]?
     @ObservationIgnored var conversationsLoading = false
+    @ObservationIgnored var conversationIndex: ConversationIndex?
+    @ObservationIgnored var conversationsIndexing = false
+    @ObservationIgnored var conversationIndexing: Task<Void, Never>?
+    /// A look that's under way, and where, so that asking again joins it rather than starting another.
+    @ObservationIgnored var conversationLook: (place: String?, task: Task<[ConversationSummary], Never>)?
     @ObservationIgnored var otherWorkWorkspace: WorkspaceID?
     @ObservationIgnored private var watchTicks = 0
     var scopeIsLoading = false

@@ -169,5 +169,119 @@ import Testing
         #expect(listing.contains("036codex"))
         #expect(listing.contains("036grok"))
         #expect(Conversations.searchScript(words: "it's", limit: 5).contains("'it'\\''s'"))
+        #expect(Conversations.searchScript(anyOf: ["it's", "ssh"], limit: 5).contains("-e 'it'\\''s' -e ssh"))
+        #expect(Conversations.searchScript(anyOf: [], limit: 5) == "exit 0\n")
+    }
+
+    // MARK: The index
+
+    private func temporaryIndex() throws -> ConversationIndex {
+        let folder = NSTemporaryDirectory() + "tiri-index-" + UUID().uuidString
+        return try ConversationIndex(path: folder + "/search.sqlite")
+    }
+
+    @Test func aFileBecomesWhatWasSaidAndNotItsToolOutput() throws {
+        let text = try #require(Conversations.text(of: lines(claude), agent: "claude"))
+        #expect(text.you == "Fix the login\n")
+        #expect(text.agent == "Looking.\nFixed.\n")
+        #expect(text.did == "Edited a.ts\n")
+        let turns = Conversations.turns(of: lines(claude), agent: "claude")
+        #expect(turns.count == 1)
+        #expect(turns.first?.you == "Fix the login")
+        #expect(Conversations.text(of: lines([["type": "mode"]]), agent: "claude") == nil)
+    }
+
+    @Test func aHugeToolResultIsSkippedWithoutBeingParsed() throws {
+        let noise = String(repeating: "translucent ", count: 4000)
+        let result: [[String: Any]] = [
+            ["type": "user", "message": ["role": "user", "content": "Fix the login"], "sessionId": "abc"],
+            ["type": "user", "message": ["role": "user", "content": [["type": "tool_result", "content": noise]]], "sessionId": "abc"],
+        ]
+        let text = try #require(Conversations.text(of: lines(result), agent: "claude"))
+        #expect(!text.you.contains("translucent"))
+    }
+
+    @Test func anAgentTalkingAboutToolResultsAtLengthIsStillRead() throws {
+        let long = #"the "type":"tool_result" field "# + String(repeating: "is explained here ", count: 2000)
+        let message: [[String: Any]] = [["type": "assistant", "message": ["role": "assistant", "content": [["type": "text", "text": long]]], "sessionId": "abc"]]
+        // The marker is far enough in that it isn't taken for tool output's own.
+        let padded: [[String: Any]] = [["sessionId": String(repeating: "x", count: 700), "type": "assistant", "message": message[0]["message"]!]]
+        #expect(Conversations.text(of: lines(padded), agent: "claude")?.agent.contains("is explained here") == true)
+    }
+
+    @Test func allYourWordsComeBeforeAnyOfThem() throws {
+        let index = try temporaryIndex()
+        index.store(file: "/a", seconds: 1, title: "Terminal colors", place: nil, text: ConversationText(you: "terminal colors terminal colors terminal"))
+        index.store(file: "/b", seconds: 1, title: "Other", place: nil, text: ConversationText(you: "make the terminal see-through please"))
+        let hits = index.search(words: ConversationIndex.terms(in: "terminal see-through"))
+        #expect(hits.map(\.file) == ["/b", "/a"])
+        #expect(hits[0].excerpt.contains(ConversationIndex.markOpen))
+        #expect(ConversationIndex.plain(hits[0].excerpt).contains("make the terminal"))
+    }
+
+    @Test func relatedWordsFindWhatYourWordsDoNot() throws {
+        let index = try temporaryIndex()
+        index.store(file: "/a", seconds: 1, title: "x", place: "/work", text: ConversationText(agent: "the window is translucent now"))
+        #expect(index.search(words: ["see-through"]).isEmpty)
+        #expect(index.search(words: ["see-through"], related: ["translucent"]).map(\.file) == ["/a"])
+    }
+
+    @Test func whatYouSaidCountsForMoreThanWhatTheAgentDid() throws {
+        let index = try temporaryIndex()
+        index.store(file: "/agent", seconds: 1, title: "x", place: nil, text: ConversationText(agent: "we looked at the keychain and the keychain again"))
+        index.store(file: "/you", seconds: 1, title: "x", place: nil, text: ConversationText(you: "the keychain is broken"))
+        #expect(index.search(words: ["keychain"]).first?.file == "/you")
+    }
+
+    @Test func chineseIsFoundInsideARunOfIt() throws {
+        let index = try temporaryIndex()
+        index.store(file: "/a", seconds: 1, title: "x", place: nil, text: ConversationText(you: "把终端改成半透明的效果"))
+        let hits = index.search(words: ConversationIndex.terms(in: "半透明"))
+        #expect(hits.map(\.file) == ["/a"])
+        // The spaces that made it searchable don't show.
+        #expect(ConversationIndex.plain(hits[0].excerpt).contains("半透明"))
+        #expect(!ConversationIndex.plain(hits[0].excerpt).contains("半 透"))
+        #expect(ConversationIndex.readable(" 效 果 ， 看 看 ") == "效果，看看")
+        #expect(ConversationIndex.readable("the \u{1}word\u{2}  is\nhere") == "the \u{1}word\u{2} is here")
+        #expect(ConversationIndex.readable("\u{1} 半 透 \u{2} 明") == "\u{1}半透\u{2}明")
+    }
+
+    @Test func oddQueriesDoNoHarm() throws {
+        let index = try temporaryIndex()
+        index.store(file: "/a", seconds: 1, title: "x", place: nil, text: ConversationText(you: "it's \"quoted\" OR NEAR(a b)"))
+        for query in ["\"", "*", "OR", "NEAR(", "a\"b", "col:thing", "-", "(", "it's"] {
+            _ = index.search(words: ConversationIndex.terms(in: query))
+            _ = index.search(words: [query], related: [query])
+        }
+        #expect(index.search(words: ["\"quoted\""]).map(\.file) == ["/a"])
+        #expect(index.search(words: []).isEmpty)
+    }
+
+    @Test func aFileReadAgainReplacesWhatWasThere() throws {
+        let index = try temporaryIndex()
+        index.store(file: "/a", seconds: 1, title: "x", place: nil, text: ConversationText(you: "first thoughts"))
+        index.store(file: "/a", seconds: 2, title: "x", place: nil, text: ConversationText(you: "second thoughts"))
+        #expect(index.known()["/a"] == 2)
+        #expect(index.search(words: ["first"]).isEmpty)
+        #expect(index.search(words: ["second"]).count == 1)
+        index.remove(files: ["/a"])
+        #expect(index.known().isEmpty)
+        #expect(index.search(words: ["second"]).isEmpty)
+    }
+
+    @Test func itsFileIsPrivateAndComesBack() throws {
+        let path = NSTemporaryDirectory() + "tiri-index-" + UUID().uuidString + "/search.sqlite"
+        do {
+            let index = try ConversationIndex(path: path)
+            index.store(file: "/a", seconds: 1, title: "x", place: nil, text: ConversationText(you: "still here"))
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        #expect(try ConversationIndex(path: path).search(words: ["still"]).count == 1)
+    }
+
+    @Test func wordsNotWorthLookingForAreDropped() {
+        #expect(ConversationIndex.terms(in: "the time we fixed The login") == ["time", "fixed", "login"])
+        #expect(ConversationIndex.terms(in: "云 服务器").contains("云"))
     }
 }

@@ -75,7 +75,8 @@ let isHookCommand = arguments.first == "hook" || arguments.first == "notify"
 
 let response: ControlResponse
 do {
-    // A person is answering, and a connection can take a while to come up.
+    // A person is answering, a connection can take a while to come up, and the first look at years
+    // of conversations takes a while too.
     let patient = ["askpass", "remote", "conversations", "work"].contains(arguments.first ?? "")
     let client = try ControlClient(path: TiriPaths.socket, timeout: patient ? 300 : 10)
     response = try client.send(request)

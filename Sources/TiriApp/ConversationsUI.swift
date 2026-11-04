@@ -48,6 +48,16 @@ extension AppModel {
 
     /// Each batch shows as it arrives: the first look at years of sessions takes a while.
     func loadConversations(progress: (([ConversationSummary]) -> Void)? = nil) async -> [ConversationSummary] {
+        let place = active.remote
+        if let look = conversationLook, look.place == place { return await look.task.value }
+        let task = Task { await self.lookForConversations(progress: progress) }
+        conversationLook = (place, task)
+        let found = await task.value
+        if conversationLook?.place == place { conversationLook = nil }
+        return found
+    }
+
+    private func lookForConversations(progress: (([ConversationSummary]) -> Void)?) async -> [ConversationSummary] {
         let onServer = active.remote
         guard let listed = await runForConversations(Conversations.discoveryScript(limit: onServer == nil ? 1500 : 300), timeout: 60) else { return [] }
         let found = Conversations.parseDiscovery(listed)
@@ -79,14 +89,84 @@ extension AppModel {
             try? data.write(to: URL(fileURLWithPath: file), options: .atomic)
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file)
         }
-        return current()
+        let everything = current()
+        updateConversationIndex(everything, found: found)
+        return everything
     }
 
-    private func conversationRow(_ conversation: ConversationSummary) -> PaletteModel.Row {
+    // MARK: Searching what was said
+
+    /// The index, on this Mac. A server's conversations are searched where they are.
+    private func openConversationIndex() -> ConversationIndex? {
+        guard active.remote == nil else { return nil }
+        if conversationIndex == nil { conversationIndex = try? ConversationIndex(path: conversationRoot + "/search.sqlite") }
+        return conversationIndex
+    }
+
+    /// Reads what's new or changed, a file at a time, at a priority that stays out of the way.
+    private func updateConversationIndex(_ all: [ConversationSummary], found: [Conversations.Found]) {
+        guard !conversationsIndexing, let index = openConversationIndex() else { return }
+        conversationsIndexing = true
+        conversationIndexing = Task.detached(priority: .utility) { [weak self] in
+            let known = index.known()
+            let dates = Dictionary(found.map { ($0.file, $0.seconds) }, uniquingKeysWith: { first, _ in first })
+            var changed = false
+            for conversation in all {
+                let seconds = dates[conversation.file] ?? 0
+                guard known[conversation.file] != seconds else { continue }
+                autoreleasepool {
+                    guard let data = try? Data(contentsOf: URL(fileURLWithPath: conversation.file), options: .mappedIfSafe) else { return }
+                    index.store(file: conversation.file, seconds: seconds, title: conversation.title, place: conversation.cwd,
+                                text: Conversations.text(of: data, agent: conversation.agent))
+                    changed = true
+                }
+            }
+            // Only those truly gone: the list of what's found stops at the newest 1,500 of each agent.
+            let gone = known.keys.filter { dates[$0] == nil && !FileManager.default.fileExists(atPath: $0) }
+            if !gone.isEmpty { index.remove(files: gone) }
+            await MainActor.run {
+                self?.conversationsIndexing = false
+                if changed { self?.palette?.refresh() }
+            }
+        }
+    }
+
+    /// Where these words were said, best first, with what was said around them.
+    func conversationMatches(_ query: String, related: [String] = [], among all: [ConversationSummary]) async -> (conversations: [ConversationSummary], excerpts: [String: String]) {
+        let known = Dictionary(all.map { ($0.file, $0) }, uniquingKeysWith: { first, _ in first })
+        if let index = openConversationIndex() {
+            let words = ConversationIndex.terms(in: query)
+            let hits = await Task.detached(priority: .userInitiated) { index.search(words: words, related: related, limit: 200) }.value
+            var conversations = hits.compactMap { known[$0.file] }
+            let excerpts = Dictionary(hits.map { ($0.file, $0.excerpt) }, uniquingKeysWith: { first, _ in first })
+            // The first look at years of sessions takes a while, and plain search still works meanwhile.
+            if conversationsIndexing, query.count >= 3 {
+                let said = await conversationsSaying(query, among: all)
+                conversations += said.filter { !conversations.contains($0) }
+            }
+            return (conversations, excerpts)
+        }
+        var conversations = await conversationsSaying(query, among: all)
+        if !related.isEmpty, let data = await runForConversations(Conversations.searchScript(anyOf: related, limit: 60)) {
+            let files = String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).compactMap { $0.split(separator: "\t", maxSplits: 1).last.map(String.init) }
+            conversations += files.compactMap { known[$0] }.filter { !conversations.contains($0) }
+        }
+        return (conversations, [:])
+    }
+
+    /// For when it takes real thought: an agent can try other words, and read what it finds.
+    private func askAgentToFind(_ query: String, preset: TerminalPreset) {
+        askAgent(preset: preset, prompt: "I'm looking for one of my past conversations with a coding agent. What I remember: \"\(query)\". Search with `tiri conversations <words>`, trying different words if the first don't find it, and read likely ones with `tiri conversations read <session>`, which prints a path to read. Tell me which conversation it is and why you think so, with its session ID.")
+    }
+
+    private func conversationRow(_ conversation: ConversationSummary, excerpt: String? = nil) -> PaletteModel.Row {
         let profile = AgentCatalog.profile(id: conversation.agent)
         let place = conversation.cwd.map { ($0 as NSString).lastPathComponent }
         let detail = [profile?.title, place, RelativeTime.text(conversation.date)].compactMap { $0 }.joined(separator: " · ")
-        return PaletteModel.Row(id: conversation.id, title: AgentHookEvent.promptLine(conversation.title) ?? conversation.title, detail: detail,
+        let title = AgentHookEvent.promptLine(conversation.title) ?? conversation.title
+        // Saying the title again wouldn't tell you anything.
+        let excerpt = excerpt.flatMap { title.contains(ConversationIndex.plain($0)) ? nil : $0 }
+        return PaletteModel.Row(id: conversation.id, title: title, detail: detail, excerpt: excerpt,
                                 symbol: profile?.symbol ?? "text.bubble") { [weak self] alternate in
             guard let self else { return }
             self.closePalette(restoreFocus: false)
@@ -98,7 +178,7 @@ extension AppModel {
         }
     }
 
-    /// Everything it's easy to know as you type, then what `grep` finds in what was said.
+    /// Titles as you type, then what was said, then, after a pause, what the Mac's model can add.
     func openConversationPicker() {
         conversationsLoading = true
         Task {
@@ -110,27 +190,59 @@ extension AppModel {
             self.conversationsLoading = false
             self.palette?.refresh()
         }
-        openPalette(.dynamic(title: "Past conversations. Type to search everything said in them. ↩ reads, ⌘↩ reopens.", provider: { [weak self] query, deliver in
+        openPalette(.dynamic(title: "Past conversations. Describe what you remember. ↩ reads, ⌘↩ reopens.", provider: { [weak self] query, deliver in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
                 let all = self.conversationsLoaded ?? []
-                var shown = words.isEmpty ? all : all.filter { conversation in
+                let inTitle = words.isEmpty ? all : all.filter { conversation in
                     let text = (conversation.title + " " + (conversation.cwd ?? "") + " " + (AgentCatalog.profile(id: conversation.agent)?.title ?? "")).lowercased()
                     return words.allSatisfy(text.contains)
                 }
-                var rows = shown.prefix(200).map(self.conversationRow)
-                if rows.isEmpty {
-                    rows = [PaletteModel.Row(id: "looking", title: self.conversationsLoading ? "Looking through conversations…" : "No conversations found", symbol: "clock") { _ in }]
+                let agent = self.settings.activePresets.first { AgentCatalog.profile(executable: $0.command.split(separator: " ").first.map(String.init) ?? "") != nil }
+                let finish = { [weak self] (conversations: [ConversationSummary], excerpts: [String: String], status: String) -> [PaletteModel.Row] in
+                    guard let self else { return [] }
+                    var rows = conversations.prefix(200).map { self.conversationRow($0, excerpt: excerpts[$0.file]) }
+                    // Something other than asking an agent always comes first, so that Return can't start one by accident.
+                    if rows.isEmpty { rows = [PaletteModel.Row(id: "status", title: status, symbol: "clock") { _ in }] }
+                    if !query.isEmpty, let agent {
+                        rows.append(PaletteModel.Row(id: "ask-agent", title: "Ask \(agent.name) to find it", detail: "It can try other words and read what it finds", symbol: "sparkle.magnifyingglass") { [weak self] _ in
+                            self?.closePalette(restoreFocus: false)
+                            self?.askAgentToFind(query, preset: agent)
+                        })
+                    }
+                    return rows
                 }
-                deliver(rows)
-                guard query.count >= 3 else { return }
+                let nothing = "No conversation says that"
+                let searches = query.count >= 2
+                deliver(finish(inTitle, [:], self.conversationsLoading || searches ? "Looking through conversations…" : nothing))
+                guard searches else { return }
                 Task {
-                    let said = await self.conversationsSaying(query, among: all)
-                    let more = said.filter { candidate in !shown.contains { $0.id == candidate.id } }
-                    guard !more.isEmpty else { return }
-                    shown += more
-                    deliver(shown.prefix(200).map(self.conversationRow))
+                    let merged = { (found: [ConversationSummary]) in inTitle + found.filter { !inTitle.contains($0) } }
+                    let first = await self.conversationMatches(query, among: all)
+                    // Exact words are enough, and typing shouldn't set the model off at every key.
+                    let assists = self.settings.conversationsAssistedSearch && ConversationAssistant.isAvailable && first.conversations.count < 10
+                    deliver(finish(merged(first.conversations), first.excerpts, assists ? "Trying other words…" : nothing))
+                    guard assists else { return }
+                    try? await Task.sleep(for: .milliseconds(400))
+                    guard self.palette?.query == query else { return }
+                    let related = await Task.detached(priority: .userInitiated) { await ConversationAssistant.relatedTerms(for: query) }.value
+                    guard self.palette?.query == query else { return }
+                    guard !related.isEmpty else {
+                        deliver(finish(merged(first.conversations), first.excerpts, nothing))
+                        return
+                    }
+                    var second = await self.conversationMatches(query, related: related, among: all)
+                    deliver(finish(merged(second.conversations), second.excerpts, nothing))
+                    // With nothing exact to go on, the model's own reading of the likeliest is worth having.
+                    guard first.conversations.isEmpty, inTitle.isEmpty, second.conversations.count > 1 else { return }
+                    let top = Array(second.conversations.prefix(15))
+                    let candidates = top.map { (title: $0.title, excerpt: second.excerpts[$0.file] ?? "") }
+                    let chosen = await Task.detached(priority: .userInitiated) { await ConversationAssistant.best(for: query, among: candidates) }.value
+                    guard self.palette?.query == query, !chosen.isEmpty else { return }
+                    let picked = chosen.map { top[$0] }
+                    second.conversations = picked + second.conversations.filter { !picked.contains($0) }
+                    deliver(finish(second.conversations, second.excerpts, nothing))
                 }
             }
         }))
@@ -157,6 +269,14 @@ extension AppModel {
     /// Written out as a document, so that it reads like one and any viewer's tools work on it.
     @discardableResult
     func showConversation(_ conversation: ConversationSummary) async -> String? {
+        guard let path = await writeConversation(conversation) else { return nil }
+        open(path: path, intent: .pinned)
+        requestFocus()
+        return path
+    }
+
+    /// As a document on disk, without showing it, so that an agent can read it and you can carry on.
+    func writeConversation(_ conversation: ConversationSummary) async -> String? {
         guard let data = await fullText(of: conversation) else {
             showToast(title: "Couldn't read that conversation", detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
             return nil
@@ -175,8 +295,6 @@ extension AppModel {
             showToast(title: "Couldn't save that conversation", detail: error.localizedDescription, symbol: "exclamationmark.triangle", tint: .orange)
             return nil
         }
-        open(path: path, intent: .pinned)
-        requestFocus()
         return path
     }
 

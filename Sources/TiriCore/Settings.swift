@@ -58,6 +58,7 @@ public struct TiriSettings: Equatable, Sendable {
     public var terminalKeepRunning = true
     public var perTurnDiffs = true
     public var diffSideBySide = false
+    public var conversationsAssistedSearch = true
     public var languageServers = true
     public var terminalLinkOpens = LinkOpenTarget.peek
     public var codeFontFamily = "SF Mono"
@@ -110,6 +111,7 @@ public struct TiriSettings: Equatable, Sendable {
       "changes.perTurn": true,
       // Show diffs as old and new side by side, rather than in one column.
       "diff.sideBySide": false,
+      "conversations.assistedSearch": true,
       "code.languageServers": true,
       // What cmd-clicking a file in a terminal does: "peek", "tab" or "external".
       "terminal.linkOpens": "peek",
@@ -252,6 +254,7 @@ public struct TiriSettings: Equatable, Sendable {
         try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
         try bool("changes.perTurn") { settings.perTurnDiffs = $0 }
         try bool("diff.sideBySide") { settings.diffSideBySide = $0 }
+        try bool("conversations.assistedSearch") { settings.conversationsAssistedSearch = $0 }
         try bool("code.languageServers") { settings.languageServers = $0 }
         try bool("notifications.enabled") { settings.notificationsEnabled = $0 }
         return settings

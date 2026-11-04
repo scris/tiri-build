@@ -171,8 +171,8 @@ public enum CLIParser {
             return request("web." + (args.first ?? ""), payload)
 
         case "conversations":
-            let usage = "usage: tiri conversations [words] | open <session> | reopen <session> | hand <session> <agent>"
-            if args.first == "open" || args.first == "reopen" {
+            let usage = "usage: tiri conversations [words] | read <session> | open <session> | reopen <session> | hand <session> <agent>"
+            if args.first == "open" || args.first == "reopen" || args.first == "read" {
                 guard args.count == 2 else { throw UsageError(usage) }
                 return request("conversations", [args[0]: .string(args[1])])
             }
@@ -869,7 +869,7 @@ public enum AgentGuide {
     tiri notebook status report.ipynb     # is it still going? Results are in the file as they arrive
     tiri activity                         # what every running agent is doing
     tiri work                             # branches and worktrees besides this one, in plain terms
-    tiri conversations [words]            # past conversations of any agent; open, reopen, hand
+    tiri conversations [words]            # past conversations of any agent, by what was said; read prints a path to read, and open, reopen, hand
     tiri web console --errors             # the open page's errors; also network, shot, text, click, type, eval
     tiri diff src/app.ts                  # floats what changed over your terminal
     tiri diff src/app.ts --tab            # or keeps it as a tab

@@ -2,7 +2,7 @@
 
 A neutral, native macOS workspace for people who do their work through CLI agents like Claude Code, Codex and Grok, and use the "IDE" to see, review and organize.
 
-Terminals, files and web previews are equal items in one tab and pane system, on this Mac or a server. There is no bundled AI, and no bottom terminal panel. Your agents can drive the whole app through a local CLI.
+Terminals, files and web previews are equal items in one tab and pane system, on this Mac or a server. Tiri has no chat, account or model of its own, and no bottom terminal panel. Your agents can drive the whole app through a local CLI.
 
 ## Build and run
 
@@ -62,7 +62,15 @@ You've got two buttons of your own beside the address. A count appears when the 
 
 ## Past conversations
 
-⇧⌘H, or the clock in the Agents section, lists your Claude Code, Codex and Grok conversations, this workspace's first. Type to search everything said in them. Return reads one as a document, with what was said and what was done in a line each. **Reopen** (⌘↩ in the list) carries on with it in a terminal, in the folder it was in, and **Hand To** asks another agent to read it and carry on. It works the same on a server, for that server's conversations. Tiri only reads the agents' own files, and what it writes for reading stays private to you. `tiri conversations [words]`, `open`, `reopen` and `hand` do the same for agents.
+⇧⌘H, or the clock in the Agents section, lists your Claude Code, Codex and Grok conversations, this workspace's first. Return reads one as a document, with what was said and what was done in a line each. **Reopen** (⌘↩ in the list) carries on with it in a terminal, in the folder it was in, and **Hand To** asks another agent to read it and carry on. Tiri only reads the agents' own files, and what it writes for reading stays private to you. `tiri conversations [words]`, `read`, `open`, `reopen` and `hand` do the same for agents.
+
+To find one, describe what you remember. Results appear as you type, each with what was said around the match.
+
+- **It looks at what was said.** Tiri keeps a private index of what you and your agents wrote and did, without tool output, which is most of the file and matches nearly everything. 7 GB of conversations came to an index of under 60 MB, built in a minute or two the first time, then only what's changed.
+- **It tries other words.** With Apple Intelligence on, your Mac's own model suggests other words for what you described, in English even if you asked in Chinese, and picks the likeliest when nothing has your exact words. It runs on your Mac and sends nothing anywhere. Without it, or with **Help search past conversations** off in Settings, search finds the words you type.
+- **For the hard ones, ask an agent.** **Ask Claude Code to find it**, at the end of the list, has your agent try other searches and read what it finds. This one uses your agent's tokens.
+
+On a server it searches that server's files for the same words, without an index, so results come more slowly and with no excerpt.
 
 ## Tell an agent about a change
 

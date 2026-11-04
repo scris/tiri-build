@@ -97,6 +97,17 @@ public enum Conversations {
         return script + "exit 0\n"
     }
 
+    /// Files holding any of these, where there's no index: on a server.
+    public static func searchScript(anyOf terms: [String], limit: Int) -> String {
+        let patterns = terms.map { "-e " + ShellQuote.quote($0) }.joined(separator: " ")
+        guard !patterns.isEmpty else { return "exit 0\n" }
+        var script = ""
+        for profile in AgentCatalog.all where profile.conversationFiles != nil {
+            script += "grep -l -i -F \(patterns) -- \(globs(profile)) 2>/dev/null | head -n \(limit) | sed 's/^/\(profile.id)\t/'\n"
+        }
+        return script + "exit 0\n"
+    }
+
     private static func globs(_ profile: AgentProfile) -> String {
         let home = profile.configDirectoryVariable.map { "\"${\($0):-$HOME/\(profile.configDirectory)}\"" } ?? "\"$HOME/\(profile.configDirectory)\""
         return home + "/" + (profile.conversationFiles ?? "")
@@ -192,10 +203,18 @@ public enum Conversations {
 
     // MARK: Reading one
 
-    private enum Piece {
+    enum Piece {
         case you(String)
         case agent(String)
         case did(String)
+    }
+
+    static func pieces(of object: [String: Any], format: ConversationFormat) -> [Piece] {
+        switch format {
+        case .claude: claudePieces(object)
+        case .codex: codexPieces(object)
+        case .grok: grokPieces(object)
+        }
     }
 
     /// The whole of it as a document: what was said, and what was done in a line each. Tool output is left
@@ -205,11 +224,7 @@ public enum Conversations {
         var pieces: [Piece] = []
         for line in data.split(separator: 10) {
             guard let object = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] else { continue }
-            switch format {
-            case .claude: pieces += claudePieces(object)
-            case .codex: pieces += codexPieces(object)
-            case .grok: pieces += grokPieces(object)
-            }
+            pieces += Self.pieces(of: object, format: format)
         }
         var body = ""
         var last = ""

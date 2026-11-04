@@ -423,6 +423,13 @@ enum ControlHandler {
             guard let path = await model.showConversation(conversation) else { return .failure(id: request.id, "Couldn't read that conversation.") }
             return .success(id: request.id, .object(["path": .string(path)]))
         }
+        if let session = request.args["read"]?.stringValue {
+            guard let conversation = all.first(where: { $0.session == session || $0.id == session }) else {
+                return .failure(id: request.id, "No conversation \(session). Run tiri conversations to see them.")
+            }
+            guard let path = await model.writeConversation(conversation) else { return .failure(id: request.id, "Couldn't read that conversation.") }
+            return .success(id: request.id, .object(["path": .string(path)]))
+        }
         if let session = request.args["reopen"]?.stringValue {
             guard let conversation = all.first(where: { $0.session == session || $0.id == session }) else {
                 return .failure(id: request.id, "No conversation \(session). Run tiri conversations to see them.")
@@ -443,14 +450,21 @@ enum ControlHandler {
             return .success(id: request.id, .object(["path": .string(path)]))
         }
         var shown = all
+        var excerpts: [String: String] = [:]
         if let words = request.args["query"]?.stringValue, !words.isEmpty {
             let lower = words.lowercased()
-            let said = await model.conversationsSaying(words, among: all)
-            shown = all.filter { $0.title.lowercased().contains(lower) || said.contains($0) }
+            // An agent gets a whole answer, and the wait is only ever the first time.
+            await model.conversationIndexing?.value
+            let found = await model.conversationMatches(words, among: all)
+            excerpts = found.excerpts
+            let inTitle = all.filter { $0.title.lowercased().contains(lower) }
+            shown = inTitle + found.conversations.filter { !inTitle.contains($0) }
         }
         return .success(id: request.id, .array(shown.prefix(100).map { conversation in
-            .object(["session": .string(conversation.session), "agent": .string(conversation.agent), "title": .string(AgentHookEvent.promptLine(conversation.title) ?? ""),
-                     "cwd": .string(conversation.cwd ?? ""), "when": .string(RelativeTime.text(conversation.date))])
+            var entry: [String: JSONValue] = ["session": .string(conversation.session), "agent": .string(conversation.agent), "title": .string(AgentHookEvent.promptLine(conversation.title) ?? ""),
+                                              "cwd": .string(conversation.cwd ?? ""), "when": .string(RelativeTime.text(conversation.date))]
+            if let excerpt = excerpts[conversation.file] { entry["match"] = .string(ConversationIndex.plain(excerpt)) }
+            return .object(entry)
         }))
     }
 

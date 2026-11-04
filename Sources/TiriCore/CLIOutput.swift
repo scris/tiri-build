@@ -56,7 +56,9 @@ public enum CLIOutput {
                 say(path)
             } else {
                 for entry in response.result?.arrayValue ?? [] {
-                    say([cell(entry["session"]), cell(entry["agent"]), cell(entry["when"]), cell(entry["cwd"]), cell(entry["title"])].joined(separator: "\t"))
+                    var line = [cell(entry["session"]), cell(entry["agent"]), cell(entry["when"]), cell(entry["cwd"]), cell(entry["title"])]
+                    if let match = entry["match"]?.stringValue, !match.isEmpty { line.append(match) }
+                    say(line.joined(separator: "\t"))
                 }
             }
         case "work":
