@@ -502,6 +502,12 @@ final class RemoteManager {
         guard Self.isLoopback(url) else { return url }
         let port = url.port ?? (url.scheme == "https" ? 443 : 80)
         guard let local = await forward(remotePort: port, on: destination), var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        // A forward can always be asked for. Only connecting says whether anything's at the other end.
+        let answers = await Task.detached(priority: .userInitiated) { RemoteConnection.portAnswers(local) }.value
+        if !answers {
+            model.showToast(title: "Nothing answered on port \(port)", detail: "It may not be running yet, or \(SSHConfigFile.displayName(of: destination)) may not allow forwarding.",
+                            symbol: "exclamationmark.triangle", tint: .orange)
+        }
         parts.host = "localhost"
         parts.port = local
         if local != port {

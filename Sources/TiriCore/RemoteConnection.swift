@@ -783,6 +783,26 @@ public final class RemoteConnection: @unchecked Sendable {
         return nil
     }
 
+    /// Connects to a forwarded port. When nothing's listening at the far end, or the server forbids
+    /// forwarding, ssh accepts and then hangs up straight away. A real server waits for a request.
+    public static func portAnswers(_ port: Int) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(port).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        guard connected == 0 else { return false }
+        var wait = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        guard poll(&wait, 1, 700) > 0 else { return true }
+        var byte: UInt8 = 0
+        return read(fd, &byte, 1) > 0
+    }
+
     public func cancelForward(localPort: Int, remotePort: Int) {
         let arguments = configArguments + ["-S", controlPath, "-O", "cancel", "-L", "127.0.0.1:\(localPort):127.0.0.1:\(remotePort)", destination]
         _ = Self.runProcess(executable: Self.ssh, arguments: arguments, timeout: 10)

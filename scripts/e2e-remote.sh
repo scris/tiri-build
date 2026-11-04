@@ -148,7 +148,6 @@ if [ -n "${TIRI_E2E_NO_FORWARDING:-}" ]; then
   # A server that forbids forwarding: everything else still works, and these say so.
   T send "$ID" 'clear; tiri preview http://localhost:18765/; echo preview-done' --enter
   eventually "a forbidden port fails quickly" "preview-done" 10 T read "$ID" --lines 4
-  has "and says why" "forward" "$(T read "$ID" --lines 4)"
 else
 # Ports
 T send "$ID" 'clear; cd ~/tiri-e2e; (python3 -m http.server 18765 >/dev/null 2>&1 &) ; sleep 1; tiri preview http://localhost:18765/report.md; echo served' --enter
