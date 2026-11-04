@@ -164,7 +164,6 @@ final class AppModel {
     @ObservationIgnored let router = EventRouter()
     @ObservationIgnored private let store = WorkspaceStore()
     @ObservationIgnored private let notifier = Notifier()
-    @ObservationIgnored private var recentFiles: [WorkspaceID: [String]] = [:]
     @ObservationIgnored private var didFinishLaunching = false
     @ObservationIgnored private var checkedPaths: Set<String> = []
     @ObservationIgnored private var tabDragCommitted = false
@@ -845,14 +844,14 @@ final class AppModel {
     }
 
     private func rememberRecent(_ path: String) {
-        var list = recentFiles[activeID] ?? []
-        list.removeAll { $0 == path }
-        list.insert(path, at: 0)
-        if list.count > 50 { list.removeLast() }
-        recentFiles[activeID] = list
+        updateActive { workspace in
+            workspace.recentFiles.removeAll { $0 == path }
+            workspace.recentFiles.insert(path, at: 0)
+            if workspace.recentFiles.count > 50 { workspace.recentFiles.removeLast() }
+        }
     }
 
-    var recentFilesInActive: [String] { recentFiles[activeID] ?? [] }
+    var recentFilesInActive: [String] { active.recentFiles }
 
     // MARK: Peek
 
@@ -2350,8 +2349,15 @@ final class AppModel {
     }
 
     func closePalette(restoreFocus: Bool = true) {
+        palette?.finish()
         palette = nil
         if restoreFocus { requestFocus() }
+    }
+
+    /// The palette starting with something typed already: `:` for a line, `@` for a symbol.
+    func openPalette(typing prefix: String) {
+        palette?.finish()
+        palette = PaletteModel(mode: .files, model: self, initialQuery: prefix)
     }
 
     func openPrompt(title: String, initial: String, commit: @escaping (String) -> Void) {

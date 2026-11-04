@@ -98,6 +98,20 @@ final class EventRouter {
             return event
         }
 
+        // The palette's field takes a moment to get the keyboard. What's typed until then is for it,
+        // not for the terminal or the file underneath.
+        if let palette = model.palette, stroke.modifiers.subtracting(.shift).isEmpty,
+           (event.window?.firstResponder as? NSTextView)?.isFieldEditor != true {
+            switch stroke.key {
+            case "enter": palette.submit()
+            case "down": palette.move(1)
+            case "up": palette.move(-1)
+            case "tab", "backspace", "delete": break
+            default: palette.query += event.characters ?? ""
+            }
+            return nil
+        }
+
         switch model.keyResolver.handle(stroke) {
         case .passThrough:
             if let terminal = event.window?.firstResponder as? TiriTerminalView {

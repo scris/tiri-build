@@ -19,6 +19,7 @@ final class LanguageServerHub {
         let executable: String
         var isReady = false
         var canPullDiagnostics = false
+        var canSearchWorkspace = false
         var hasFailed = false
         /// Path to what the server was last told it says.
         var documents: [String: (version: Int, text: String)] = [:]
@@ -220,6 +221,8 @@ final class LanguageServerHub {
             return
         }
         session.canPullDiagnostics = answer?["capabilities"]?["diagnosticProvider"] != nil
+        let workspaceSymbols = answer?["capabilities"]?["workspaceSymbolProvider"]
+        session.canSearchWorkspace = workspaceSymbols != nil && workspaceSymbols?.boolValue != false
         session.client.notify("initialized", .object([:]))
         session.isReady = true
         failedStarts[session.key] = nil
@@ -534,6 +537,33 @@ final class LanguageServerHub {
         params["context"] = .object(["includeDeclaration": true])
         let answer = await session.client.request("textDocument/references", .object(params), timeout: 6)
         return supportsNavigation(answer)
+    }
+
+    /// What's defined in a file. Nil if no server can say in time, and a simple reading of the text can have a go.
+    func documentSymbols(path: String) async -> [DocumentSymbol]? {
+        guard let session = await asking(path, within: 4) else { return nil }
+        let params: JSONValue = .object(["textDocument": .object(["uri": .string(LSP.uri(for: Git.real(path)))])])
+        guard let answer = await session.client.request("textDocument/documentSymbol", params, timeout: 6), answer.arrayValue != nil else { return nil }
+        let found = LSP.documentSymbols(from: answer)
+        // A server that hasn't finished reading the file says nothing at all.
+        return found.isEmpty ? nil : found
+    }
+
+    /// Names across every server running for these folders. Nil if none of them can answer.
+    func workspaceSymbols(query: String, near path: String?, folders: [String]) async -> [DocumentSymbol]? {
+        if let path, LanguageServerCatalog.definition(for: path) != nil { _ = await asking(path, within: 4) }
+        let roots = folders.map(Git.real)
+        let asked = sessions.values.filter { session in
+            session.isReady && session.canSearchWorkspace && roots.contains { session.key.root == $0 || session.key.root.hasPrefix($0 + "/") }
+        }
+        guard !asked.isEmpty else { return nil }
+        var found: [DocumentSymbol] = []
+        for session in asked {
+            session.lastUsed = Date()
+            let answer = await session.client.request("workspace/symbol", .object(["query": .string(query)]), timeout: 6)
+            found += LSP.workspaceSymbols(from: answer)
+        }
+        return found
     }
 
     func hover(path: String, line: Int, character: Int) async -> [LSPHoverBlock] {

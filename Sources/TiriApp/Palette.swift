@@ -12,6 +12,10 @@ final class PaletteModel {
         case prompt(title: String, commit: (String) -> Void)
         case choices(title: String, rows: [Row])
         case search
+        /// Typed into quick open, as in VS Code: `:` a line, `@` a symbol here, `#` one anywhere.
+        case goToLine
+        case symbols
+        case workspaceSymbols
     }
 
     struct Row: Identifiable {
@@ -21,6 +25,8 @@ final class PaletteModel {
         var detail: String?
         var shortcut: String?
         var symbol: String?
+        /// Shows it without leaving where you were, for arrowing through a list.
+        var preview: (() -> Void)?
         var action: (_ alternate: Bool) -> Void
     }
 
@@ -28,16 +34,28 @@ final class PaletteModel {
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     var mode: Mode
     var query: String {
-        didSet { if oldValue != query { refresh() } }
+        didSet {
+            // A field selects what's in it on the way to getting the keyboard, and the first
+            // key typed shouldn't take `:` or `@` with it.
+            if let typed = typedPrefix {
+                typedPrefix = nil
+                if oldValue == typed, !query.isEmpty, !query.hasPrefix(typed) { query = typed + query }
+            }
+            if oldValue != query { refresh() }
+        }
     }
+    @ObservationIgnored private var typedPrefix: String?
     var rows: [Row] = []
     var selection = 0
     var isIndexing = false
+    /// Something to say instead of results.
+    var note: String?
 
     init(mode: Mode, model: AppModel, initialQuery: String = "") {
         self.mode = mode
         self.model = model
         self.query = initialQuery
+        if case .files = mode, !initialQuery.isEmpty { typedPrefix = initialQuery }
         if case .files = mode {
             model.fileIndex.onUpdate = { [weak self] in self?.refresh() }
             model.fileIndex.refreshIfNeeded(roots: model.active.folders,
@@ -52,22 +70,235 @@ final class PaletteModel {
         case .commands: "Type a command"
         case .prompt(let title, _), .choices(let title, _): title
         case .search: "Search in files"
+        case .goToLine, .symbols, .workspaceSymbols: ""
         }
     }
 
     var effectiveMode: Mode {
-        if case .files = mode, query.hasPrefix(">") { return .commands }
+        if case .files = mode {
+            if query.hasPrefix(">") { return .commands }
+            if query.hasPrefix(":") { return .goToLine }
+            if query.hasPrefix("@") { return .symbols }
+            if query.hasPrefix("#") { return .workspaceSymbols }
+        }
         return mode
     }
 
     func refresh() {
         searchTask?.cancel()
+        note = nil
+        var previews = false
         switch effectiveMode {
         case .files: refreshFiles()
         case .commands: refreshCommands()
         case .prompt: rows = []
         case .choices(_, let all): refreshChoices(all)
         case .search: refreshSearch()
+        case .goToLine:
+            previews = true
+            refreshGoToLine()
+        case .symbols:
+            previews = true
+            refreshSymbols()
+        case .workspaceSymbols: refreshWorkspaceSymbols()
+        }
+        if !previews { endPreview() }
+    }
+
+    // MARK: Showing what's selected
+
+    @ObservationIgnored private var previewTarget: OutlineViewing?
+    @ObservationIgnored private var restoreView: (() -> Void)?
+    @ObservationIgnored private var committed = false
+
+    private func outlineTarget() -> OutlineViewing? {
+        if let previewTarget { return previewTarget }
+        guard let target = model.frontOutlineTarget else { return nil }
+        previewTarget = target
+        restoreView = target.beginPreview()
+        return target
+    }
+
+    /// Going back to files or commands: the view goes back too.
+    private func endPreview() {
+        previewTarget?.clearPreview()
+        restoreView?()
+        previewTarget = nil
+        restoreView = nil
+    }
+
+    /// The palette is closing. Only a choice keeps what's been shown.
+    var typesAfterQuery: Bool {
+        if case .files = mode { return !query.isEmpty }
+        return false
+    }
+
+    func finish() {
+        previewTarget?.clearPreview()
+        if !committed { restoreView?() }
+        previewTarget = nil
+        restoreView = nil
+        searchTask?.cancel()
+    }
+
+    // MARK: Go to line
+
+    private func refreshGoToLine() {
+        guard let target = outlineTarget() else {
+            rows = []
+            note = "Open a file first."
+            return
+        }
+        let parts = query.dropFirst().split(separator: ":").map { Int($0.trimmingCharacters(in: .whitespaces)) }
+        let lineCount = target.outlineLineCount
+        guard let wanted = parts.first ?? nil else {
+            selection = 0
+            let here = target.outlineCurrentLine
+            rows = [Row(id: "line", title: "Type a line number, from 1 to \(lineCount.formatted()). You're on line \(here.formatted()).") { [model] _ in
+                model.closePalette()
+            }]
+            return
+        }
+        let line = min(max(wanted, 1), lineCount)
+        let col = parts.count > 1 ? parts[1] : nil
+        let path = target.path
+        let row = Row(id: "line", title: "Go to line \(line.formatted())", preview: { target.previewLine(line) }) { [model] _ in
+            model.closePalette(restoreFocus: false)
+            model.navigate(to: SymbolLocation(path: path, line: line, column: col ?? 1, text: ""))
+            model.requestFocus()
+        }
+        rows = [row]
+        selection = 0
+        row.preview?()
+    }
+
+    // MARK: Symbols
+
+    @ObservationIgnored private var symbolsPath: String?
+    @ObservationIgnored private var fileSymbols: [DocumentSymbol] = []
+    @ObservationIgnored private var symbolsFromServer = false
+
+    private func refreshSymbols() {
+        guard let target = outlineTarget() else {
+            rows = []
+            note = "Open a file first."
+            return
+        }
+        if symbolsPath != target.path {
+            symbolsPath = target.path
+            loadSymbols(of: target)
+        }
+        showSymbols(moved: true)
+    }
+
+    /// A reading of the text shows right away, and the server's answer replaces it when it comes.
+    private func loadSymbols(of target: OutlineViewing) {
+        let path = target.path
+        let text = target.outlineText
+        isIndexing = true
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let found = SimpleSymbols.scan(text, path: path)
+            await MainActor.run { [weak self] in
+                guard let self, !self.symbolsFromServer, self.symbolsPath == path else { return }
+                self.fileSymbols = found
+                self.showSymbols(moved: false)
+            }
+        }
+        Task { [weak self] in
+            let answer = await self?.model.languageServers.documentSymbols(path: path)
+            guard let self, self.symbolsPath == path else { return }
+            self.isIndexing = false
+            if let answer {
+                self.symbolsFromServer = true
+                self.fileSymbols = answer
+            }
+            self.showSymbols(moved: false)
+        }
+    }
+
+    private func showSymbols(moved: Bool) {
+        guard case .symbols = effectiveMode, let target = previewTarget else { return }
+        let previous = rows.indices.contains(selection) ? rows[selection].id : nil
+        let text = query.dropFirst().trimmingCharacters(in: .whitespaces)
+        var list: [Row]
+        if text.isEmpty {
+            list = fileSymbols.prefix(2_000).map { symbolRow($0, positions: [], target: target) }
+        } else {
+            let pieces = FuzzyMatcher.pieces(text)
+            var scored: [(score: Int, order: Int, row: Row)] = []
+            for (order, symbol) in fileSymbols.enumerated() {
+                guard let match = FuzzyMatcher.match(pieces: pieces, candidate: Array(symbol.name.utf8), nameStart: 0) else { continue }
+                scored.append((match.score, order, symbolRow(symbol, positions: match.positions, target: target)))
+            }
+            scored.sort { ($0.score, $1.order) > ($1.score, $0.order) }
+            list = scored.prefix(500).map(\.row)
+        }
+        rows = list
+        selection = previous.flatMap { id in list.firstIndex { $0.id == id } } ?? 0
+        if list.isEmpty, !isIndexing { note = text.isEmpty ? "No symbols found in this file." : "No symbol matches." } else { note = nil }
+        // Typing jumps to the best match. Just opening stays where you are.
+        if moved, !text.isEmpty, list.indices.contains(selection) { list[selection].preview?() }
+    }
+
+    private func symbolRow(_ symbol: DocumentSymbol, positions: [Int], target: OutlineViewing) -> Row {
+        let path = target.path
+        return Row(id: symbol.id, title: symbol.name, positions: positions, detail: symbol.container, shortcut: ":\(symbol.line)",
+                   symbol: Self.icon(for: symbol.kind), preview: { target.previewLine(symbol.line) }) { [model] _ in
+            model.closePalette(restoreFocus: false)
+            model.navigate(to: SymbolLocation(path: path, line: symbol.line, column: symbol.column, text: symbol.name))
+            model.requestFocus()
+        }
+    }
+
+    private static func icon(for kind: DocumentSymbol.Kind) -> String {
+        switch kind {
+        case .function: "function"
+        case .method: "m.square"
+        case .type: "t.square"
+        case .property: "p.square"
+        case .variable: "v.square"
+        case .constant: "c.square"
+        case .module: "shippingbox"
+        case .heading: "number"
+        case .other: "circle.dashed"
+        }
+    }
+
+    // MARK: Symbols anywhere
+
+    private func refreshWorkspaceSymbols() {
+        let text = query.dropFirst().trimmingCharacters(in: .whitespaces)
+        let near = model.frontCodePath
+        let folders = model.active.folders
+        rows = []
+        selection = 0
+        isIndexing = true
+        searchTask = Task { [weak self] in
+            // A pause for typing: each letter is a question to a server.
+            if !text.isEmpty { try? await Task.sleep(for: .milliseconds(150)) }
+            guard let self, !Task.isCancelled else { return }
+            let found = await self.model.languageServers.workspaceSymbols(query: text, near: near, folders: folders)
+            guard !Task.isCancelled else { return }
+            self.isIndexing = false
+            guard let found else {
+                self.note = "No language server running here can search the whole workspace. ⌘⇧O works on one file, and ⌘⇧F searches the text."
+                return
+            }
+            if found.isEmpty {
+                self.note = text.isEmpty ? "Type a name to find it anywhere in this workspace." : "No symbol matches. A language server may still be reading the project."
+            }
+            self.rows = found.prefix(200).map { self.workspaceSymbolRow($0) }
+            self.selection = 0
+        }
+    }
+
+    private func workspaceSymbolRow(_ symbol: DocumentSymbol) -> Row {
+        let path = model.aliasedPath(symbol.path ?? "")
+        let relative = model.active.folder(containing: path) != nil ? model.active.relativePath(path) : (path as NSString).abbreviatingWithTildeInPath
+        return Row(id: symbol.id, title: symbol.name, detail: "\(relative):\(symbol.line)", symbol: Self.icon(for: symbol.kind)) { [model] alternate in
+            model.closePalette(restoreFocus: false)
+            model.open(path: path, line: symbol.line, col: symbol.column, intent: alternate ? .split(.right) : .pinned)
+            model.requestFocus()
         }
     }
 
@@ -179,15 +410,6 @@ final class PaletteModel {
 
     // MARK: Files
 
-    /// `name:12`, `name:12:3`, `name 12`
-    static func splitLocation(_ query: String) -> (query: String, line: Int?, col: Int?) {
-        if let match = query.wholeMatch(of: /(.*?):(\d+)(?::(\d+))?/) {
-            return (String(match.1), Int(match.2), match.3.flatMap { Int($0) })
-        }
-        if query.hasSuffix(":") { return (String(query.dropLast()), nil, nil) }
-        return (query, nil, nil)
-    }
-
     private func fileRow(path: String, relative: String, root: String, positions: [Int], line: Int?, col: Int?) -> Row {
         let name = (relative as NSString).lastPathComponent
         let directory = (relative as NSString).deletingLastPathComponent
@@ -199,13 +421,14 @@ final class PaletteModel {
         return Row(id: path, title: name, positions: namePositions, detail: detail,
                    symbol: FileIcons.symbolName(forName: name, isDirectory: false)) { [model] alternate in
             model.closePalette(restoreFocus: false)
-            model.open(path: path, line: line, col: col, intent: alternate ? .split(.right) : .pinned)
+            // The cursor goes to the start of the line, as in Cursor, with nothing selected to type over.
+            model.open(path: path, line: line, col: line == nil ? col : (col ?? 1), intent: alternate ? .split(.right) : .pinned)
             model.requestFocus()
         }
     }
 
     private func refreshFiles() {
-        let (text, line, col) = Self.splitLocation(query.trimmingCharacters(in: .whitespaces))
+        let (text, line, col) = PaletteQuery.location(query.trimmingCharacters(in: .whitespaces))
         let files = model.fileIndex.files
         let workspace = model.active
         isIndexing = files.isEmpty && !workspace.folders.isEmpty
@@ -216,6 +439,8 @@ final class PaletteModel {
             var list: [Row] = []
             for path in model.recentFilesInActive + workspace.items.compactMap(\.filePath) where !seen.contains(path) {
                 seen.insert(path)
+                // These can outlive their files.
+                guard FileManager.default.fileExists(atPath: path) else { continue }
                 let root = workspace.folder(containing: path)
                 list.append(fileRow(path: path, relative: workspace.relativePath(path), root: root ?? "", positions: [], line: line, col: col))
             }
@@ -224,11 +449,12 @@ final class PaletteModel {
                 list.append(fileRow(path: file.path, relative: file.relative, root: file.root, positions: [], line: line, col: col))
             }
             rows = list
-            selection = 0
+            // The file you're already in comes first, but ⌘P then Return means the one before it.
+            selection = list.count > 1 && list[0].id == workspace.activeItem?.filePath ? 1 : 0
             return
         }
 
-        let normalized = FuzzyMatcher.normalize(text)
+        let pieces = FuzzyMatcher.pieces(text)
         let recents = Dictionary(model.recentFilesInActive.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
         // Scoring tens of thousands of paths runs off the main thread, newest query wins.
         searchTask = Task.detached(priority: .userInitiated) { [weak self] in
@@ -241,7 +467,7 @@ final class PaletteModel {
                 if index % 4096 == 0, Task.isCancelled { return }
                 let bytes = Array(file.relative.utf8)
                 let nameStart = bytes.count - file.name.utf8.count
-                guard let match = FuzzyMatcher.match(query: normalized, candidate: bytes, nameStart: nameStart) else { continue }
+                guard let match = FuzzyMatcher.match(pieces: pieces, candidate: bytes, nameStart: nameStart) else { continue }
                 let recency = recents[file.path].map { 40 - min($0, 30) } ?? 0
                 hits.append(Hit(file: file, score: match.score + recency, positions: match.positions))
             }
@@ -268,6 +494,7 @@ final class PaletteModel {
     func move(_ delta: Int) {
         guard !rows.isEmpty else { return }
         selection = (selection + delta + rows.count) % rows.count
+        rows[selection].preview?()
     }
 
     func submit(alternate: Bool = false) {
@@ -278,6 +505,7 @@ final class PaletteModel {
             return
         }
         guard rows.indices.contains(selection) else { return }
+        committed = true
         rows[selection].action(alternate)
     }
 }
@@ -331,12 +559,13 @@ struct PaletteView: View {
             .padding(.horizontal, 14)
             .frame(height: 42)
 
-            if palette.searchFoundNothing {
+            if palette.searchFoundNothing || palette.note != nil {
                 Divider()
-                Text("Nothing in this workspace matches.")
+                Text(palette.note ?? "Nothing in this workspace matches.")
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 12)
+                    .padding(.horizontal, 14)
             }
 
             if !palette.rows.isEmpty {
@@ -369,7 +598,19 @@ struct PaletteView: View {
         .frame(width: 620)
         .glassEffect(.regular, in: .rect(cornerRadius: 16))
         .shadow(color: .black.opacity(0.22), radius: 22, y: 8)
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            // In a window where it's the first thing to appear in a while, once isn't always enough.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { focused = true }
+        }
+        .onChange(of: focused) { _, isFocused in
+            guard isFocused, palette.typesAfterQuery else { return }
+            DispatchQueue.main.async {
+                if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor {
+                    editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+                }
+            }
+        }
     }
 }
 
