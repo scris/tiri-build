@@ -33,6 +33,19 @@ final class EventRouter {
             if self?.model?.tabDrag != nil { self?.model?.endTabDrag() }
             return event
         } as Any)
+        // A tab bar only goes sideways, so a mouse's wheel should too, as it does in Cursor.
+        monitors.append(NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, let model = self.model, event.window === model.window, abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
+                  model.layoutRegistry.barFrames.values.contains(where: { $0.contains(model.globalPoint(event)) }),
+                  let copy = event.cgEvent?.copy() else { return event }
+            for (vertical, horizontal) in [(CGEventField.scrollWheelEventDeltaAxis1, CGEventField.scrollWheelEventDeltaAxis2),
+                                           (.scrollWheelEventPointDeltaAxis1, .scrollWheelEventPointDeltaAxis2),
+                                           (.scrollWheelEventFixedPtDeltaAxis1, .scrollWheelEventFixedPtDeltaAxis2)] {
+                copy.setIntegerValueField(horizontal, value: copy.getIntegerValueField(vertical))
+                copy.setIntegerValueField(vertical, value: 0)
+            }
+            return NSEvent(cgEvent: copy) ?? event
+        } as Any)
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .mouseMoved]) { [weak self] event in
             self?.model?.terminalHoverEvent(event)
             self?.model?.codeHoverEvent(event)
