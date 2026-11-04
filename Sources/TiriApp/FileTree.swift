@@ -665,6 +665,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                              symbol: "exclamationmark.triangle", tint: .orange)
         }
         if let parent = node.parent { refresh(parent) }
+        // It may sort somewhere else now. The selection goes with it, so the next key means this file.
+        if FileManager.default.fileExists(atPath: destination) { reveal(path: destination, expand: false, quiet: true) }
     }
 
     private func create(_ kind: FileNode.PendingKind, name: String, in parent: FileNode) {
