@@ -474,6 +474,10 @@ enum ControlHandler {
             let id = model.newTerminal(command: request.args["cmd"]?.stringValue, cwd: cwd, split: split(request), in: sourceWorkspace)
             return .object(["item": .string(id)])
 
+        case "activate":
+            NSApp.activate(ignoringOtherApps: true)
+            return .object([:])
+
         case "remote.list":
             let hosts = Set(model.workspaces.compactMap(\.remote))
             return .array(hosts.sorted().map { host in

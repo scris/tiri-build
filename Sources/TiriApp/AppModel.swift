@@ -208,6 +208,14 @@ final class AppModel {
     func finishLaunching() {
         guard !didFinishLaunching else { return }
         didFinishLaunching = true
+        // Another Tiri has these workspaces. Attaching to a terminal takes it from whoever has it, so
+        // this one touches nothing, and brings that one forward.
+        if ControlClient.isAlive(path: TiriPaths.socket) {
+            if let other = try? ControlClient(path: TiriPaths.socket, timeout: 2) {
+                _ = try? other.send(ControlRequest(cmd: "activate"))
+            }
+            exit(0)
+        }
         editorBridge.start()
         loadTurns()
         adoptNewAgents()
@@ -1402,6 +1410,14 @@ final class AppModel {
     func importWorkspace(url: URL) -> Workspace? {
         do {
             let imported = try CodeWorkspaceImporter.read(fileAt: url)
+            if imported.skipped > 0 {
+                showToast(title: "\(imported.skipped) folder\(imported.skipped == 1 ? "" : "s") left out",
+                          detail: "A workspace is on this Mac or on one server.", symbol: "info.circle", tint: .secondary)
+            }
+            if let host = imported.remote {
+                importRemoteWorkspace(imported, host: host)
+                return nil
+            }
             let existing = imported.folders.filter { FileManager.default.fileExists(atPath: $0) }
             if existing.count < imported.folders.count {
                 let missing = imported.folders.count - existing.count

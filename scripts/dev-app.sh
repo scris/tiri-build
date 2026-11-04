@@ -1,6 +1,7 @@
 #!/bin/bash
 # A throwaway copy of Tiri that can't touch the real one: its own bundle ID, state, config and socket.
 #   scripts/dev-app.sh start <name>      build (debug), assemble and launch
+#   scripts/dev-app.sh run <name>        launch what's already assembled, without building
 #   scripts/dev-app.sh stop <name>       quit it and end its terminals
 #   scripts/dev-app.sh shot <name> <png> capture its main window, whatever is in front of it
 #   scripts/dev-app.sh focus <name> -- cmd…  hold the screen, bring it forward and run cmd (real clicks and keys)
@@ -63,6 +64,14 @@ start)
   for extra in Resources/remote Resources/web; do [ -e "$extra" ] && cp -R "$extra" "$APP/Contents/Resources/"; done
   sed "s/dev.tiri.app/dev.tiri.test.$NAME/" Resources/Info.plist > "$APP/Contents/Info.plist"
   codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1
+  nohup "$APP/Contents/MacOS/Tiri" >"$DIR/app.log" 2>&1 &
+  echo $! > "$DIR/pid"
+  for _ in $(seq 1 100); do "$CLI" ping >/dev/null 2>&1 && break; sleep 0.1; done
+  "$CLI" ping
+  ;;
+run)
+  # Always through here: launched by hand, without these variables, it would be using real state.
+  [ -f "$DIR/pid" ] && kill -9 "$(cat "$DIR/pid")" 2>/dev/null || true
   nohup "$APP/Contents/MacOS/Tiri" >"$DIR/app.log" 2>&1 &
   echo $! > "$DIR/pid"
   for _ in $(seq 1 100); do "$CLI" ping >/dev/null 2>&1 && break; sleep 0.1; done
