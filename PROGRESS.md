@@ -44,6 +44,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | Waking from real sleep on a server workspace | Dropped connections are tested, and wake triggers the same retry, but the Mac was kept awake | Close the lid, open it |
 | Quote in Agent from a notebook with a real agent | Tested with a stand-in command | Select in a notebook, press ⌘L with Claude Code running |
 | Wheel scrolling in two columns, the pointer over a mark, ⌘-hover in the left column | Tested with real clicks and keys, but not a real scroll or hover | Scroll a side-by-side diff; hold ⌘ over a name on its left |
+| ⌘T with sourcekit-lsp on a built package | Tested with clangd. An unbuilt Swift package has no index, so it reports nothing | Build, press ⌘T, type a name |
 | Reduce Transparency, Increase Contrast | Left to the system's glass, as the spec asks, but not exercised | Turn them on in Accessibility settings |
 | Terminal translucency setting | Implemented, not looked at | Set `terminal.translucent` |
 
@@ -67,6 +68,13 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Diff viewer:** inline or side by side (`diff.sideBySide`), changed words highlighted, images before and after, F7 and ⇧F7. Tens of thousands of changed lines stay responsive.
 - **Gutter marks and explorer decorations:** bars against HEAD beside the line numbers, click to float the change. M and U letters and tints in the tree, a dot on folders.
 - **Per-turn diffs:** snapshots at the start and end of each agent turn, kept outside the repository, so Changes can show what one turn did. `tiri turns` for agents.
+- **Editing keys:** comment, indent, move, copy and delete lines, auto-indent, bracket match, current line, ⌘D with real multi-cursor typing including through an input method, find and replace with a count, wrapping off, on or bounded. Undo is per file, and restores the cursor.
+- **Symbols:** ⌘⇧O from a language server or a fallback reading, previewing as you arrow. ⌘T when a server can answer. ⌃G with a live preview.
+- **Quick open:** spaces as AND, `file:12`, recent files first, across a relaunch.
+- **Explorer:** compact folders, on by default (`explorer.compactFolders`).
+- **Zoom:** `window.zoomLevel`, in terminals, files, diffs and web pages.
+- **Terminal:** ⌘K, ⌘← ⌘→ ⌘⌫, find with marks and a count, and `16:5` under a path as a link.
+- **Worktrees:** New Worktree… and `tiri worktree <branch>` give another agent its own checkout, as a workspace, on a Mac or a server.
 - **Fetch, pull and push:** a bar along the bottom of the window with each repository's branch, uncommitted marker and commits to pull and push, plus Fetch, Pull (fast-forward only), Push (asks first) and Publish, and `tiri git`. No merging, no force push, no automatic fetch.
 - **Path search:** a path that doesn't exist as written is searched for across the workspace's folders, its terminals' folders and its open files. One match opens, several offer a choice, none shows a toast. Never an alert.
 - **First run:** the empty screen offers the agents the user's own shell can find, or links to get them. Settings can link `tiri` into `~/.local/bin` for other terminals.
@@ -84,6 +92,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 
 - Find doesn't cover images, video or Quick Look files. Web and markdown find has no match count.
 - One main window. Any tab can move to its own window, but a second window can't hold its own workspace. A second instance can't take the control socket and says so.
+- Notebooks are for reading. They don't run: an agent runs one with `jupyter nbconvert --execute`, and the view updates.
 - Notebook outputs that need scripts (Plotly, widgets) show a picture if they have one, or a note. The Source button on a very large notebook can stall for seconds.
 - A server: a workspace is on one server, not several, and not a mixture with local folders. Agents can't be told apart between two Macs on one server's Claude settings. If the connection comes back on another forwarded port, an agent already running there needs `/ide` to find the editor again.
 
@@ -113,7 +122,11 @@ Open times run from the request until the content is showing, except for Office 
 - A `codex exec` inside a Codex terminal may still overwrite the stored session ID, because nothing yet tells it apart from the session. Not tested with a real run.
 - Ignoring `claude -p` runs depends on `CLAUDE_CODE_ENTRYPOINT`, read from real hooks in Claude Code 2.1.318. If Claude Code changes it, those runs report again.
 - Status without hooks is an estimate. A long silent pause can read as done.
-- Multi-line link context isn't handled, such as a `16:5` under a path line from ripgrep.
+- Once, after Tiri was killed rather than quit, the next launch of a dev copy had no main window until it was quit and opened again. Six later kills and relaunches, by SIGTERM and SIGKILL, couldn't repeat it.
+- A tab moved to its own window has no text focus until you click it.
+- ⌘K may not survive a reattach: the session helper isn't told, so it may replay what was cleared. Not tested.
+- With several cursors, line commands like ⌘/ apply to the newest one and drop the rest.
+- On a server, files whose names differ only by case get one place on this Mac, so only the first shows. A toast says so, and terminals see them all.
 - Hard-wrap joining for paths is a heuristic, and hasn't been seen against a long real path from Claude.
 - Tiri shows `.env` files in the tree like any other file, as Cursor does.
 - macOS autocorrect can change words typed in the comment box.
@@ -134,15 +147,15 @@ Open times run from the request until the content is showing, except for Office 
 | Deleting moves to the Trash | On a server it deletes, after saying so | There's no Trash there to move it to |
 | Opens a terminal in your home folder if no folder is open | Asks for a folder first; first launch starts nothing | An agent started in the wrong folder does real work in the wrong place |
 | Root row only with several folders | Always a root row | Spec: one section per folder |
-| Compact folders on by default | Not implemented | Not in v0.1 scope; see next tasks |
-| Quick open searches on spaces as AND | Spaces are ignored | Simpler for now |
+| ⌘K in a terminal clears at once and has no chords | Waits 0.3 s, so ⌘K ⌘\ still splits from a terminal | Splitting from a terminal is common in Tiri |
+| `editor.wordWrapColumn` defaults to 80 | 120 | Your Cursor uses bounded at 120 |
+| Compact rows let you click a middle segment | Rows act on the deepest folder | Simpler, and it's almost always what's meant |
 | Hides nothing but `.git` and `.DS_Store` by default | Also hides `node_modules` and `.build` | Spec §9 |
 
 ## Next 5 tasks
 
 1. A real workday with several agents, because nothing here has had one, and fixing what it finds.
 2. Patch SwiftTerm so a labelled hyperlink with no scheme can't show "Link blocked", and read link targets directly.
-3. Compact folders in the explorer, and multi-line link context.
 4. Staging and committing from the changes view, if reviewing there makes it wanted.
 5. An MCP wrapper around the control API, now that the CLI is stable.
 6. Completion on request, from the language server, if real use shows people want it. Snippets and AI ghost text are decided against.

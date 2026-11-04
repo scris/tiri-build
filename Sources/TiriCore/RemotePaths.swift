@@ -284,6 +284,15 @@ public enum SSHConfigFile {
         return host
     }
 
+    /// What a Chinese or Japanese input method makes of the punctuation in a path or host.
+    public static func halfWidth(_ text: String) -> String {
+        var out = text
+        for (wide, plain) in [("～", "~"), ("／", "/"), ("。", "."), ("．", "."), ("：", ":"), ("＠", "@"), ("－", "-"), ("＿", "_"), ("、", "/")] {
+            out = out.replacingOccurrences(of: wide, with: plain)
+        }
+        return out
+    }
+
     /// Short name for a destination, for the workspace list.
     public static func displayName(of destination: String) -> String {
         var text = destination

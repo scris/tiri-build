@@ -86,7 +86,7 @@ final class TreeOutlineView: NSOutlineView {
         // Only the modifiers a person holds: arrow keys also carry numericPad and function.
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         switch event.keyCode {
-        case 36, 76 where flags.isEmpty:
+        case 36 where flags.isEmpty, 76 where flags.isEmpty:
             tree?.renameSelected()
         case 125 where flags == .command:
             tree?.openSelected(pin: true)

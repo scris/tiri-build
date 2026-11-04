@@ -63,21 +63,21 @@ final class RemoteManager {
         for connection in connections.values { connection.tryNow() }
     }
 
-    /// Separate for each Tiri on each Mac, so one never ends another's terminals on the same server.
-    private let machineTag: String = {
-        let identity = TiriPaths.supportDirectory.path + "@" + (Host.current().localizedName ?? "")
+    /// Separate for each Tiri on each Mac, and for each name a server goes by, so none of them
+    /// ever takes for its own, or ends, what belongs to another on the same machine.
+    private func tag(for destination: String) -> String {
+        let identity = TiriPaths.supportDirectory.path + "@" + (Host.current().localizedName ?? "") + "@" + destination
         return SHA256.hash(data: Data(identity.utf8)).prefix(3).map { String(format: "%02x", $0) }.joined()
-    }()
+    }
 
     // MARK: Connections
 
     func connection(_ destination: String) -> RemoteConnection {
         if let existing = connections[destination] { return existing }
         TerminalSessions.prepareDirectory()
-        let hash = SHA256.hash(data: Data(destination.utf8)).prefix(5).map { String(format: "%02x", $0) }.joined()
         let resources = Bundle.main.resourceURL?.appendingPathComponent("remote").path ?? ""
-        let connection = RemoteConnection(destination: destination, controlPath: TerminalSessions.directory + "/s-" + hash,
-                                          helperDirectory: resources, askpass: resources + "/tiri-askpass", controlSocket: TiriPaths.socket, machineTag: machineTag)
+        let connection = RemoteConnection(destination: destination, controlPath: controlPath(for: destination),
+                                          helperDirectory: resources, askpass: resources + "/tiri-askpass", controlSocket: TiriPaths.socket, machineTag: tag(for: destination))
         connection.onRelayRequest = { body in
             guard let request = try? JSONDecoder().decode(RemoteRelayMessage.Request.self, from: body) else {
                 return RemoteRelayMessage.Reply(code: 2, errors: "tiri: that wasn't understood.\n").encoded
@@ -111,6 +111,11 @@ final class RemoteManager {
 
     func existingConnection(_ destination: String) -> RemoteConnection? { connections[destination] }
 
+    private func controlPath(for destination: String) -> String {
+        let hash = SHA256.hash(data: Data(destination.utf8)).prefix(5).map { String(format: "%02x", $0) }.joined()
+        return TerminalSessions.directory + "/s-" + hash
+    }
+
     func state(of destination: String) -> RemoteState { states[destination] ?? .idle }
 
     func connect(_ destination: String, quiet: Bool = false) {
@@ -124,6 +129,9 @@ final class RemoteManager {
     func startUp() {
         let hosts = Set(model.workspaces.compactMap(\.remote))
         for destination in hosts { _ = connection(destination) }
+        let directory = TerminalSessions.directory
+        let keeping = Set(hosts.map { (controlPath(for: $0) as NSString).lastPathComponent })
+        DispatchQueue.global(qos: .utility).async { RemoteConnection.endLeftovers(in: directory, keeping: keeping) }
         for destination in hosts where destination != model.active.remote { connect(destination, quiet: true) }
     }
 
@@ -222,7 +230,7 @@ final class RemoteManager {
         syncRoots(destination)
         let wanted = forwards.filter { $0.destination == destination }
         let ends = pendingEnds.removeValue(forKey: destination) ?? []
-        let tag = machineTag
+        let tag = tag(for: destination)
         let bridge = model.editorBridge.listener(for: destination)
         let previousPort = bridgePorts[destination]
         let lock = bridgeLock(for: connection, token: bridge?.token)
@@ -270,7 +278,7 @@ final class RemoteManager {
     }
 
     private nonisolated static func lookUp(names: [String], on connection: RemoteConnection) async -> Set<String>? {
-        guard !names.isEmpty else { return [] }
+        guard !names.isEmpty, !connection.isCShell else { return nil }
         let script = "\(ShellQuote.quote(connection.shell)) -l -i -c \(ShellQuote.quote(ShellLookup.script(for: names))) 2>/dev/null"
         guard let result = connection.run(script, timeout: 15) else { return nil }
         return ShellLookup.found(in: result.text)
@@ -323,7 +331,7 @@ final class RemoteManager {
     // MARK: Terminals
 
     func sessionSocket(_ item: ItemID, on connection: RemoteConnection) -> String? {
-        connection.runDirectory.map { $0 + "/" + machineTag + "-" + item + ".sock" }
+        connection.runDirectory.map { $0 + "/" + tag(for: connection.destination) + "-" + item + ".sock" }
     }
 
     /// What runs on the server for a terminal. `attachOnly` comes back to what's there and starts
@@ -347,7 +355,7 @@ final class RemoteManager {
         // A program outlives the connection that brought your SSH agent, so `git push` would find it
         // gone. So it's given a link that never moves, pointed at the live one on each connection.
         if let run = connection.runDirectory {
-            let link = ShellQuote.quote(run + "/" + machineTag + "-agent.sock")
+            let link = ShellQuote.quote(run + "/" + tag(for: connection.destination) + "-agent.sock")
             lines.append("if [ -n \"$SSH_AUTH_SOCK\" ]; then ln -sf \"$SSH_AUTH_SOCK\" \(link) && export SSH_AUTH_SOCK=\(link); fi")
         }
         var program: [String]
@@ -362,9 +370,13 @@ final class RemoteManager {
                 program = [shell, "-l", "-c", "\(addPath); exec \(ShellQuote.quote(shell)) -i"]
                 execName = name
             } else {
-                program = [shell, "-l"]
+                // The leading dash is what says login shell, which every shell understands.
+                program = [shell]
                 execName = "-" + name
             }
+        } else if connection.isCShell {
+            program = [shell, "-c", trimmed]
+            execName = name
         } else {
             program = [shell, "-l", "-i", "-c", (addPath.map { $0 + "; " } ?? "") + trimmed]
             execName = name
@@ -540,11 +552,11 @@ final class RemoteManager {
         }
     }
 
-    @ObservationIgnored private var saidCollision: Set<String> = []
-
     /// This Mac's disk can't hold names that differ only by case, and a server's can. Said once.
     private func noteCaseCollision(_ name: String, holder: String, on destination: String) {
-        guard saidCollision.insert(destination).inserted else { return }
+        let key = "saidCaseCollision.\(destination)"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
         model.showToast(title: "Some files on \(SSHConfigFile.displayName(of: destination)) differ only by case", detail: "This Mac can only show one of each, like \((holder as NSString).lastPathComponent). The terminal sees them all.",
                         symbol: "textformat.size", tint: .secondary)
     }
@@ -664,7 +676,7 @@ final class RemoteManager {
             let text = await Task.detached(priority: .utility) { RemoteManager.readConfig(path, on: connection) }.value
             guard let self, let text, !AgentHooks.isInstalled(tool, in: text) else { return }
             let name = SSHConfigFile.displayName(of: destination)
-            self.model.showToast(title: "Get exact status from \(tool.title) on \(name)?", detail: "Right now Tiri is estimating when it's working or done.",
+            self.model.showToast(title: "Get exact status from \(tool.title)?", detail: "On \(name), Tiri is estimating when it's working or done.",
                                  symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up") { [weak self] in
                 self?.confirmHooks(tool, on: destination)
             }
@@ -992,7 +1004,7 @@ extension AppModel {
                 self.remote.remember(destination: destination, folder: nil)
                 self.chooseRemoteFolder(on: destination)
             case .failure(let failure):
-                self.showToast(title: "Couldn't connect to \(name)", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
+                self.showToast(title: "Couldn't connect", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
                                actionTitle: "Try Again") { [weak self] in self?.connect(to: destination) }
             }
         }
@@ -1031,7 +1043,7 @@ extension AppModel {
             self.dismissToast(toast)
             switch result {
             case .failure(let failure):
-                self.showToast(title: "Couldn't connect to \(name)", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
+                self.showToast(title: "Couldn't connect", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
                                actionTitle: "Try Again") { [weak self] in self?.importRemoteWorkspace(imported, host: host) }
             case .success(let connection):
                 Task {
@@ -1084,7 +1096,7 @@ extension RemoteManager {
             (recent, configured.first { $0.alias == recent }?.detail)
         }
         names += configured.filter { !recents.contains($0.alias) }.map { ($0.alias, $0.detail) }
-        let text = query.trimmingCharacters(in: .whitespaces)
+        let text = SSHConfigFile.halfWidth(query.trimmingCharacters(in: .whitespaces))
         var rows: [PaletteModel.Row] = []
         for (alias, detail) in names where text.isEmpty || alias.localizedCaseInsensitiveContains(text) || (detail?.localizedCaseInsensitiveContains(text) ?? false) {
             rows.append(PaletteModel.Row(id: alias, title: SSHConfigFile.displayName(of: alias), detail: detail, symbol: "server.rack") { [weak self] _ in
@@ -1116,7 +1128,7 @@ extension RemoteManager {
             if path == home { return "~" }
             return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
         }
-        let text = query.trimmingCharacters(in: .whitespaces)
+        let text = SSHConfigFile.halfWidth(query.trimmingCharacters(in: .whitespaces))
         let opensTyped = text.isEmpty || text.hasSuffix("/") || text == "~"
         let directory = text.isEmpty ? home : expand(opensTyped ? String(text.dropLast(text.hasSuffix("/") && text.count > 1 ? 1 : 0)) : (text as NSString).deletingLastPathComponent)
         let filter = opensTyped ? "" : (text as NSString).lastPathComponent
@@ -1154,6 +1166,10 @@ extension RemoteManager {
                         self.model.palette?.query = pretty(path) + "/"
                     }
                 })
+            }
+            // Whatever's been typed can always be tried, so Return never does nothing.
+            if !opensTyped, !children.contains(filter) {
+                rows.append(openRow(expand(text)))
             }
             return rows
         }
