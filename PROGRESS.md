@@ -16,31 +16,26 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 
 - SSH workspaces, with `scripts/e2e-remote.sh` and by hand, against real servers: Ubuntu 24.04 on x86-64 on Google Cloud (also through a jump host), Alpine with busybox and no bash on ARM with forwarding forbidden, and Ubuntu on ARM with fish as the login shell and `MaxSessions 3`. Includes a real 45-second packet blackhole with `iptables`, killing the connection under a running program, quitting Tiri under one, the Linux kernel's 97,000 files, clangd running there, real Claude Code's first-run screens, and real clicks and keys through the unknown-host, passphrase, ⌘-click, save and paste flows.
 
+### Tested with real agents (2026-11-04)
+
+Small real turns with Claude Code, Codex and Grok, in a demo project and in a window kept off-screen. Claude Code: the Agents section live, per-turn diffs, Undo and the status around it, Esc on a Peek mid-turn, ⌘Z, Quote in Agent as a real mention, `getDiagnostics` returning real errors, a nested `claude -p`, `tiri open`, `tiri web` used to find a page's bugs and read its screenshot, `tiri notebook`, a worktree it made appearing in Other Work and then merged and removed, resume after a simulated reboot, Reopen. Codex: its real payloads, turns, status, Undo routed by its turn, a real hand-off from Claude, Quote. Grok: a turn, status, Quote, a nested `grok -p`.
+
+Over SSH: real Claude Code on a Mac acting as a server, with a connection dropped mid-turn. On a short-lived Linux VM: the server suite (58 of 58), notebooks with a dropped connection, Other Work, conversations, one-shot protection, real exit codes and lines surviving reattaches, with stand-ins for agents since no agent's login was copied there.
+
 ### Not verified yet
 
 | What | Why | How to check |
 |---|---|---|
 | The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
 | Sessions over days, and across a reboot | Quit and relaunch are tested on a real Claude session. A long run isn't | Use it |
-| Resume by session ID on a real session | A relaunch reattaches to the running session, so this only happens after a reboot. The stored ID itself is verified across a relaunch, and `claude --continue` on a real session | Reboot, then see that the agent comes back |
 | Clicking a native notification | Needs the system permission prompt answered. In-app toasts and badges are verified | Allow notifications, then run `tiri notify done --item <id>` in a terminal in another workspace |
-| Codex hooks, and a Codex turn | Its composer is tested with lines and an image, unsent. Hook payloads are tested with documented-format JSON | Settings, Agent Status, then run a session |
 | Grok's permission prompt reporting "needs input" | Grok on this Mac runs with always-approve, so a real one never came up. Its payload is read from the docs, and every other Grok event is checked against real ones | Turn always-approve off, then ask Grok for something it has to ask about |
 | rust-analyzer, gopls, pyright, typescript-language-server, ruby-lsp and lua-language-server | clangd and sourcekit-lsp are tested for real: diagnostics, definition, references, hover, an edit on disk, and stopping when idle. On this Mac rust-analyzer is a rustup shim for a component that isn't installed, which did prove that case is reported. The others aren't installed. The protocol they share is the same, but each has its own habits | Open a file in each language, and press F12 on a name |
-| Claude Code asking for diagnostics by itself | The answer is tested through the real WebSocket with a token, the way Claude Code connects. Not watched during a real edit, which needs a real prompt | Ask Claude to make an edit that breaks something, with the file open in Tiri |
-| Per-turn diffs in a real session | Tested with real hook payloads through the real CLI, and real edits on disk. Not during a real agent turn, which needs a real prompt | Choose Latest Turn in Changes, then send your agent a prompt |
-| A `codex exec` inside a Claude terminal | Covered by unit tests only, to avoid a real Codex run | Ask a Claude session to run one, then check `tiri items` |
 | Fetch, pull and push against a real remote | Tested with a local bare repository, so no real remote changed. SSH keys, the keychain and push hooks are unproven from the app | Fetch in a real repository, then push something you mean to |
-| A real agent's conversation on a server | Testing Claude Code on a server needs your account on it, and credentials weren't copied there. Its screens render, its editor-protocol socket was exercised by a stand-in client with the real token and lock file, and hooks with documented payloads | Connect to a server where you're logged in, run `claude`, and try `/ide`, a Quote in Agent and a turn |
-| A Mac as the server | The helper is built and its commands were run on this Mac, but no full session against Remote Login | Connect to a Mac |
 | A password rather than a key, and one-time codes | Passphrases and unknown hosts had real keystrokes. Passwords and codes go through the same prompt | Connect to a host that asks |
 | Waking from real sleep on a server workspace | Dropped connections are tested, and wake triggers the same retry, but the Mac was kept awake | Close the lid, open it |
 | Running a notebook with a real mouse and keyboard | Everything runs for real, with a real kernel, but in a window that was kept in the background: ▶, double-click, ⇧↩ and Esc were sent to the page as events, and hover was only seen as a style. Answering an `input()` prompt was tested against the kernel, and the prompt was only seen | Run All, ▶ on hover, double-click, ⇧↩, a cell with `input()` |
-| A notebook on a Linux server | Tested through a private SSH server on this Mac: run, edit, dropped connection. Its changes reach the Mac on inotify on Linux, which hasn't run with this | Run one on a real server |
 | Hovering over a change, Undo and Ask, and ◎ on a page, with a real mouse | Tested off-screen with stand-in agents and events sent to the view. The routing, the text delivered and the buttons' look are real | Hover in a diff, press Undo. Press ◎ and click something |
-| The Agents section and Undo routing during a real agent's turn | Hook payloads are shaped like real ones and sent through the real CLI, but no real turn ran | Send an agent a prompt and watch the section |
-| A hand-off in a real agent | The prompt reaches a stand-in, and reads as intended. Past conversations are parsed from real files of all three agents, counted but not displayed | Hand To on a real conversation |
-| Quote in Agent from a notebook with a real agent | Tested with a stand-in command | Select in a notebook, press ⌘L with Claude Code running |
 | ⌘T with sourcekit-lsp on a built package | Tested with clangd. An unbuilt Swift package has no index, so it reports nothing | Build, press ⌘T, type a name |
 | The paperclip's picker, Back on a diff in a Peek, the pointer over a change mark | Everything else in these flows had real clicks. These weren't pressed through | Try each once |
 | Dragging from Finder into an agent | Dragging from the explorer into Claude had real events | Drag a file in from Finder |
