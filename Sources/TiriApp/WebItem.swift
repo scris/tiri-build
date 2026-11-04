@@ -286,7 +286,10 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
 
     func focus() { webView.window?.makeFirstResponder(webView) }
 
-    func applySettings() { applyDark() }
+    func applySettings() {
+        applyDark()
+        webView.pageZoom = model.webZoom
+    }
 
     func teardown() {
         token = nil

@@ -825,7 +825,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     func applySettings() {
         let settings = model.settings
         let family = settings.terminalFontFamily
-        let size = CGFloat(settings.terminalFontSize)
+        let size = CGFloat(settings.terminalFontSizeZoomed)
         terminalView.font = TerminalTheme.font(family: family, size: size)
         terminalView.changeScrollback(settings.terminalScrollback)
         TerminalTheme.apply(to: terminalView, dark: model.effectiveDark, translucent: settings.terminalTranslucent)

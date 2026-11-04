@@ -1475,7 +1475,7 @@ final class AppModel {
 
     func openFind(replace: Bool = false) {
         guard let target = (peekHasKeyboard ? active.peek?.id : nil) ?? active.focused.active else { return }
-        guard existingController(for: target)?.supportsFind == true else { return }
+        guard let controller = existingController(for: target), controller.supportsFind else { return }
         var state = find ?? FindState(targetItem: target)
         state.targetItem = target
         let selection = controller.selectedTextForFind ?? ""
@@ -1499,12 +1499,16 @@ final class AppModel {
 
     func runFind(backwards: Bool = false, incremental: Bool = false) {
         guard var state = find, let controller = existingController(for: state.targetItem) else { return }
+        state.replacedCount = nil
         if state.query.isEmpty {
             controller.clearFind()
             state.notFound = false
+        } else if incremental {
+            state.notFound = !controller.findIncrementally(state.query, caseSensitive: state.caseSensitive)
         } else {
             state.notFound = !controller.find(state.query, backwards: backwards)
         }
+        Self.note(controller.findCount, in: &state)
         find = state
     }
 

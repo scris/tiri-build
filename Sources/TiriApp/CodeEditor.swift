@@ -744,4 +744,16 @@ extension AppModel {
         return (controller as? MarkdownController)?.sourceIfShowing
     }
 
+    func zoom(by steps: Int) {
+        let range = TiriSettings.zoomRange
+        let next = min(max(settings.zoomLevel + steps, range.lowerBound), range.upperBound)
+        if next != settings.zoomLevel { setSetting("window.zoomLevel", to: .int(next)) }
+    }
+
+    func zoomReset() {
+        if settings.zoomLevel != 0 { setSetting("window.zoomLevel", to: .int(0)) }
+    }
+
+    /// Page zoom that keeps web pages in step with the text size steps.
+    var webZoom: CGFloat { pow(1.08, CGFloat(settings.zoomLevel)) }
 }

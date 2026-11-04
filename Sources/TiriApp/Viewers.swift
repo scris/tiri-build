@@ -158,6 +158,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
 
     private func makeWebView() -> TiriWebView {
         let view = MarkdownWebViews.take()
+        view.pageZoom = model.webZoom
         view.navigationDelegate = self
         view.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         view.onSelectionChange = { [weak self] selection, top in self?.renderedSelectionChanged(selection, top: top) }
@@ -300,7 +301,10 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         if showingSource { source?.focus() } else { webView.window?.makeFirstResponder(webView) }
     }
 
-    func applySettings() { source?.applySettings() }
+    func applySettings() {
+        source?.applySettings()
+        webView.pageZoom = model.webZoom
+    }
 
     /// The source, when that's what's showing.
     var sourceIfShowing: TextController? { showingSource ? source : nil }
@@ -668,8 +672,8 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     func applySettings() {
         let settings = model.settings
-        textView.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSize))
-        ruler.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSize) - 1)
+        textView.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSizeZoomed))
+        ruler.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSizeZoomed) - 1)
         applyWrap()
         ruler.needsDisplay = true
         scheduleHighlight()

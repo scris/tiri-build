@@ -175,8 +175,8 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     func applySettings() {
         let settings = model.settings
-        textView.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSize))
-        gutter.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSize) - 1)
+        textView.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSizeZoomed))
+        gutter.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSizeZoomed) - 1)
         textView.needsDisplay = true
     }
 
