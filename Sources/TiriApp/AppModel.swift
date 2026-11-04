@@ -241,6 +241,7 @@ final class AppModel {
         fileTree.model = self
         remote.startUp()
         enterActiveWorkspace()
+        refreshDeletedFiles()
         // After launch, so the warm web view doesn't count against the launch budget.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { MarkdownWebViews.warmUp() }
     }
@@ -1298,6 +1299,7 @@ final class AppModel {
         collectGarbage()
         syncWatchRoots()
         enterActiveWorkspace()
+        refreshDeletedFiles()
         scheduleSave()
         markActiveItemSeen()
     }
@@ -1539,7 +1541,20 @@ final class AppModel {
         FileWatchHub.shared.setWorkspaceRoots(active.folders)
     }
 
+    /// Open files that aren't there any more. Their tabs stay, showing what they last said, and say so.
+    private(set) var deletedFiles: Set<String> = []
+
+    func refreshDeletedFiles() {
+        guard active.remote == nil else {
+            if !deletedFiles.isEmpty { deletedFiles = [] }
+            return
+        }
+        let gone = Set(active.items.compactMap(\.filePath).filter { !FileManager.default.fileExists(atPath: $0) })
+        if gone != deletedFiles { deletedFiles = gone }
+    }
+
     private func filesChanged(_ paths: [String]) {
+        refreshDeletedFiles()
         languageServers.filesChanged(paths)
         fileTree.filesChanged(paths)
         fileIndex.invalidate()

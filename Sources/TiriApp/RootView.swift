@@ -983,6 +983,7 @@ struct ToastStack: View {
                                 Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                             }
                         }
+                        .frame(width: textWidth(toast), alignment: .leading)
                         if let title = toast.actionTitle {
                             Button(title) {
                                 toast.action?()
@@ -999,15 +1000,19 @@ struct ToastStack: View {
                     }
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
-                    // As wide as what it says, up to a limit, with no room left over after the X.
-                    .frame(maxWidth: 380, alignment: .leading)
-                    .fixedSize(horizontal: true, vertical: false)
                     .glassEffect(.regular, in: .rect(cornerRadius: 14))
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
         }
         .padding(14)
+    }
+
+    /// As wide as what it says, up to a limit, with no room left over after the X.
+    private func textWidth(_ toast: AppToast) -> CGFloat {
+        let title = (toast.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .medium)]).width
+        let detail = ((toast.detail ?? "") as NSString).size(withAttributes: [.font: NSFont.preferredFont(forTextStyle: .caption1)]).width
+        return min(max(title, detail).rounded(.up) + 1, toast.actionTitle == nil ? 300 : 220)
     }
 }
 

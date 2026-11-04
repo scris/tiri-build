@@ -351,6 +351,7 @@ struct OpenItemRow: View {
                 Text(model.title(for: item))
                     .font(.system(size: 12.5))
                     .italic(item.isPreview)
+                    .strikethrough(item.filePath.map(model.deletedFiles.contains) ?? false)
                     .lineLimit(1)
                 if let message = runtime?.message, runtime?.status == .needsInput || runtime?.status == .done {
                     Text(message)

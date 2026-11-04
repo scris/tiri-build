@@ -175,7 +175,9 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         self.itemID = itemID
         self.path = spec.path
         self.model = model
-        self.showingSource = spec.showSource ?? false
+        // There's nothing to read in an empty file, so it's somewhere to type.
+        let isEmpty = format == .markdown && (try? FileManager.default.attributesOfItem(atPath: spec.path))?[.size] as? Int == 0
+        self.showingSource = spec.showSource ?? isEmpty
         self.pendingLine = (spec.line, spec.col)
         super.init()
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.fileChanged() }
@@ -970,7 +972,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     /// Saving what's shown has to give back exactly what's on disk, or it isn't editable: a file
     /// that was cut short or isn't valid UTF-8 would be damaged.
     nonisolated private static func read(path: String) -> (String, Bool) {
-        guard let handle = FileHandle(forReadingAtPath: path) else { return ("", false) }
+        guard let handle = FileHandle(forReadingAtPath: path) else {
+            return (FileManager.default.fileExists(atPath: path) ? "Tiri isn't allowed to read this file. Check its permissions." : "", false)
+        }
         defer { try? handle.close() }
         let data = (try? handle.read(upToCount: maximumBytes)) ?? Data()
         let decoded = String(data: data, encoding: .utf8)

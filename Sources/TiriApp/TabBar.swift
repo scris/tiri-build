@@ -133,6 +133,7 @@ struct TabView: View {
         let _ = model.controllerRevision
         return model.title(for: item)
     }
+    private var isDeleted: Bool { item.filePath.map(model.deletedFiles.contains) ?? false }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -142,6 +143,7 @@ struct TabView: View {
             Text(title)
                 .font(.system(size: 12))
                 .italic(item.isPreview)
+                .strikethrough(isDeleted)
                 .lineLimit(1)
                 .frame(maxWidth: 200, alignment: .leading)
                 .foregroundStyle(isActive ? .primary : .secondary)
@@ -163,6 +165,7 @@ struct TabView: View {
             }
         }
         .contentShape(Rectangle())
+        .help(isDeleted ? "This file has been deleted. Saving puts it back." : "")
         .onHover { hovering = $0 }
         .modifier(ClickOrDrag(item: item.id, title: title) { clickCount in
             model.focusItem(item.id)

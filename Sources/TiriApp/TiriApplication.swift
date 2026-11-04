@@ -31,6 +31,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         AppModel.shared.finishLaunching()
+        // After a crash or a force quit, SwiftUI can start without opening its window. Terminals have
+        // reattached by then, but nothing shows until the Dock icon is clicked, so do that for it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            MainActor.assumeIsolated {
+                guard AppModel.shared.window == nil else { return }
+                let reopen = NSAppleEventDescriptor(eventClass: AEEventClass(kCoreEventClass), eventID: AEEventID(kAEReopenApplication),
+                                                    targetDescriptor: .currentProcess(), returnID: AEReturnID(kAutoGenerateReturnID),
+                                                    transactionID: AETransactionID(kAnyTransactionID))
+                _ = try? reopen.sendEvent(options: [.noReply], timeout: 5)
+            }
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
