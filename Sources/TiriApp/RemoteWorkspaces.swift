@@ -63,11 +63,12 @@ final class RemoteManager {
         for connection in connections.values { connection.tryNow() }
     }
 
-    /// Separate for each Tiri on each Mac, so one never ends another's terminals on the same server.
-    private let machineTag: String = {
-        let identity = TiriPaths.supportDirectory.path + "@" + (Host.current().localizedName ?? "")
+    /// Separate for each Tiri on each Mac, and for each name a server goes by, so none of them
+    /// ever takes for its own, or ends, what belongs to another on the same machine.
+    private func tag(for destination: String) -> String {
+        let identity = TiriPaths.supportDirectory.path + "@" + (Host.current().localizedName ?? "") + "@" + destination
         return SHA256.hash(data: Data(identity.utf8)).prefix(3).map { String(format: "%02x", $0) }.joined()
-    }()
+    }
 
     // MARK: Connections
 
@@ -76,7 +77,7 @@ final class RemoteManager {
         TerminalSessions.prepareDirectory()
         let resources = Bundle.main.resourceURL?.appendingPathComponent("remote").path ?? ""
         let connection = RemoteConnection(destination: destination, controlPath: controlPath(for: destination),
-                                          helperDirectory: resources, askpass: resources + "/tiri-askpass", controlSocket: TiriPaths.socket, machineTag: machineTag)
+                                          helperDirectory: resources, askpass: resources + "/tiri-askpass", controlSocket: TiriPaths.socket, machineTag: tag(for: destination))
         connection.onRelayRequest = { body in
             guard let request = try? JSONDecoder().decode(RemoteRelayMessage.Request.self, from: body) else {
                 return RemoteRelayMessage.Reply(code: 2, errors: "tiri: that wasn't understood.\n").encoded
@@ -229,7 +230,7 @@ final class RemoteManager {
         syncRoots(destination)
         let wanted = forwards.filter { $0.destination == destination }
         let ends = pendingEnds.removeValue(forKey: destination) ?? []
-        let tag = machineTag
+        let tag = tag(for: destination)
         let bridge = model.editorBridge.listener(for: destination)
         let previousPort = bridgePorts[destination]
         let lock = bridgeLock(for: connection, token: bridge?.token)
@@ -330,7 +331,7 @@ final class RemoteManager {
     // MARK: Terminals
 
     func sessionSocket(_ item: ItemID, on connection: RemoteConnection) -> String? {
-        connection.runDirectory.map { $0 + "/" + machineTag + "-" + item + ".sock" }
+        connection.runDirectory.map { $0 + "/" + tag(for: connection.destination) + "-" + item + ".sock" }
     }
 
     /// What runs on the server for a terminal. `attachOnly` comes back to what's there and starts
@@ -354,7 +355,7 @@ final class RemoteManager {
         // A program outlives the connection that brought your SSH agent, so `git push` would find it
         // gone. So it's given a link that never moves, pointed at the live one on each connection.
         if let run = connection.runDirectory {
-            let link = ShellQuote.quote(run + "/" + machineTag + "-agent.sock")
+            let link = ShellQuote.quote(run + "/" + tag(for: connection.destination) + "-agent.sock")
             lines.append("if [ -n \"$SSH_AUTH_SOCK\" ]; then ln -sf \"$SSH_AUTH_SOCK\" \(link) && export SSH_AUTH_SOCK=\(link); fi")
         }
         var program: [String]
@@ -551,11 +552,11 @@ final class RemoteManager {
         }
     }
 
-    @ObservationIgnored private var saidCollision: Set<String> = []
-
     /// This Mac's disk can't hold names that differ only by case, and a server's can. Said once.
     private func noteCaseCollision(_ name: String, holder: String, on destination: String) {
-        guard saidCollision.insert(destination).inserted else { return }
+        let key = "saidCaseCollision.\(destination)"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
         model.showToast(title: "Some files on \(SSHConfigFile.displayName(of: destination)) differ only by case", detail: "This Mac can only show one of each, like \((holder as NSString).lastPathComponent). The terminal sees them all.",
                         symbol: "textformat.size", tint: .secondary)
     }
@@ -675,7 +676,7 @@ final class RemoteManager {
             let text = await Task.detached(priority: .utility) { RemoteManager.readConfig(path, on: connection) }.value
             guard let self, let text, !AgentHooks.isInstalled(tool, in: text) else { return }
             let name = SSHConfigFile.displayName(of: destination)
-            self.model.showToast(title: "Get exact status from \(tool.title) on \(name)?", detail: "Right now Tiri is estimating when it's working or done.",
+            self.model.showToast(title: "Get exact status from \(tool.title)?", detail: "On \(name), Tiri is estimating when it's working or done.",
                                  symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up") { [weak self] in
                 self?.confirmHooks(tool, on: destination)
             }
