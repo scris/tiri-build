@@ -519,8 +519,13 @@ static void run_server(const launch_options *options, int listener) {
     }
 
     if (exit_code < 0) {
+        // The child ending is what interrupts this, if the terminal closed first.
         int status;
-        if (waitpid(child, &status, 0) == child) exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+        pid_t waited;
+        do {
+            waited = waitpid(child, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+        if (waited == child) exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
         else exit_code = 0;
     }
     remove_files(options->socket_path);
@@ -614,15 +619,17 @@ static int relay(int server) {
     // Anything typed before the server has said hello just waits in the terminal for it.
     double accept_input_after = -1;
     int size_sent_after_replay = 0;
+    // A server that's gone has still left its last output and the exit code to read.
+    int can_send = 1;
 
     for (;;) {
         if (size_changed && (accept_input_after >= 0)) {
             size_changed = 0;
             struct winsize size;
-            if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0) {
+            if (can_send && ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0) {
                 unsigned char payload[4] = {(unsigned char)(size.ws_row >> 8), (unsigned char)size.ws_row,
                                             (unsigned char)(size.ws_col >> 8), (unsigned char)size.ws_col};
-                if (send_input(server, 'W', payload, 4) < 0) return 0;
+                if (send_input(server, 'W', payload, 4) < 0) can_send = 0;
             }
         }
         struct pollfd fds[2] = {{server, POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
@@ -635,7 +642,7 @@ static int relay(int server) {
             ssize_t got = read(STDIN_FILENO, keys, sizeof keys);
             if (got <= 0) return 0;  // The view went away. The server and its program carry on.
             int accepting = accept_input_after >= 0 && now_seconds() >= accept_input_after;
-            if (accepting && send_input(server, 'D', keys, (size_t)got) < 0) return 0;
+            if (accepting && can_send && send_input(server, 'D', keys, (size_t)got) < 0) can_send = 0;
         }
         if (fds[0].revents & (POLLIN | POLLHUP)) {
             ssize_t got = read(server, incoming + incoming_count, sizeof incoming - incoming_count);

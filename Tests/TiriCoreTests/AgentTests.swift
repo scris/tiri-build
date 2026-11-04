@@ -16,6 +16,25 @@ import Testing
         #expect(AgentCatalog.identify(commandLine: commandLine, command: nil) == agent)
     }
 
+    // Each agent's real words for an unknown session, from running it with a made-up ID.
+    @Test(arguments: [
+        ("claude --resume abc", "No conversation found with session ID: abc", true),
+        ("claude --continue", "No conversation found to continue", true),
+        ("codex resume abc", "Error: No saved session found with ID abc.", true),
+        ("grok --resume abc", "Error: Failed to restore session from remote: fetching session record: session get failed: 404 Not Found", true),
+        ("/opt/bin/claude --resume abc", "No conversation found with session ID: abc", true),
+        // The conversation may well still be there.
+        ("claude --resume abc", "API Error: Connection error.", false),
+        ("claude --resume abc", "Please run /login", false),
+        ("grok --resume abc", "Error: Failed to restore session from remote: connection refused", false),
+        // Only its own words count, and an agent Tiri doesn't know can't say.
+        ("codex resume abc", "No conversation found", false),
+        ("aider --resume", "No conversation found", false),
+    ])
+    func toldWhenThereIsNothingToResume(command: String, output: String, nothing: Bool) {
+        #expect(AgentCatalog.hasNothingToResume(command: command, output: output) == nothing)
+    }
+
     @Test func recognizesATerminalsCommand() {
         #expect(AgentCatalog.identify(commandLine: [], command: "grok --continue") == .grok)
     }

@@ -859,12 +859,12 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     private var spawnedAt: Double = 0
 
     private func spawn() {
+        spawnedAt = ProcessClock.now()
         if remoteDestination != nil {
             spawnOnServer()
             return
         }
         if TerminalSessions.isAlive(itemID) { replayEndsAt = ProcessClock.now() + 2000 }
-        spawnedAt = ProcessClock.now()
         let backend: TerminalBackend = LocalTerminalBackend()
         let launch = backend.launch(command: launchCommand, cwd: currentDirectory, shell: model.settings.terminalShell,
                                     itemID: itemID, workspaceID: workspaceID, socket: model.socketPath)
@@ -1035,7 +1035,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         return connection.map.remoteText(text)
     }
 
-    func restart() {
+    /// `resuming` tries the same conversation again, for when what stopped it may have passed.
+    func restart(resuming: Bool = false) {
         guard exited else { return }
         model.updateRuntime(itemID) { runtime in
             runtime.status = .idle
@@ -1043,8 +1044,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             runtime.unseen = false
         }
         hookActive = false
-        // A resume that failed ("no conversation found") shouldn't fail again. Restart is a fresh run.
-        launchCommand = spec.command
+        // Otherwise it's a fresh run: a resume that failed shouldn't simply fail again.
+        if !resuming { launchCommand = spec.command }
         reattaching = false
         restartRequested = true
         startingAgain = true
@@ -1269,17 +1270,31 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         sessionUp = false
         if handleEndOverSSH(exitCode: exitCode) { return }
         exited = true
-        // A session that never got a prompt has no conversation to resume, and the agent says so and
-        // quits. That's not worth a dead end after a reboot: start it fresh, which is what Restart does.
-        if !isRemote, launchCommand != nil, launchCommand != spec.command, let exitCode, exitCode != 0, ProcessClock.now() - spawnedAt < 15_000 {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.restart() }
+        // A resume that stops at once either has no conversation to find, or met something that may
+        // pass, like the network or a login. A fresh start would replace the stored session with a new
+        // one, so that's only automatic when the agent itself says there's nothing to lose.
+        if let resume = launchCommand, resume != spec.command, exitCode != 0, ProcessClock.now() - spawnedAt < 15_000 {
+            // Its last words are still on their way through the terminal.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self, self.exited else { return }
+                if AgentCatalog.hasNothingToResume(command: resume, output: self.readText(lines: 30)) {
+                    self.restart()
+                } else {
+                    self.showExit(code: exitCode, resumeFailed: true)
+                }
+            }
             return
         }
+        showExit(code: exitCode, resumeFailed: false)
+    }
+
+    private func showExit(code: Int32?, resumeFailed: Bool) {
         model.updateRuntime(itemID) { runtime in
             runtime.status = .exited
-            runtime.exitCode = exitCode
+            runtime.exitCode = code
         }
-        container.showExitBar(code: exitCode, onRestart: { [weak self] in self?.restart() }, onClose: { [weak self] in
+        container.showExitBar(code: code, resumeFailed: resumeFailed, onRestart: { [weak self] in self?.restart() },
+                              onResume: { [weak self] in self?.restart(resuming: true) }, onClose: { [weak self] in
             guard let self else { return }
             self.model.closeNow(self.itemID)
         })
@@ -1318,14 +1333,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
                 self.remoteRetries = 0
                 self.waitingForConnection = false
                 self.exited = true
-                self.model.updateRuntime(self.itemID) { runtime in
-                    runtime.status = .exited
-                    runtime.exitCode = exitCode
-                }
-                self.container.showExitBar(code: exitCode, onRestart: { [weak self] in self?.restart() }, onClose: { [weak self] in
-                    guard let self else { return }
-                    self.model.closeNow(self.itemID)
-                })
+                self.showExit(code: exitCode, resumeFailed: false)
                 return
             }
             self.model.remote.moveToNextSlot(self.itemID, on: destination)
@@ -1580,9 +1588,9 @@ final class TerminalContainer: NSView {
         needsLayout = true
     }
 
-    func showExitBar(code: Int32?, onRestart: @escaping () -> Void, onClose: @escaping () -> Void) {
+    func showExitBar(code: Int32?, resumeFailed: Bool, onRestart: @escaping () -> Void, onResume: @escaping () -> Void, onClose: @escaping () -> Void) {
         hideExitBar()
-        let bar = TerminalExitBar(code: code, onRestart: onRestart, onClose: onClose)
+        let bar = TerminalExitBar(code: code, resumeFailed: resumeFailed, onRestart: onRestart, onResume: onResume, onClose: onClose)
         addSubview(bar)
         exitBar = bar
         needsLayout = true
@@ -1596,23 +1604,31 @@ final class TerminalContainer: NSView {
 
 final class TerminalExitBar: NSVisualEffectView {
     private let onRestart: () -> Void
+    private let onResume: () -> Void
     private let onClose: () -> Void
 
-    init(code: Int32?, onRestart: @escaping () -> Void, onClose: @escaping () -> Void) {
+    init(code: Int32?, resumeFailed: Bool, onRestart: @escaping () -> Void, onResume: @escaping () -> Void, onClose: @escaping () -> Void) {
         self.onRestart = onRestart
+        self.onResume = onResume
         self.onClose = onClose
         super.init(frame: .zero)
         material = .headerView
         blendingMode = .withinWindow
-        let text = code.map { "Process exited with code \($0)" } ?? "Process exited"
+        let text = resumeFailed ? "Couldn't resume this conversation" : code.map { "Process exited with code \($0)" } ?? "Process exited"
         let label = NSTextField(labelWithString: text)
         label.textColor = .secondaryLabelColor
         label.font = .systemFont(ofSize: 12)
-        let restart = NSButton(title: "Restart", target: self, action: #selector(restartClicked))
+        let restart = NSButton(title: resumeFailed ? "Start Fresh" : "Restart", target: self, action: #selector(restartClicked))
         let close = NSButton(title: "Close", target: self, action: #selector(closeClicked))
         restart.bezelStyle = .accessoryBarAction
         close.bezelStyle = .accessoryBarAction
-        let stack = NSStackView(views: [label, NSView(), restart, close])
+        var buttons: [NSView] = [restart, close]
+        if resumeFailed {
+            let retry = NSButton(title: "Try Again", target: self, action: #selector(resumeClicked))
+            retry.bezelStyle = .accessoryBarAction
+            buttons.insert(retry, at: 0)
+        }
+        let stack = NSStackView(views: [label, NSView()] + buttons)
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.spacing = 8
         addSubview(stack)
@@ -1626,6 +1642,7 @@ final class TerminalExitBar: NSVisualEffectView {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     @objc private func restartClicked() { onRestart() }
+    @objc private func resumeClicked() { onResume() }
     @objc private func closeClicked() { onClose() }
 }
 

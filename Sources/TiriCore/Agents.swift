@@ -97,6 +97,10 @@ public struct AgentProfile: Sendable, Identifiable {
     /// For `tiri hooks <agent>`.
     public var hookExample: String?
 
+    /// What it prints when there really is no conversation to come back to. Anything else that stops
+    /// a resume, like a network or login failure, leaves the conversation worth keeping.
+    public var nothingToResume: [String] = []
+
     public var hookCommand: String { "tiri hook \(id) 2>/dev/null || true" }
 
     /// How to write a file and maybe some of its lines, which count from zero here.
@@ -133,7 +137,7 @@ public enum AgentCatalog {
             hookInstall: .jsonSettings(file: "settings.json"),
             hookEvents: ["SessionStart", "UserPromptSubmit", "PermissionRequest", "PostToolUse", "Notification", "Stop", "StopFailure"],
             parseHook: { AgentHookEvent.parseClaude($0) }, claimsHookPayload: nil, alsoRunsHooksOf: nil,
-            hookExample: AgentGuide.claudeHooks),
+            hookExample: AgentGuide.claudeHooks, nothingToResume: ["No conversation found"]),
         AgentProfile(
             id: "codex", title: "Codex", command: "codex", website: "https://github.com/openai/codex",
             symbol: "chevron.left.forwardslash.chevron.right",
@@ -145,7 +149,7 @@ public enum AgentCatalog {
             configDirectory: ".codex", configDirectoryVariable: "CODEX_HOME",
             hookInstall: .tomlSection(file: "config.toml"), hookEvents: ["PermissionRequest"],
             parseHook: { AgentHookEvent.parseCodex($0) }, claimsHookPayload: nil, alsoRunsHooksOf: nil,
-            hookExample: AgentGuide.codexHooks),
+            hookExample: AgentGuide.codexHooks, nothingToResume: ["No saved session found"]),
         AgentProfile(
             id: "grok", title: "Grok", command: "grok", website: "https://x.ai/cli", symbol: "bolt",
             executableNames: ["grok"], pathFragments: ["/.grok/downloads/grok-", "/.grok/bin/"],
@@ -159,8 +163,18 @@ public enum AgentCatalog {
             parseHook: { AgentHookEvent.parseGrok($0) },
             // Only Grok sends this key, and it runs Claude Code's configured hooks too.
             claimsHookPayload: { $0.range(of: Data("\"hookEventName\"".utf8)) != nil },
-            alsoRunsHooksOf: "claude", hookExample: AgentGuide.grokHooks),
+            alsoRunsHooksOf: "claude", hookExample: AgentGuide.grokHooks,
+            // It looks on a server too, so a network failure here must not look like this.
+            nothingToResume: ["session get failed: 404"]),
     ]
+
+    /// Whether a resume that just failed said there's nothing to come back to. An agent with no entry
+    /// here can't say, so it's never assumed.
+    public static func hasNothingToResume(command: String, output: String) -> Bool {
+        guard let name = command.split(separator: " ").first.map({ ($0 as NSString).lastPathComponent }),
+              let profile = profile(executable: name) else { return false }
+        return profile.nothingToResume.contains { output.contains($0) }
+    }
 
     public static func profile(id: String) -> AgentProfile? {
         all.first { $0.id == id }
