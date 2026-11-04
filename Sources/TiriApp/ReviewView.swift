@@ -193,9 +193,10 @@ extension AppModel {
     }
 
     /// A diff's rows are found by their line in the file, or for removed rows, by their own text.
-    func reviewMarkers(for path: String, rows: [DiffLine]) -> [Int: [ReviewComment]] {
+    /// A comment on one commit's diff stays there, since another's line 12 is a different line.
+    func reviewMarkers(for path: String, rows: [DiffLine], commit: String?) -> [Int: [ReviewComment]] {
         var markers: [Int: [ReviewComment]] = [:]
-        for comment in reviewComments(on: path) {
+        for comment in reviewComments(on: path) where comment.commit == commit {
             let row: Int?
             if let first = comment.firstLine {
                 row = rows.firstIndex { $0.newLine == first }
@@ -220,8 +221,12 @@ extension AppModel {
             if case .lines(let range) = ReviewLocator.place(of: comment, in: text) { return range.lowerBound }
             return nil
         }
+        if let commit = comment.commit {
+            peekDiff(DiffSpec(path: comment.path, commit: commit), takeFocus: true)
+            return
+        }
         if comment.quoteIsDiff, hasChanges(comment.path) {
-            peekDiff(path: comment.path, takeFocus: true)
+            peekDiff(DiffSpec(path: comment.path), takeFocus: true)
             return
         }
         open(path: comment.path, line: line, intent: .peek(takeFocus: true))

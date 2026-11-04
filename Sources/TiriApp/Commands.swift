@@ -110,6 +110,11 @@ extension AppModel {
             AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
             AppCommand(id: "changesSinceCommit", title: "Changes: Since Last Commit", category: "View") { $0.setChangesScope(.sinceCommit) },
             AppCommand(id: "changesLatestTurn", title: "Changes: Latest Turn", category: "View") { $0.setChangesScope(.latestTurn) },
+            AppCommand(id: "nextChange", title: "Go to Next Change", category: "Go") { $0.goToChange(forward: true) },
+            AppCommand(id: "previousChange", title: "Go to Previous Change", category: "Go") { $0.goToChange(forward: false) },
+            AppCommand(id: "toggleDiffSideBySide", title: "Diff: Side by Side", category: "View") { model in
+                _ = model.setSetting("diff.sideBySide", to: .bool(!model.settings.diffSideBySide))
+            },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 model.frontWebController?.reload()
             },
@@ -685,9 +690,9 @@ enum ControlHandler {
                 turn = found.id
             }
             if request.args["mode"]?.stringValue == "tab" {
-                model.openDiff(path: path, preview: false, turn: turn)
+                model.openDiff(DiffSpec(path: path, turn: turn), preview: false)
             } else {
-                model.peekDiff(path: path, takeFocus: false, turn: turn)
+                model.peekDiff(DiffSpec(path: path, turn: turn), takeFocus: false)
             }
             return .object([:])
 

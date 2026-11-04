@@ -170,6 +170,20 @@ public final class TurnSnapshots: Sendable {
         return DiffParser.parse(String(decoding: result.output, as: UTF8.self))
     }
 
+    /// A file before and after a turn, as bytes. For what can't be compared line by line.
+    public func versions(path: String, in turn: AgentTurn) -> FileVersions? {
+        let real = Git.real(path)
+        guard let root = turn.startTrees.keys.first(where: { real.hasPrefix($0 + "/") }), let start = turn.startTrees[root],
+              let end = turn.endTrees[root] ?? (turn.isOpen ? snapshot(root: root) : nil),
+              let environment = environment(root: root, store: storeDirectory(for: root)) else { return nil }
+        let relative = String(real.dropFirst(root.count + 1))
+        func blob(_ tree: String) -> Data? {
+            guard let result = Git.runGit(["show", tree + ":" + relative], in: root, environment: environment), result.status == 0 else { return nil }
+            return result.output
+        }
+        return FileVersions(old: blob(start), new: blob(end))
+    }
+
     /// What a turn changed so far, or in all. An open turn compares against the files as they are now.
     public func changes(in turn: AgentTurn, folders: [String]) -> [ChangedFile] {
         var found: [ChangedFile] = []

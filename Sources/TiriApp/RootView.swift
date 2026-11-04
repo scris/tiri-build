@@ -624,6 +624,15 @@ struct FileActions: View {
                 .font(.caption.monospacedDigit())
             }
             Button {
+                diff.toggleLayout()
+            } label: {
+                Image(systemName: "square.split.2x1")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(diff.isSideBySide ? Color.accentColor : .secondary)
+            .disabled(diff.isTooNarrowForTwoColumns)
+            .help(diff.isTooNarrowForTwoColumns ? "There isn't room here for side by side" : (diff.isSideBySide ? "Show in one column" : "Show side by side"))
+            Button {
                 model.toggleChangesForFront()
             } label: {
                 Label("Open File", systemImage: "doc.text").labelStyle(.titleAndIcon)

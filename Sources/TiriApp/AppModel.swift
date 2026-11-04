@@ -440,7 +440,7 @@ final class AppModel {
         case .settings:
             controller = SettingsController(itemID: id, model: self)
         case .diff(let spec):
-            controller = DiffController(itemID: id, path: spec.path, turn: spec.turn, model: self)
+            controller = DiffController(itemID: id, spec: spec, model: self)
         case .web(let spec):
             guard let url = URL(string: spec.url) else { return nil }
             controller = WebController(itemID: id, url: url, forceDark: spec.forceDark, isFile: false, model: self)
@@ -568,6 +568,7 @@ final class AppModel {
         case "webReload": return frontWebController != nil
         case "goBack": return canGoBack
         case "goToDefinition", "findReferences", "showHover": return canAskAboutSymbols()
+        case "nextChange", "previousChange": return canGoToChange
         default: return true
         }
     }
@@ -1842,14 +1843,14 @@ final class AppModel {
         }
     }
 
-    func openDiff(path: String, preview: Bool, turn: String? = nil) {
-        updateActive { $0.dismissPeek(); $0.openDiff(path: path, preview: preview, turn: turn) }
+    func openDiff(_ spec: DiffSpec, preview: Bool) {
+        updateActive { $0.dismissPeek(); $0.openDiff(spec, preview: preview) }
         requestFocus()
     }
 
     /// Takes the Peek's place. With `takeFocus`, a person asked. Without it, an agent is showing something.
-    func peekDiff(path: String, takeFocus: Bool, turn: String? = nil) {
-        updateActive { $0.peekDiff(path: path, turn: turn) }
+    func peekDiff(_ spec: DiffSpec, takeFocus: Bool) {
+        updateActive { $0.peekDiff(spec) }
         peekHasKeyboard = takeFocus
         requestFocus()
     }
@@ -1860,7 +1861,7 @@ final class AppModel {
         let isPeek = active.peek?.id == item.id
         switch item.content {
         case .file(let spec):
-            if isPeek { peekDiff(path: spec.path, takeFocus: true) } else { openDiff(path: spec.path, preview: false) }
+            if isPeek { peekDiff(DiffSpec(path: spec.path), takeFocus: true) } else { openDiff(DiffSpec(path: spec.path), preview: false) }
         case .diff(let spec):
             if isPeek {
                 updateActive { $0.peekFile(path: spec.path, revealExisting: false) }

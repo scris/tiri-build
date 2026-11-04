@@ -1244,15 +1244,25 @@ nonisolated enum ImageDecoding {
     private static let maximumPixels = 6000
 
     static func decode(path: String, scale: CGFloat) -> Decoded? {
-        let url = URL(fileURLWithPath: path) as CFURL
-        guard let source = CGImageSourceCreateWithURL(url, nil), CGImageSourceGetCount(source) > 0 else { return nil }
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }
+        return decode(source: source, scale: scale) { FileManager.default.contents(atPath: path) }
+    }
+
+    /// An image that isn't a file, like an old version from git.
+    static func decode(data: Data, scale: CGFloat) -> Decoded? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return decode(source: source, scale: scale) { data }
+    }
+
+    private static func decode(source: CGImageSource, scale: CGFloat, contents: () -> Data?) -> Decoded? {
+        guard CGImageSourceGetCount(source) > 0 else { return nil }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
         var width = (properties[kCGImagePropertyPixelWidth] as? Int) ?? 0
         var height = (properties[kCGImagePropertyPixelHeight] as? Int) ?? 0
         // Sideways phone photos report their unrotated size.
         if let orientation = properties[kCGImagePropertyOrientation] as? Int, orientation >= 5 { swap(&width, &height) }
         let size = NSSize(width: CGFloat(width) / scale, height: CGFloat(height) / scale)
-        if CGImageSourceGetCount(source) > 1, let data = FileManager.default.contents(atPath: path) {
+        if CGImageSourceGetCount(source) > 1, let data = contents() {
             let first = CGImageSourceCreateImageAtIndex(source, 0, nil)
             return Decoded(cgImage: nil, animatedData: data, size: size, darkOnClear: first.map(ClearArt.isDarkOnClear) ?? false)
         }

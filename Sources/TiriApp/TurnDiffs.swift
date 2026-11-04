@@ -92,6 +92,11 @@ extension AppModel {
         changesScope == .sinceCommit ? changes : turnChanges
     }
 
+    /// What a diff opened from the list should show.
+    func diffSpecForScope(path: String) -> DiffSpec {
+        DiffSpec(path: path, turn: scopedTurn?.id)
+    }
+
     func setChangesScope(_ scope: ChangesScope) {
         changesScope = scope
         turnChanges = []
@@ -116,6 +121,19 @@ extension AppModel {
                 if self.scopedTurn?.id == turn.id, self.turnChanges != found { self.turnChanges = found }
             }
         }
+    }
+
+    /// Whether what's in front has changes to go through.
+    var canGoToChange: Bool {
+        guard let item = active.peek ?? active.activeItem else { return false }
+        if case .diff = item.content { return true }
+        return false
+    }
+
+    /// F7 and ⇧F7.
+    func goToChange(forward: Bool) {
+        guard let item = active.peek ?? active.activeItem else { return }
+        (existingController(for: item.id) as? DiffController)?.goToChange(forward: forward)
     }
 
     /// Turns from this workspace worth offering, newest first, a few for each terminal.

@@ -14,11 +14,13 @@ public struct ReviewComment: Codable, Hashable, Identifiable, Sendable {
     /// PDF's text. It's what the agent reads.
     public var quote: String?
     public var quoteIsDiff: Bool
+    /// The commit whose diff it's on, by its full hash, if it's on one.
+    public var commit: String?
     public var text: String
     public var created: Date
 
     public init(id: String = TiriID.make("c"), path: String, firstLine: Int? = nil, lastLine: Int? = nil,
-                excerpt: String? = nil, quote: String? = nil, quoteIsDiff: Bool = false, text: String, created: Date = Date()) {
+                excerpt: String? = nil, quote: String? = nil, quoteIsDiff: Bool = false, commit: String? = nil, text: String, created: Date = Date()) {
         self.id = id
         self.path = path
         self.firstLine = firstLine
@@ -26,6 +28,7 @@ public struct ReviewComment: Codable, Hashable, Identifiable, Sendable {
         self.excerpt = excerpt
         self.quote = quote
         self.quoteIsDiff = quoteIsDiff
+        self.commit = commit
         self.text = text
         self.created = created
     }
@@ -43,20 +46,22 @@ public struct ReviewAnchor: Equatable, Sendable {
     public var excerpt: String?
     public var quote: String?
     public var quoteIsDiff: Bool
+    public var commit: String?
 
     public init(path: String, firstLine: Int? = nil, lastLine: Int? = nil, excerpt: String? = nil,
-                quote: String? = nil, quoteIsDiff: Bool = false) {
+                quote: String? = nil, quoteIsDiff: Bool = false, commit: String? = nil) {
         self.path = path
         self.firstLine = firstLine
         self.lastLine = lastLine ?? firstLine
         self.excerpt = excerpt
         self.quote = quote
         self.quoteIsDiff = quoteIsDiff
+        self.commit = commit
     }
 
     public func comment(text: String) -> ReviewComment {
         ReviewComment(path: path, firstLine: firstLine, lastLine: lastLine, excerpt: excerpt, quote: quote,
-                      quoteIsDiff: quoteIsDiff, text: text)
+                      quoteIsDiff: quoteIsDiff, commit: commit, text: text)
     }
 
     public var description: String {
@@ -126,6 +131,7 @@ public enum ReviewMessage {
             case .wholeFile:
                 break
             }
+            if let commit = comment.commit { header += " (in commit \(commit.prefix(7)))" }
             var section = [header]
             if let quoted = comment.quote ?? comment.excerpt {
                 let language = comment.quoteIsDiff ? "diff" : (comment.quote == nil ? (comment.path as NSString).pathExtension : "")
