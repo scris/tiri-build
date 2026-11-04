@@ -27,6 +27,25 @@ public enum ShellLookup {
         return names
     }
 
+    /// Where each name is, for the ones the shell can find as a program. An alias isn't one.
+    public static func locations(names: [String], shell: String, environment: [String: String] = ProcessInfo.processInfo.environment,
+                                 timeout: TimeInterval = 8) async -> [String: String]? {
+        let script = names.filter(isPlainName)
+            .map { "command -v \($0) 2>/dev/null | sed 's|^|\(marker)\($0)=|'" }
+            .joined(separator: "; ")
+        guard let text = await output(of: script, shell: shell, environment: environment, timeout: timeout) else { return nil }
+        return locations(in: text)
+    }
+
+    static func locations(in text: String) -> [String: String] {
+        var found: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) where line.hasPrefix(marker) {
+            let parts = line.dropFirst(marker.count).split(separator: "=", maxSplits: 1)
+            if parts.count == 2, parts[1].hasPrefix("/") { found[String(parts[0])] = String(parts[1]) }
+        }
+        return found
+    }
+
     /// Nil if the shell didn't answer in time. Slow or broken shell setup shouldn't look like a
     /// missing agent. Output goes to a file, because a daemon started by the shell's setup can
     /// hold a pipe open long after the shell has gone.

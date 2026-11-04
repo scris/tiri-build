@@ -21,16 +21,21 @@ struct StatusBar: View {
     var body: some View {
         VStack(spacing: 0) {
             Divider()
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 18) {
-                    ForEach(model.repositories) { repository in
-                        RepositoryStatusItem(repository: repository, showsName: model.repositories.count > 1)
+            HStack(spacing: 0) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 18) {
+                        ForEach(model.repositories) { repository in
+                            RepositoryStatusItem(repository: repository, showsName: model.repositories.count > 1)
+                        }
                     }
+                    .padding(.horizontal, 16)
+                    .frame(maxHeight: .infinity)
                 }
-                .padding(.horizontal, 16)
-                .frame(maxHeight: .infinity)
+                .scrollBounceBehavior(.basedOnSize)
+                LanguageStatusItem()
+                    .fixedSize()
+                    .padding(.trailing, 16)
             }
-            .scrollBounceBehavior(.basedOnSize)
             .frame(height: 25)
         }
     }

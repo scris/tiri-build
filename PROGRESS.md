@@ -25,6 +25,9 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | Clicking a native notification | Needs the system permission prompt answered. In-app toasts and badges are verified | Allow notifications, then run `tiri notify done --item <id>` in a terminal in another workspace |
 | Codex hooks, and a Codex turn | Its composer is tested with lines and an image, unsent. Hook payloads are tested with documented-format JSON | Settings, Agent Status, then run a session |
 | A real ⌘-click and ⌘-hover on a name in code | Unfocused windows don't take clicks. Followed through `tiri follow` and F12, which run the same search, but not the hit test under the mouse | Hold ⌘ over a name in a file, then click |
+| rust-analyzer, gopls, pyright, typescript-language-server, ruby-lsp and lua-language-server | clangd and sourcekit-lsp are tested for real: diagnostics, definition, references, hover, an edit on disk, and stopping when idle. On this Mac rust-analyzer is a rustup shim for a component that isn't installed, which did prove that case is reported. The others aren't installed. The protocol they share is the same, but each has its own habits | Open a file in each language, and press F12 on a name |
+| Claude Code asking for diagnostics by itself | The answer is tested through the real WebSocket with a token, the way Claude Code connects. Not watched during a real edit, which needs a real prompt | Ask Claude to make an edit that breaks something, with the file open in Tiri |
+| Per-turn diffs in a real session | Tested with real hook payloads through the real CLI, and real edits on disk. Not during a real agent turn, which needs a real prompt | Choose Latest Turn in Changes, then send your agent a prompt |
 | Seeing the folder panel, and a real ⌘-click on a path | Tested without taking your screen: the panel through accessibility, and the click through `tiri follow`, which runs the same code. An unfocused window doesn't draw the panel or take clicks | Open Tiri, press +, choose Claude Code; then ⌘-click a path |
 | Ask Claude Code against the real agent | Tested with a stand-in command, to avoid a real session on your account | Press Ask Claude Code on the Settings tab |
 | Pressing the agent buttons on the empty screen, and agents appearing after you install one | Buttons don't take clicks in an unfocused window, so tested without taking your screen through the palette command, which runs the same code. Coming back to the app needs real focus | New workspace, press Claude Code, choose a folder |
@@ -46,6 +49,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Agent input:** selections reach Claude Code through its editor protocol. ⌘L, paste, drag and a picker add lines, files and images to Claude Code or Codex.
 - **Review comments:** comment on lines of any file or diff, keep them in the sidebar across a relaunch, and send them to one agent as one message, unsent. They follow lines an agent moves. `tiri review` for agents.
 - **Go to definition:** ⌘-click or F12 in a file or diff floats the definition as a Peek, with Back. ⇧F12 finds uses. Found by searching the workspace when there's no language server.
+- **Language servers:** finds the servers on this Mac and starts them when a file has been looked at for a moment. Hover, definition, references and diagnostics. Diagnostics reach Claude through `getDiagnostics`, any agent through `tiri diagnostics`, and diffs for the lines they added.
 - **Changes:** a sidebar section and diff items in the main window, live, in tabs and Peeks, with `tiri changes` and `tiri diff`. Read-only: no staging or committing.
 - **Per-turn diffs:** snapshots at the start and end of each agent turn, kept outside the repository, so Changes can show what one turn did. `tiri turns` for agents.
 - **Fetch, pull and push:** a bar along the bottom of the window with each repository's branch, uncommitted marker and commits to pull and push, plus Fetch, Pull (fast-forward only), Push (asks first) and Publish, and `tiri git`. No merging, no force push, no automatic fetch.
@@ -70,6 +74,8 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 ## Performance (spec §9)
 
 Measured on this Mac (M-series, macOS 27), release build.
+
+A language server isn't counted below, because it's optional and only runs once you've looked at a file for a moment. sourcekit-lsp on a one-file package took 35 MB. A large TypeScript or Rust project's server can take gigabytes, which is why they stop after 10 minutes unused.
 
 | Budget | Target | Measured |
 |---|---|---|
@@ -117,3 +123,4 @@ Open times run from the request until the content is showing, except for Office 
 3. Compact folders in the explorer, and multi-line link context.
 4. Staging and committing from the changes view, if reviewing there makes it wanted.
 5. An MCP wrapper around the control API, now that the CLI is stable.
+6. Completion on request, from the language server, if real use shows people want it. Snippets and AI ghost text are decided against.

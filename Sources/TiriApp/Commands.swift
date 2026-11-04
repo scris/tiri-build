@@ -94,6 +94,7 @@ extension AppModel {
             AppCommand(id: "foldOpenItems", title: "Fold or Unfold Open Items", category: "View") { _ in SidebarSection.items.toggle() },
             AppCommand(id: "goToDefinition", title: "Go to Definition", category: "Go") { $0.goToDefinition() },
             AppCommand(id: "findReferences", title: "Find References", category: "Go") { $0.findReferences() },
+            AppCommand(id: "showHover", title: "Show What This Name Is", category: "Go") { $0.showHover() },
             AppCommand(id: "goBack", title: "Go Back", category: "Go") { $0.goBack() },
             AppCommand(id: "searchInFiles", title: "Search in Files", category: "Go") { $0.openSearch() },
             AppCommand(id: "gitFetch", title: "Git: Fetch", category: "Git") { model in
@@ -177,6 +178,13 @@ enum ControlHandler {
     static func handle(_ request: ControlRequest) async -> ControlResponse {
         let touched = paths(in: request)
         if !touched.isEmpty { _ = await FolderAccess.deniedPaths(touched) }
+        // A language server may need a while to look.
+        if request.cmd == "diagnostics" {
+            return await diagnostics(request)
+        }
+        if request.cmd == "languages" {
+            await AppModel.shared.languageServers.waitForLocations()
+        }
         // Looking at a turn can mean snapshotting the files. The app keeps responding while it does.
         if request.cmd == "changes", let wanted = request.args["turn"]?.stringValue {
             let (turn, folders, snapshots) = await MainActor.run { () -> (AgentTurn?, [String], TurnSnapshots) in
@@ -210,6 +218,33 @@ enum ControlHandler {
                 return ControlResponse.failure(id: request.id, "\(error)")
             }
         }
+    }
+
+    private static func diagnostics(_ request: ControlRequest) async -> ControlResponse {
+        let model = AppModel.shared
+        var paths = request.args["paths"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        if paths.isEmpty {
+            let folders = model.active.folders
+            let changes = await Task.detached(priority: .userInitiated) { Git.changesAcross(folders) }.value
+            paths = changes.filter { $0.status != .deleted }.map(\.path)
+        }
+        var problems: [JSONValue] = []
+        var uncovered: [String] = []
+        var checked = 0
+        for path in paths where LanguageServerCatalog.definition(for: path) != nil {
+            guard let found = await model.languageServers.diagnostics(for: path, waiting: 20) else {
+                uncovered.append(path)
+                continue
+            }
+            checked += 1
+            problems += found.sorted { ($0.severity, $0.line) < ($1.severity, $1.line) }.map { problem in
+                .object(["path": .string(path), "line": .int(problem.line + 1), "column": .int(problem.character + 1),
+                         "severity": .string(problem.severity.word), "message": .string(problem.message),
+                         "text": .string(problem.printed(path: path))])
+            }
+        }
+        return ControlResponse.success(id: request.id, .object(["problems": .array(problems), "checked": .int(checked),
+                                                                "uncovered": .array(uncovered.map(JSONValue.string))]))
     }
 
     struct ControlFailure: Error {
@@ -583,6 +618,27 @@ enum ControlHandler {
                                                    "ahead": .int(repository.ahead), "behind": .int(repository.behind),
                                                    "dirty": .bool(repository.isDirty)]
                 if let upstream = repository.upstream { object["upstream"] = .string(upstream) }
+                return .object(object)
+            })
+
+        case "languages":
+            let roots = model.active.folders.map(Git.real)
+            return .array(LanguageServerCatalog.all.map { definition in
+                let hub = model.languageServers
+                var object: [String: JSONValue] = ["id": .string(definition.id), "language": .string(definition.language), "install": .string(definition.installHint)]
+                switch hub.availability(of: definition, roots: roots) {
+                case .looking: object["state"] = "looking"
+                case .missing: object["state"] = "not installed"
+                case .needsTrust(let path):
+                    object["state"] = "only in this project"
+                    object["path"] = .string(path)
+                case .wontStart(let path):
+                    object["state"] = "won't start"
+                    object["path"] = .string(path)
+                case .found(let path):
+                    object["state"] = hub.isRunning(definition) ? "running" : (hub.isStarting(definition) ? "starting" : "found")
+                    object["path"] = .string(path)
+                }
                 return .object(object)
             })
 

@@ -10,6 +10,7 @@ import WebKit
 final class EditorBridge {
     private unowned let model: AppModel
     private var listener: NWListener?
+    private var portAttempts = 0
     private var connections: [ObjectIdentifier: Client] = [:]
     private var pendingSelection: DispatchWorkItem?
     private(set) var port: UInt16 = 0
@@ -79,9 +80,31 @@ final class EditorBridge {
         listener.newConnectionHandler = { [weak self] connection in
             MainActor.assumeIsolated { self?.accept(connection) }
         }
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
+            MainActor.assumeIsolated {
+                guard case .failed(let error) = state, let self, self.listener === listener else { return }
+                NSLog("Tiri's editor bridge couldn't use port \(port): \(error)")
+                self.listenOnAnotherPort(after: port)
+            }
+        }
         listener.start(queue: .main)
         self.listener = listener
         return true
+    }
+
+    /// The port the last run used can be taken by now, and only trying it can tell. That's found
+    /// out after starting, and Claude can't find Tiri until the lock file names one that works.
+    private func listenOnAnotherPort(after failed: UInt16) {
+        listener?.cancel()
+        listener = nil
+        if let lockURL { try? FileManager.default.removeItem(at: lockURL) }
+        lockURL = nil
+        portAttempts += 1
+        guard portAttempts < 8 else { return }
+        let candidate = UInt16.random(in: 10_000...65_000)
+        guard listen(on: candidate) else { return }
+        port = candidate
+        writeLock()
     }
 
     private func accept(_ connection: NWConnection) {
@@ -124,6 +147,7 @@ final class EditorBridge {
     private var host: EditorProtocol.Host {
         EditorProtocol.Host(
             selection: { [weak self] in self?.latestSelection },
+            diagnostics: { [weak self] uri in self?.diagnostics(uri: uri) ?? [] },
             openFiles: { [weak self] in
                 guard let model = self?.model else { return [] }
                 let front = model.active.activeItem?.filePath
@@ -132,6 +156,15 @@ final class EditorBridge {
             folders: { [weak self] in self?.model.active.folders ?? [] },
             isDirty: { [weak self] path in self?.model.fileIsDirty(path) ?? false },
             openFile: { [weak self] path in _ = self?.model.open(path: path, intent: .peek(takeFocus: false)) })
+    }
+
+    /// Claude can ask around each edit, and an edit shouldn't wait for a server to start. It gets
+    /// what's known, and asking gets the server going for next time.
+    private func diagnostics(uri: String?) -> [(path: String, diagnostics: [LSPDiagnostic])] {
+        let hub = model.languageServers
+        guard let uri, let path = LSP.path(from: uri) else { return hub.allKnownDiagnostics }
+        hub.requestDiagnosticsSoon(for: path)
+        return [(path, hub.knownDiagnostics(for: path))]
     }
 
     private func send(_ data: Data, to client: Client) {
@@ -265,7 +298,7 @@ extension AppModel {
         addFilesToAgent([spec.path])
     }
 
-    private func addReference(_ reference: AgentSelection) {
+    func addReference(_ reference: AgentSelection) {
         withAgent(asking: "Which session should get \(reference.shortDescription)?") { [weak self] terminal, agent in
             self?.deliver(reference, to: terminal, agent: agent)
         }

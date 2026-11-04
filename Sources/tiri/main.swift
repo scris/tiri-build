@@ -112,6 +112,19 @@ case "changes":
     for entry in response.result?.arrayValue ?? [] {
         print([cell(entry["status"]), cell(entry["path"])].joined(separator: "\t"))
     }
+case "diagnostics":
+    for entry in response.result?["problems"]?.arrayValue ?? [] {
+        print(cell(entry["text"]))
+    }
+    let checked = response.result?["checked"]?.intValue ?? 0
+    let uncovered = response.result?["uncovered"]?.arrayValue?.compactMap(\.stringValue) ?? []
+    let count = response.result?["problems"]?.arrayValue?.count ?? 0
+    print("\(count) \(count == 1 ? "problem" : "problems") in \(checked) \(checked == 1 ? "file" : "files").")
+    if !uncovered.isEmpty { print("No language server answered for: \(uncovered.joined(separator: ", "))") }
+case "languages":
+    for entry in response.result?.arrayValue ?? [] {
+        print([cell(entry["language"]), cell(entry["state"]), cell(entry["path"])].joined(separator: "\t"))
+    }
 case "turns":
     for entry in response.result?.arrayValue ?? [] {
         print([cell(entry["id"]), cell(entry["state"]), cell(entry["title"]), cell(entry["prompt"])].joined(separator: "\t"))

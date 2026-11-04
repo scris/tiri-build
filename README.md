@@ -61,13 +61,25 @@ Right-click a tab and choose **Move to New Window** to put a terminal, file or p
 
 ## Quick edits
 
-Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes the file while you're editing, your text stays on screen and Tiri tells you, so nothing is overwritten without you choosing. Editing a Peek makes it a tab. This is for quick fixes, and it's still not a full editor: there's no autocomplete or language server.
+Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes the file while you're editing, your text stays on screen and Tiri tells you, so nothing is overwritten without you choosing. Editing a Peek makes it a tab. This is for quick fixes, and it's still not a full editor: there's no autocomplete.
 
 ## Follow a name
 
 ⌘-click a name in a file or a diff, or press F12, to see where it's defined. Holding ⌘ underlines what you can follow. It floats as a Peek, and **Back** (⌃-) returns you to where you were, through as many jumps as you made. ⇧F12 finds everywhere it's used.
 
 With no language server for that file, Tiri searches the workspace, the same way it does for a path. One match opens, several let you choose, and none shows a toast with a way to search. This is a good guess rather than a compiler's answer, and it doesn't need any setup.
+
+## Language servers
+
+Tiri uses the language servers already on your Mac, for TypeScript and JavaScript, Python, Rust, Go, Swift, C and its relatives, Ruby and Lua. None are bundled and there's nothing to configure. Settings shows which it found, and for one it didn't, offers to ask your agent to install it. This is for reading and reviewing: there's no autocomplete, snippets or AI ghost text, and a file in Tiri stays a quick place to fix something.
+
+- ⌘-click, F12 and ⇧F12 ask the server first, and search if it has no answer yet.
+- Hold ⌘ over a name for a moment, or press ⌘K ⌘I, to see what it is.
+- Errors and warnings are underlined, with a dot beside the line, and counted in the bar along the bottom.
+- A diff shows only the errors on lines it added, with **Quote in Agent** to hand them over.
+- Claude Code gets them through its editor protocol, so it can see what its own edit broke. Any agent can run `tiri diagnostics`, which checks the files changed since the last commit.
+
+A server starts once you've looked at one of its files for a moment, and stops after 10 minutes unused. They can use a lot of memory, and that's on top of Tiri's own. Some servers run a project's build scripts as they read it, the same as building it would. A server that's inside the project itself, like one in `node_modules/.bin`, is that project's code, so Tiri asks once before running it, and only when you've just asked for something it would answer. Turn all of this off in Settings, under Code.
 
 ## The sidebar
 

@@ -93,14 +93,17 @@ public enum AgentReference {
 public enum EditorProtocol {
     public struct Host {
         public var selection: () -> EditorSelection?
+        /// What's wrong, by path. Given a file's URI, for that file. This has to answer at once.
+        public var diagnostics: (String?) -> [(path: String, diagnostics: [LSPDiagnostic])] = { _ in [] }
         public var openFiles: () -> [(path: String, isActive: Bool)]
         public var folders: () -> [String]
         public var isDirty: (String) -> Bool
         public var openFile: (String) -> Void
 
-        public init(selection: @escaping () -> EditorSelection?, openFiles: @escaping () -> [(path: String, isActive: Bool)],
+        public init(selection: @escaping () -> EditorSelection?, diagnostics: @escaping (String?) -> [(path: String, diagnostics: [LSPDiagnostic])] = { _ in [] }, openFiles: @escaping () -> [(path: String, isActive: Bool)],
                     folders: @escaping () -> [String], isDirty: @escaping (String) -> Bool, openFile: @escaping (String) -> Void) {
             self.selection = selection
+            self.diagnostics = diagnostics
             self.openFiles = openFiles
             self.folders = folders
             self.isDirty = isDirty
@@ -161,7 +164,7 @@ public enum EditorProtocol {
         ("getLatestSelection", "The most recent selection", []),
         ("getOpenEditors", "The files open in Tiri", []),
         ("getWorkspaceFolders", "The workspace's folders", []),
-        ("getDiagnostics", "Diagnostics. Tiri has none", []),
+        ("getDiagnostics", "Errors and warnings from language servers", []),
         ("checkDocumentDirty", "Whether a file has unsaved changes", ["filePath"]),
         ("saveDocument", "Save a file", ["filePath"]),
         ("close_tab", "Close a tab", ["tab_name"]),
@@ -229,7 +232,18 @@ public enum EditorProtocol {
                              "uri": .string(URL(fileURLWithPath: folder).absoluteString), "path": .string(folder)])
                 })])))
             case "getDiagnostics":
-                return result(text("[]"))
+                let found = host.diagnostics(arguments?["uri"]?.stringValue)
+                return result(json(.array(found.map { file in
+                    .object(["uri": .string(LSP.uri(for: file.path)), "diagnostics": .array(file.diagnostics.map { diagnostic in
+                        var object: [String: JSONValue] = [
+                            "message": .string(diagnostic.message), "severity": .string(diagnostic.severity.title),
+                            "range": .object(["start": LSP.position(line: diagnostic.line, character: diagnostic.character),
+                                              "end": LSP.position(line: diagnostic.endLine, character: diagnostic.endCharacter)]),
+                        ]
+                        if let source = diagnostic.source { object["source"] = .string(source) }
+                        return .object(object)
+                    })])
+                })))
             case "checkDocumentDirty":
                 return result(json(.object(["success": true, "filePath": .string(path), "isDirty": .bool(host.isDirty(path)), "isUntitled": false])))
             case "saveDocument":

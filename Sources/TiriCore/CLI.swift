@@ -114,6 +114,17 @@ public enum CLIParser {
             guard args.isEmpty else { throw UsageError("usage: tiri turns") }
             return request("turns")
 
+        case "diagnostics":
+            var options = Options(args)
+            var paths: [JSONValue] = []
+            while let raw = options.positional() { paths.append(.string(absolute(raw, cwd: environment.cwd))) }
+            try options.finish()
+            return request("diagnostics", paths.isEmpty ? [:] : ["paths": .array(paths)])
+
+        case "languages":
+            guard args.isEmpty else { throw UsageError("usage: tiri languages") }
+            return request("languages")
+
         case "git":
             guard args.isEmpty else { throw UsageError("usage: tiri git") }
             return request("git")
@@ -407,6 +418,8 @@ public enum CLIParser {
       tiri diff <path> [--tab] [--turn <id|latest>]   (what changed in one file; floats as a Peek)
       tiri review [add <path>[:line[-line]] <text> | remove <id> | clear | send [--to <item-id>]]
                                    (comments waiting to go to an agent, all at once)
+      tiri diagnostics [<path> ...]   (errors and warnings; without paths, in files changed since the last commit)
+      tiri languages               (which language servers Tiri can find)
       tiri follow <item-id> <row> <col>   (what ⌘-click does, on a terminal's path or a file's name)
       tiri quit                    (terminals keep running, and Tiri comes back to them)
       tiri keys [set <command> <key> | unset <command> | reset <command>]
@@ -612,6 +625,17 @@ public enum AgentGuide {
     tiri git                              # each repository's branch, and commits to pull and push
     tiri diff src/app.ts                  # floats what changed over your terminal
     tiri diff src/app.ts --tab            # or keeps it as a tab
+    ```
+
+    ## Check your work
+
+    `tiri diagnostics` asks the language servers on this Mac. Without paths, it checks the files
+    changed since the last commit, and waits for an answer. It prints what compilers print, so
+    the user can ⌘-click it. `tiri languages` says which servers Tiri can find.
+
+    ```sh
+    tiri diagnostics                      # the files you've changed
+    tiri diagnostics src/app.ts           # or these
     ```
 
     ## Review comments

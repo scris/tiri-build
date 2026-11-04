@@ -74,6 +74,7 @@ struct SettingsView: View {
                 }
                 if query.trimmingCharacters(in: .whitespaces).isEmpty {
                     AgentHooksSection()
+                    LanguageServersSection()
                     CommandLineSection()
                 }
                 if !commands.isEmpty {

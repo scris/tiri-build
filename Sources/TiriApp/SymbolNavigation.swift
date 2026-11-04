@@ -9,6 +9,69 @@ protocol SymbolViewing: ItemController {
     /// Where a character is in the file itself, counting from 0, if it's in the file at all.
     /// A row removed in a diff isn't.
     func fileLocation(ofCharacter index: Int) -> (line: Int, character: Int)?
+    /// A language server has something new to say about this file.
+    func diagnosticsChanged()
+}
+
+/// Where lines start, for turning a server's positions into ranges of text.
+struct LineIndex {
+    private var starts: [Int] = [0]
+    private let length: Int
+
+    init(_ string: NSString) {
+        length = string.length
+        var search = NSRange(location: 0, length: length)
+        while true {
+            let found = string.range(of: "\n", options: .literal, range: search)
+            if found.location == NSNotFound { break }
+            starts.append(NSMaxRange(found))
+            search = NSRange(location: NSMaxRange(found), length: length - NSMaxRange(found))
+        }
+    }
+
+    func location(line: Int, character: Int) -> Int? {
+        guard line >= 0, line < starts.count else { return nil }
+        return min(starts[line] + max(character, 0), length)
+    }
+
+    func start(ofLine line: Int) -> Int? { line >= 0 && line < starts.count ? starts[line] : nil }
+}
+
+/// Underlines what's wrong. Temporary attributes, so they never reach the file or undo.
+enum ProblemMarks {
+    static func color(_ severity: LSPDiagnostic.Severity) -> NSColor {
+        switch severity {
+        case .error: .systemRed
+        case .warning: .systemOrange
+        case .information, .hint: .secondaryLabelColor
+        }
+    }
+
+    static func clear(_ view: NSTextView) {
+        guard let layout = view.layoutManager else { return }
+        let full = NSRange(location: 0, length: (view.string as NSString).length)
+        layout.removeTemporaryAttribute(.underlineStyle, forCharacterRange: full)
+        layout.removeTemporaryAttribute(.underlineColor, forCharacterRange: full)
+    }
+
+    /// A zero-length range would underline nothing. The name there, or a character, stands in.
+    static func underline(_ range: NSRange, severity: LSPDiagnostic.Severity, in view: NSTextView) {
+        guard let layout = view.layoutManager else { return }
+        let string = view.string as NSString
+        var range = range
+        if range.length == 0 {
+            range = SymbolText.word(in: string, at: range.location) ?? NSRange(location: range.location, length: min(1, string.length - range.location))
+        }
+        guard range.length > 0, NSMaxRange(range) <= string.length else { return }
+        layout.addTemporaryAttribute(.underlineStyle, value: NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue, forCharacterRange: range)
+        layout.addTemporaryAttribute(.underlineColor, value: color(severity), forCharacterRange: range)
+    }
+
+    /// The dot beside a line with something wrong with it.
+    static func drawDot(severity: LSPDiagnostic.Severity, x: CGFloat, y: CGFloat, lineHeight: CGFloat) {
+        color(severity).setFill()
+        NSBezierPath(ovalIn: NSRect(x: x, y: y + (lineHeight - 5) / 2, width: 5, height: 5)).fill()
+    }
 }
 
 /// Somewhere to come back to.
@@ -88,15 +151,27 @@ extension AppModel {
         view.layoutManager?.addTemporaryAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, forCharacterRange: found.range)
         symbolHover = (view, found.range)
         NSCursor.pointingHand.set()
+        // Holding it there a moment asks what the name is. Passing over names doesn't.
+        hoverWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.presentHover(in: found.viewer, range: found.range, explicit: false)
+        }
+        hoverWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
     }
 
     private func clearSymbolHover() {
+        hoverWork?.cancel()
+        hoverWork = nil
         guard let hover = symbolHover else { return }
         symbolHover = nil
+        hoverPopover?.close()
         let length = ((hover.view?.string ?? "") as NSString).length
         if NSMaxRange(hover.range) <= length {
             hover.view?.layoutManager?.removeTemporaryAttribute(.underlineStyle, forCharacterRange: hover.range)
         }
+        // That can take a problem's own underline with it.
+        symbolViewer(showing: hover.view)?.diagnosticsChanged()
         NSCursor.arrow.set()
     }
 
@@ -123,14 +198,83 @@ extension AppModel {
             return
         }
         let symbol = (viewer.symbolTextView.string as NSString).substring(with: range)
-        searchForReferences(of: symbol, near: viewer.path)
+        let path = viewer.path
+        let place = viewer.fileLocation(ofCharacter: range.location)
+        Task {
+            if let place, let found = await languageServers.references(path: path, line: place.line, character: place.character) {
+                showReferences(found, symbol: symbol)
+                return
+            }
+            searchForReferences(of: symbol, near: path)
+        }
+    }
+
+    /// ⌘K ⌘I: what the name at the cursor is, and anything wrong with it.
+    func showHover() {
+        guard let viewer = frontSymbolViewer else { return }
+        guard let range = nameAtCursor(in: viewer) else {
+            showToast(title: "Put the cursor on a name first", detail: nil, symbol: "scope", tint: .secondary)
+            return
+        }
+        presentHover(in: viewer, range: range, explicit: true)
+    }
+
+    private func presentHover(in viewer: SymbolViewing, range: NSRange, explicit: Bool) {
+        let view = viewer.symbolTextView
+        guard let place = viewer.fileLocation(ofCharacter: range.location), let layout = view.layoutManager, let container = view.textContainer else { return }
+        let symbol = (view.string as NSString).substring(with: range)
+        let path = viewer.path
+        Task {
+            let blocks = await languageServers.hover(path: path, line: place.line, character: place.character)
+            let known = languageServers.knownDiagnostics(for: path)
+            let problems = known.filter { $0.line <= place.line && place.line <= $0.endLine }
+            guard !blocks.isEmpty || !problems.isEmpty else {
+                if explicit {
+                    showToast(title: "Nothing to say about \(symbol)", detail: "A language server has more to say than a search of the files. See Settings.", symbol: "questionmark.circle", tint: .secondary)
+                }
+                return
+            }
+            // ⌘ may have been let go by the time the answer comes.
+            guard explicit || symbolHover?.range == range else { return }
+            hoverPopover?.close()
+            let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+            rect.origin.x += view.textContainerInset.width
+            rect.origin.y += view.textContainerInset.height
+            let popover = NSPopover()
+            popover.behavior = .transient
+            let content = SymbolHoverView(blocks: blocks, problems: problems) { [weak self, weak popover] in
+                popover?.close()
+                self?.quoteDiagnostics(problems, path: path)
+            }
+            let host = NSHostingController(rootView: content)
+            host.sizingOptions = [.preferredContentSize]
+            popover.contentViewController = host
+            popover.show(relativeTo: rect, of: view, preferredEdge: .maxY)
+            hoverPopover = popover
+        }
     }
 
     private func goToDefinition(in viewer: SymbolViewing, range: NSRange) {
         let symbol = (viewer.symbolTextView.string as NSString).substring(with: range)
         let path = viewer.path
-        let here = viewer.fileLocation(ofCharacter: range.location).map { $0.line + 1 }
+        let place = viewer.fileLocation(ofCharacter: range.location)
+        let here = place.map { $0.line + 1 }
         Task {
+            // A server knows. A search makes a good guess, for when there's no server or no answer yet.
+            if let place, let found = await languageServers.definition(path: path, line: place.line, character: place.character) {
+                if found.count == 1, Git.real(found[0].path) == Git.real(path), found[0].line == here {
+                    if let references = await languageServers.references(path: path, line: place.line, character: place.character) {
+                        showReferences(references, symbol: symbol)
+                    } else {
+                        searchForReferences(of: symbol, near: path)
+                    }
+                    return
+                }
+                showSymbolResults(found, symbol: symbol, title: { "\($0) definitions of \(symbol). Type to narrow down." },
+                                  emptyTitle: "No definition of \(symbol) found")
+                return
+            }
             let paths = await searchablePaths()
             let cancellation = ContentSearch.Cancellation()
             let found = await Task.detached(priority: .userInitiated) {
@@ -146,6 +290,11 @@ extension AppModel {
         }
     }
 
+    private func showReferences(_ found: [SymbolLocation], symbol: String) {
+        showSymbolResults(found, symbol: symbol, title: { "\($0) uses of \(symbol). Type to narrow down." },
+                          emptyTitle: "No uses of \(symbol) found")
+    }
+
     private func searchForReferences(of symbol: String, near path: String) {
         Task {
             let paths = await searchablePaths()
@@ -153,13 +302,18 @@ extension AppModel {
             let found = await Task.detached(priority: .userInitiated) {
                 DefinitionSearch.references(paths: paths, symbol: symbol, near: path, cancellation: cancellation)
             }.value
-            showSymbolResults(found, symbol: symbol, title: { "\($0) uses of \(symbol). Type to narrow down." },
-                              emptyTitle: "No uses of \(symbol) found")
+            showReferences(found, symbol: symbol)
         }
     }
 
     /// The same rule as paths: one opens, several offer a choice, and none never stops you.
-    func showSymbolResults(_ found: [SymbolLocation], symbol: String, title: (Int) -> String, emptyTitle: String) {
+    func showSymbolResults(_ results: [SymbolLocation], symbol: String, title: (Int) -> String, emptyTitle: String) {
+        // Servers answer with real paths. The workspace may know a folder by a link to it.
+        let found = results.map { location in
+            var location = location
+            location.path = aliasedPath(location.path)
+            return location
+        }
         guard let first = found.first else {
             showToast(title: emptyTitle, detail: "Searched this workspace's files.", symbol: "magnifyingglass", tint: .secondary,
                       actionTitle: "Search in Files") { [weak self] in
@@ -188,7 +342,7 @@ extension AppModel {
     func navigate(to location: SymbolLocation) {
         rememberStop()
         let front = active.peek ?? active.activeItem
-        if case .file(let spec)? = front?.content, spec.path == location.path, let id = front?.id {
+        if case .file(let spec)? = front?.content, Git.real(spec.path) == Git.real(location.path), let id = front?.id {
             existingController(for: id)?.goTo(line: location.line, col: location.column)
             return
         }

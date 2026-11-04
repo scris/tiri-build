@@ -18,6 +18,7 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var firstLoad = true
     private let message = NSTextField(labelWithString: "")
     private var quoteButton: QuoteButton?
+    private var menuProblems: [LSPDiagnostic] = []
     private(set) var diff = FileDiff()
 
     var view: NSView { container }
@@ -62,6 +63,47 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
         applySettings()
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
         load()
+        model.languageServers.viewerOpened(path)
+    }
+
+    func didAttach() { model.languageServers.viewerShown(path) }
+
+    /// Only what this change is answerable for: the lines it added, in the file as it is now.
+    /// A finished turn's lines may not be the file's any more, so it shows nothing.
+    func diagnosticsChanged() {
+        ProblemMarks.clear(textView)
+        guard turn == nil || model.turn(id: turn ?? "")?.isOpen == true else {
+            container.showProblems(nil, count: 0, onQuote: nil)
+            gutter.problemRows = [:]
+            return
+        }
+        let found = LSP.onAddedRows(model.languageServers.knownDiagnostics(for: path), rows: diff.lines)
+        var rows: [Int: LSPDiagnostic.Severity] = [:]
+        let index = LineIndex(textView.string as NSString)
+        let rowOfLine = Dictionary(diff.lines.enumerated().compactMap { row, line in line.newLine.map { ($0, row) } }, uniquingKeysWith: { first, _ in first })
+        for problem in found.sorted(by: { $0.severity > $1.severity }) {
+            guard let row = rowOfLine[problem.line + 1] else { continue }
+            rows[row] = problem.severity
+            guard let start = index.location(line: row, character: problem.character) else { continue }
+            // Only as far as this row: the next row in a diff isn't the next line of the file.
+            let rowEnd = index.start(ofLine: row + 1).map { $0 - 1 } ?? (textView.string as NSString).length
+            let end = problem.endLine == problem.line ? min(start + max(problem.endCharacter - problem.character, 0), rowEnd) : rowEnd
+            ProblemMarks.underline(NSRange(location: start, length: max(end - start, 0)), severity: problem.severity, in: textView)
+        }
+        gutter.problemRows = rows
+        let errors = found.filter { $0.severity == .error }.count
+        let text: String?
+        if found.isEmpty {
+            text = nil
+        } else if errors == found.count {
+            text = errors == 1 ? "1 error on lines this change added" : "\(errors) errors on lines this change added"
+        } else {
+            text = found.count == 1 ? "1 problem on lines this change added" : "\(found.count) problems on lines this change added"
+        }
+        container.showProblems(text, count: errors) { [weak self] in
+            guard let self else { return }
+            self.model.quoteDiagnostics(found, path: self.path)
+        }
     }
 
     /// Other things change the answer too, like a commit. The app asks after any change it sees.
@@ -106,6 +148,8 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
             }
         }
         reviewChanged()
+        diagnosticsChanged()
+        model.languageServers.fileMayHaveChanged(path)
         gutter.needsDisplay = true
         textView.needsDisplay = true
         firstLoad = false
@@ -137,7 +181,10 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     }
 
     func focus() { textView.window?.makeFirstResponder(textView) }
-    func teardown() { token = nil }
+    func teardown() {
+        token = nil
+        model.languageServers.viewerClosed(path)
+    }
 
     func select(text: String, to end: String?) -> Bool {
         let string = textView.string as NSString
@@ -258,6 +305,13 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
             add("Go to Definition", #selector(goToDefinitionFromMenu))
             add("Find References", #selector(findReferencesFromMenu))
         }
+        if let line = fileLocation(ofCharacter: charIndex)?.line {
+            let problems = model.languageServers.knownDiagnostics(for: path).filter { $0.line <= line && line <= $0.endLine }
+            if !problems.isEmpty {
+                menuProblems = problems
+                add("Quote Problem in Agent", #selector(quoteProblems))
+            }
+        }
         menu.insertItem(.separator(), at: index)
         return menu
     }
@@ -266,6 +320,7 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     @objc private func addComment() { model.beginReviewComment() }
     @objc private func goToDefinitionFromMenu() { model.goToDefinition() }
     @objc private func findReferencesFromMenu() { model.findReferences() }
+    @objc private func quoteProblems() { model.quoteDiagnostics(menuProblems, path: path) }
 
     var supportsFind: Bool { true }
 
@@ -330,6 +385,8 @@ final class DiffGutter: NSView {
     /// Row, counting from 0, to the comments on it.
     var commentMarkers: [Int: [ReviewComment]] = [:] { didSet { needsDisplay = true } }
     private var markerHits: [(rect: NSRect, comments: [ReviewComment])] = []
+    /// Row, counting from 0, to the worst thing wrong with it.
+    var problemRows: [Int: LSPDiagnostic.Severity] = [:] { didSet { needsDisplay = true } }
     private weak var textView: NSTextView?
     private var observers: [NSObjectProtocol] = []
     private let columnWidth: CGFloat = 40
@@ -381,6 +438,9 @@ final class DiffGutter: NSView {
             if let comments = self.commentMarkers[current] {
                 self.markerHits.append((ReviewMarker.draw(atY: y, lineHeight: fragment.height), comments))
             }
+            if let severity = self.problemRows[current] {
+                ProblemMarks.drawDot(severity: severity, x: self.thickness - 6, y: y, lineHeight: fragment.height)
+            }
             index = current + 1
         }
     }
@@ -399,6 +459,25 @@ final class DiffContainer: NSView {
     private var gutter: DiffGutter?
     private var scrollView: NSScrollView?
     private var message: NSTextField?
+    private let problemsBar = NSView()
+    private let problemsLabel = NSTextField(labelWithString: "")
+    private let problemsIcon = NSImageView()
+    private let problemsButton = NSButton(title: "Quote in Agent", target: nil, action: nil)
+    private var onQuoteProblems: (() -> Void)?
+    private static let problemsHeight: CGFloat = 26
+
+    func showProblems(_ text: String?, count: Int, onQuote: (() -> Void)?) {
+        onQuoteProblems = onQuote
+        let shown = text != nil
+        problemsBar.isHidden = !shown
+        problemsLabel.stringValue = text ?? ""
+        let symbol = count > 0 ? "xmark.circle.fill" : "exclamationmark.triangle.fill"
+        problemsIcon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        problemsIcon.contentTintColor = count > 0 ? .systemRed : .systemOrange
+        needsLayout = true
+    }
+
+    @objc private func quoteProblems() { onQuoteProblems?() }
 
     func install(gutter: DiffGutter, scrollView: NSScrollView, message: NSTextField) {
         self.gutter = gutter
@@ -408,6 +487,18 @@ final class DiffContainer: NSView {
         addSubview(scrollView)
         addSubview(message)
         message.isHidden = true
+        problemsBar.wantsLayer = true
+        problemsBar.isHidden = true
+        problemsLabel.font = .systemFont(ofSize: 11.5)
+        problemsLabel.textColor = .secondaryLabelColor
+        problemsButton.controlSize = .small
+        problemsButton.bezelStyle = .accessoryBarAction
+        problemsButton.target = self
+        problemsButton.action = #selector(quoteProblems)
+        problemsButton.font = .systemFont(ofSize: 11)
+        problemsButton.sizeToFit()
+        for view in [problemsIcon, problemsLabel, problemsButton] as [NSView] { problemsBar.addSubview(view) }
+        addSubview(problemsBar)
     }
 
     func showMessage(_ text: String?) {
@@ -420,8 +511,17 @@ final class DiffContainer: NSView {
     override func layout() {
         super.layout()
         let width = gutter?.thickness ?? 0
-        gutter?.frame = CGRect(x: 0, y: 0, width: width, height: bounds.height)
-        scrollView?.frame = CGRect(x: width, y: 0, width: max(bounds.width - width, 0), height: bounds.height)
+        let bar = problemsBar.isHidden ? 0 : Self.problemsHeight
+        // This view's origin is at its bottom, unless it's flipped, and the bar goes on top either way.
+        let contentY: CGFloat = isFlipped ? bar : 0
+        let contentHeight = max(bounds.height - bar, 0)
+        gutter?.frame = CGRect(x: 0, y: contentY, width: width, height: contentHeight)
+        scrollView?.frame = CGRect(x: width, y: contentY, width: max(bounds.width - width, 0), height: contentHeight)
+        problemsBar.frame = CGRect(x: 0, y: isFlipped ? 0 : bounds.height - bar, width: bounds.width, height: bar)
+        problemsIcon.frame = CGRect(x: 12, y: 6, width: 14, height: 14)
+        let buttonWidth = problemsButton.frame.width
+        problemsButton.frame = CGRect(x: bounds.width - buttonWidth - 12, y: 3, width: buttonWidth, height: 20)
+        problemsLabel.frame = CGRect(x: 32, y: 5, width: max(bounds.width - buttonWidth - 56, 0), height: 16)
         message?.frame = CGRect(x: 20, y: bounds.midY - 12, width: max(bounds.width - 40, 0), height: 24)
         gutter?.needsDisplay = true
     }

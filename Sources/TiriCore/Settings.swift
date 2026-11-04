@@ -37,6 +37,7 @@ public struct TiriSettings: Equatable, Sendable {
     public var terminalRestoreWithResume = true
     public var terminalKeepRunning = true
     public var perTurnDiffs = true
+    public var languageServers = true
     public var terminalLinkOpens = LinkOpenTarget.peek
     public var codeFontFamily = "SF Mono"
     public var codeFontSize = 12.0
@@ -76,6 +77,7 @@ public struct TiriSettings: Equatable, Sendable {
       // Terminals keep running when Tiri quits, and it comes back to them.
       "terminal.keepRunning": true,
       "changes.perTurn": true,
+      "code.languageServers": true,
       // What cmd-clicking a file in a terminal does: "peek", "tab" or "external".
       "terminal.linkOpens": "peek",
 
@@ -199,6 +201,7 @@ public struct TiriSettings: Equatable, Sendable {
         try bool("documents.forceDark") { settings.documentsForceDark = $0 }
         try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
         try bool("changes.perTurn") { settings.perTurnDiffs = $0 }
+        try bool("code.languageServers") { settings.languageServers = $0 }
         try bool("notifications.enabled") { settings.notificationsEnabled = $0 }
         return settings
     }
@@ -361,6 +364,7 @@ public enum Keymap {
             ("cmd+shift+l", "attachToAgent"),
             ("cmd+alt+l", "addReviewComment"),
             ("f12", "goToDefinition"),
+            ("cmd+k cmd+i", "showHover"),
             ("shift+f12", "findReferences"),
             ("ctrl+-", "goBack"),
             ("cmd+alt+shift+l", "sendReview"),

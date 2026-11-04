@@ -114,6 +114,11 @@ final class AppModel {
     @ObservationIgnored let turnStore = TurnStore()
     var navigationStops: [NavigationStop] = []
     @ObservationIgnored var symbolHover: (view: NSTextView?, range: NSRange)?
+    var languageRevision = 0
+    @ObservationIgnored lazy var languageServers = LanguageServerHub(model: self)
+    @ObservationIgnored let languageTrust = LanguageServerTrust()
+    @ObservationIgnored var hoverPopover: NSPopover?
+    @ObservationIgnored var hoverWork: DispatchWorkItem?
     @ObservationIgnored var reviewPopover: NSPopover?
     @ObservationIgnored var reviewPopoverCloser: NSObjectProtocol?
     var changes: [ChangedFile] = []
@@ -122,7 +127,7 @@ final class AppModel {
     /// Fetches and pushes under way, by repository.
     var repositoryTransfers: [String: RepositoryTransfer] = [:]
     @ObservationIgnored private var repositoryTokens: [String: FileWatchHub.Token] = [:]
-    @ObservationIgnored private var userPath: String?
+    @ObservationIgnored var userPath: String?
     var detachedItems: Set<ItemID> = []
     @ObservationIgnored private var detachedWindows: [ItemID: NSWindow] = [:]
     @ObservationIgnored private var detachedDelegates: [ItemID: DetachedWindowDelegate] = [:]
@@ -274,6 +279,7 @@ final class AppModel {
         saveNow()
         editorBridge.stop()
         for controller in controllers.values { controller.teardown() }
+        languageServers.stopAll()
         server?.stop()
     }
 
@@ -556,7 +562,7 @@ final class AppModel {
         case "promotePeek", "promotePeekToSide": return active.peek != nil
         case "webReload": return frontWebController != nil
         case "goBack": return canGoBack
-        case "goToDefinition", "findReferences": return canAskAboutSymbols()
+        case "goToDefinition", "findReferences", "showHover": return canAskAboutSymbols()
         default: return true
         }
     }
@@ -1396,6 +1402,7 @@ final class AppModel {
     }
 
     private func filesChanged(_ paths: [String]) {
+        languageServers.filesChanged(paths)
         fileTree.filesChanged(paths)
         fileIndex.invalidate()
     }
@@ -1503,6 +1510,11 @@ final class AppModel {
     /// Sends the settings prompt to that agent if it's already running in this workspace, for you
     /// to read before pressing Return. Otherwise starts the agent with the prompt.
     func askAgentAboutSettings(preset: TerminalPreset) {
+        askAgent(preset: preset, prompt: SettingsSchema.agentPrompt)
+    }
+
+    /// Into a running session of that agent, or a new one.
+    func askAgent(preset: TerminalPreset, prompt: String) {
         let tool = preset.command.split(separator: " ").first.map(String.init) ?? preset.command
         let running = active.items.first { item in
             guard case .terminal(let spec) = item.content else { return false }
@@ -1513,10 +1525,10 @@ final class AppModel {
         }
         if let running, let terminal = existingController(for: running.id) as? TerminalController {
             focusItem(running.id)
-            terminal.send(text: SettingsSchema.agentPrompt)
+            terminal.send(text: prompt)
             return
         }
-        startTerminal(command: preset.command + " " + ShellQuote.quote(SettingsSchema.agentPrompt), named: preset.name)
+        startTerminal(command: preset.command + " " + ShellQuote.quote(prompt), named: preset.name)
     }
 
     func openKeyboardShortcuts() {
@@ -2121,6 +2133,7 @@ final class AppModel {
     private func applySettings() {
         let previous = settings
         settings = settingsStore.settings
+        if previous.languageServers, !settings.languageServers { languageServers.stopAll() }
         rebuildKeybindings()
         if let error = settingsStore.currentError {
             banner = AppBanner(message: error, isError: true)

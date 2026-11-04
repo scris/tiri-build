@@ -385,6 +385,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     /// What's on disk, as far as this viewer knows.
     private var savedText = ""
     private var diskChangedUnderEdits = false
+    private var menuProblems: [LSPDiagnostic] = []
     private(set) var isDirty = false {
         didSet { if isDirty != oldValue { model.controllerRevision += 1 } }
     }
@@ -404,6 +405,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.reload() }
         }
         reload()
+        model.languageServers.viewerOpened(path)
     }
 
     @objc private func selectionDidChange(_ notification: Notification) {
@@ -613,6 +615,8 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         loadedOnce = true
         applyPendingLocation()
         scheduleHighlight()
+        diagnosticsChanged()
+        model.languageServers.fileMayHaveChanged(path)
     }
 
     // MARK: Editing
@@ -634,6 +638,13 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             add("Go to Definition", #selector(goToDefinitionFromMenu))
             add("Find References", #selector(findReferencesFromMenu))
         }
+        if let line = fileLocation(ofCharacter: charIndex)?.line {
+            let problems = model.languageServers.knownDiagnostics(for: path).filter { $0.line <= line && line <= $0.endLine }
+            if !problems.isEmpty {
+                menuProblems = problems
+                add("Quote Problem in Agent", #selector(quoteProblems))
+            }
+        }
         menu.insertItem(.separator(), at: index)
         return menu
     }
@@ -642,6 +653,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     @objc private func addComment() { model.beginReviewComment() }
     @objc private func goToDefinitionFromMenu() { model.goToDefinition() }
     @objc private func findReferencesFromMenu() { model.findReferences() }
+    @objc private func quoteProblems() { model.quoteDiagnostics(menuProblems, path: path) }
 
     func textDidChange(_ notification: Notification) {
         isDirty = textView.string != savedText
@@ -650,7 +662,11 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         reviewChanged()
         ruler.needsDisplay = true
         highlightWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.scheduleHighlight() }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.scheduleHighlight()
+            self.model.languageServers.unsavedText(self.isDirty ? self.textView.string : nil, for: self.path)
+        }
         highlightWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
@@ -664,6 +680,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             savedText = textView.string
             diskChangedUnderEdits = false
             isDirty = false
+            model.languageServers.unsavedText(nil, for: path)
             return .saved
         } catch {
             return .failed(error.localizedDescription)
@@ -673,6 +690,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func discardEdits() {
         isDirty = false
         diskChangedUnderEdits = false
+        model.languageServers.unsavedText(nil, for: path)
         textView.undoManager?.removeAllActions()
         reload()
     }
@@ -740,9 +758,30 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func focus() {
         textView.window?.makeFirstResponder(textView)
         reportSelection()
+        model.languageServers.viewerShown(path)
     }
 
-    func teardown() { token = nil }
+    func didAttach() { model.languageServers.viewerShown(path) }
+
+    func teardown() {
+        token = nil
+        model.languageServers.viewerClosed(path)
+    }
+
+    func diagnosticsChanged() {
+        let found = model.languageServers.knownDiagnostics(for: path)
+        ProblemMarks.clear(textView)
+        let index = LineIndex(textView.string as NSString)
+        var lines: [Int: LSPDiagnostic.Severity] = [:]
+        // Worst last, so it's what shows where they overlap.
+        for problem in found.sorted(by: { $0.severity > $1.severity }) {
+            lines[problem.line + 1] = problem.severity
+            guard let start = index.location(line: problem.line, character: problem.character),
+                  let end = index.location(line: problem.endLine, character: problem.endCharacter), end >= start else { continue }
+            ProblemMarks.underline(NSRange(location: start, length: end - start), severity: problem.severity, in: textView)
+        }
+        ruler.problemLines = lines
+    }
 
     var supportsFind: Bool { true }
 
@@ -785,6 +824,10 @@ final class LineGutter: NSView {
         didSet { needsDisplay = true }
     }
     private var markerHits: [(rect: NSRect, comments: [ReviewComment])] = []
+    /// Line, counting from 1, to the worst thing wrong with it.
+    var problemLines: [Int: LSPDiagnostic.Severity] = [:] {
+        didSet { needsDisplay = true }
+    }
     private var lineStarts: [Int] = [0]
     private var observers: [NSObjectProtocol] = []
     private(set) var thickness: CGFloat = 44
@@ -871,6 +914,9 @@ final class LineGutter: NSView {
             label.draw(at: NSPoint(x: thickness - size.width - 8, y: y + (line.height - size.height) / 2), withAttributes: attributes)
             if let comments = commentMarkers[index + 1] {
                 markerHits.append((ReviewMarker.draw(atY: y, lineHeight: line.height), comments))
+            }
+            if let severity = problemLines[index + 1] {
+                ProblemMarks.drawDot(severity: severity, x: thickness - 6, y: y, lineHeight: line.height)
             }
             index += 1
         }
