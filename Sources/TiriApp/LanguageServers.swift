@@ -234,6 +234,7 @@ final class LanguageServerHub {
         let names = Array(Set(LanguageServerCatalog.all.flatMap { $0.commands.compactMap(\.first) }))
         if remoteLocated[connection.destination] == nil {
             remoteLocated[connection.destination] = await Task.detached(priority: .utility) { () -> RemoteServers in
+                guard !connection.isCShell else { return RemoteServers() }
                 let script = names.filter(ShellLookup.isPlainName)
                     .map { "command -v \($0) 2>/dev/null | sed 's|^|tiri-found:\($0)=|'" }.joined(separator: "; ") + "; echo tiri-path:$PATH"
                 let shell = connection.shell

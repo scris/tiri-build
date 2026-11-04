@@ -153,7 +153,7 @@ else
 # Ports
 T send "$ID" 'clear; cd ~/tiri-e2e; (python3 -m http.server 18765 >/dev/null 2>&1 &) ; sleep 1; tiri preview http://localhost:18765/report.md; echo served' --enter
 eventually "preview from the server" "served" 10 T read "$ID" --lines 3
-has "port is listed" "18765" "$(T remote ports)"
+has "port is listed" "18765" "$(T remote ports; echo; T read "$ID" --lines 4)"
 curl -s -m 5 "http://localhost:18765/report.md" | grep -q Report && ok "port reaches the Mac" || bad "port reaches the Mac"
 R "pkill -f 'http.server 18765'"
 

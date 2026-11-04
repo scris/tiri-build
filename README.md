@@ -31,12 +31,14 @@ Press **Connect to Server…** in the workspaces' + menu or the command palette,
 Everything works the same as a local folder: the tree, quick open, ⌘-click, the Peek, Changes, search, go to definition, language servers, review comments. So do agents, which run on the server. `tiri open report.md` in a terminal there floats a Peek on your Mac, and Quote in Agent reaches them too.
 
 - **Your agents keep working when your lid closes.** Programs run under a small helper on the server. When the connection comes back, or Tiri does, each terminal reattaches and nothing it printed is lost. Saves made while it's down wait, and go when it's back. Closing a tab is what ends a program.
-- **Nothing to set up, nothing installed but one file.** Tiri puts one small static program in `~/.tiri` on the server, about 90 KB for Linux on x86-64 or ARM, or on a Mac. It needs no root, compiler or Node. Other systems still get terminals and files, without programs surviving a dropped connection.
+- **Nothing to set up, nothing installed but one file.** Tiri puts one small static program in `~/.tiri` on the server, about 90 KB, for Linux on x86-64 or ARM, or a Mac. It needs no root, compiler or Node. Other systems still get terminals and files, without programs surviving a dropped connection.
 - **OpenSSH does the connecting**, so your keys, agent, jump hosts and config just work. If it has a question (a passphrase, a password, a one-time code, an unknown host) Tiri shows it, and keeps none of the answers.
 - **Files come over when you open them.** The tree is real, and a large project costs nothing until you read it: the Linux kernel's 97,000 files appear in about ten seconds, and take no disk space. What you've read is cached under `~/Library/Caches/Tiri`, and goes when you delete the workspace.
 - **Pages on the server open here.** ⌘-click `http://localhost:3000` in a terminal on the server, or run `tiri preview http://localhost:3000` there, and the port is forwarded for you. Forward others from the server's name in the bottom bar, or with `tiri remote forward <port>`.
 - **Pictures and files you paste or drop are sent over first**, so an agent there can read them.
-- **A server is trusted less than your Mac.** `tiri` in a terminal there only reaches that server's own workspaces. It can't see or type into terminals on your Mac, change settings or hooks here, or quit the app.
+- **A save that had to wait won't quietly replace newer work.** If an agent changed the same file meanwhile, Tiri asks which to keep. A connection that drops part-way through a save leaves the file as it was.
+- **A server is trusted less than your Mac.** `tiri` in a terminal there only reaches that server's own workspaces and files. It can't see or type into terminals on your Mac, read your Mac's files, change settings or hooks here, or quit the app. Each server has its own token for the editor protocol, and only hears about its own files.
+- **Your SSH agent keeps working** in terminals that outlive their connection, if your config forwards it.
 
 If a server forbids SSH forwarding, `tiri`, the Peek and agent status still work, and Tiri says when it can't forward a port. Claude Code then gets lines as text, rather than through the editor protocol.
 
@@ -83,7 +85,29 @@ Right-click a tab and choose **Move to New Window** to put a terminal, file or p
 
 ## Quick edits
 
-Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes the file while you're editing, your text stays on screen and Tiri tells you, so nothing is overwritten without you choosing. Editing a Peek makes it a tab. This is for quick fixes, and it's still not a full editor: there's no autocomplete.
+Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes the file while you're editing, your text stays on screen and Tiri tells you, so nothing is overwritten without you choosing. Editing a Peek makes it a tab. This is for quick fixes, and it's still not a full editor: no autocomplete, snippets or AI ghost text.
+
+The keys are VS Code's. ⌘/ comments, ⌘] and ⌘[ or Tab and ⇧Tab indent, ⌥↑ and ⌥↓ move lines, ⇧⌥↑ and ⇧⌥↓ copy them, ⇧⌘K deletes them, and ⌘↩ and ⇧⌘↩ add a line below or above. ⌃G goes to a line. ⌘D adds the next occurrence as another cursor, and typing goes in at all of them, with an input method too. Esc goes back to one. ⌥⌘F replaces, with a count of matches.
+
+⌥Z wraps long lines in the file in front. `editor.wordWrap` sets what files start with: `off`, `on` or `bounded`, which wraps at `editor.wordWrapColumn`.
+
+## Finding your way around
+
+⌘⇧O lists what's in this file, from its language server or a reading of its lines, and shows each as you arrow through them. Esc puts you back. ⌘T searches the whole workspace, when a language server can answer. In ⌘P, spaces mean all of these words, `file:12` goes to the line, and `:`, `@` and `#` do the same as ⌃G, ⌘⇧O and ⌘T.
+
+⌘+, ⌘- and ⌘0 change the text size in terminals and files, and web pages scale to match. It stays that way until you change it.
+
+In a terminal, ⌘K clears, ⌘← and ⌘→ go to the ends of the line, ⌘⌫ deletes back to its start, and ⌘F marks every match on screen. Return goes further back through the output.
+
+## Read anything
+
+**Notebooks:** `.ipynb` files render read-only, with highlighted code, execution counts, text, errors, tables and images. HTML outputs can't run scripts or restyle the page, and big outputs are cut and say so. Files that can't be rendered show their source and say why.
+
+**Math and diagrams:** `$…$`, `$$…$$`, `\( \)`, `\[ \]` and Mermaid code blocks render in markdown and notebooks, using libraries bundled with the app. A diagram that can't be drawn shows its source.
+
+**LaTeX:** a `.tex` file with a same-named PDF beside it or in a build folder gets a PDF button. The PDF keeps your page and zoom when an agent recompiles.
+
+**CSV and TSV:** files of millions of rows open quickly, with numbers lined up and a sticky header.
 
 ## Follow a name
 
@@ -128,6 +152,14 @@ The bar along the bottom of the window shows each repository's branch, a `*` if 
 - `3↑` pushes, after asking which branch is going where. A branch that's never been pushed offers **Publish** instead.
 
 All three are in the command palette too, and `tiri git` shows the same status. A remote that needs a password can't ask from here, so Tiri offers a terminal in that repository. Merging, committing and switching branches are for you or your agent.
+
+Agents commit often, so the same menu goes further. **This Branch** shows everything since the branch left its base, uncommitted work included, and says what it's compared with: origin's default branch, or else main or master. **Recent Commits** lists the last 30 commits, and choosing one shows its files. A merge shows what it brought in compared with its first parent. Diffs from any of these are items like any other, and they come back after a relaunch.
+
+A diff has a button for side by side, kept in Settings as `diff.sideBySide`. In a narrow pane or Peek it stays in one column. What changed within a line is highlighted. An image shows before and after. F7 and ⇧F7 go through the changes, in a diff or a file.
+
+Thin bars beside a file's line numbers mark what differs from the last commit: green for added, blue for changed, and a red wedge where lines were deleted. Click one to float that change. They follow the file on disk and new commits, and wait while you have unsaved edits. Files outside the workspace's repositories and very large files don't get them. The explorer tints changed files, with M, U and the other letters, and a folder gets a dot when something under it changed.
+
+`tiri changes --branch`, `tiri changes --commit HEAD~1`, `tiri diff src/app.ts --commit HEAD~1`, `tiri diff src/app.ts --branch` and `tiri log` do the same for agents.
 
 ## Start with a folder
 

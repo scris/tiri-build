@@ -98,6 +98,8 @@ public final class RemoteConnection: @unchecked Sendable {
     public var binDirectory: String? { lock.withLock { _binDirectory } }
     public var runDirectory: String? { lock.withLock { _runDirectory } }
     public var hasHelper: Bool { lock.withLock { _hasHelper } }
+    /// csh and tcsh take neither `-l` with anything else nor `command -v`.
+    public var isCShell: Bool { ["csh", "tcsh"].contains((shell as NSString).lastPathComponent) }
 
     private func setState(_ state: RemoteState) {
         let changed: Bool = lock.withLock {

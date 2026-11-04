@@ -270,7 +270,7 @@ final class RemoteManager {
     }
 
     private nonisolated static func lookUp(names: [String], on connection: RemoteConnection) async -> Set<String>? {
-        guard !names.isEmpty else { return [] }
+        guard !names.isEmpty, !connection.isCShell else { return nil }
         let script = "\(ShellQuote.quote(connection.shell)) -l -i -c \(ShellQuote.quote(ShellLookup.script(for: names))) 2>/dev/null"
         guard let result = connection.run(script, timeout: 15) else { return nil }
         return ShellLookup.found(in: result.text)
@@ -362,9 +362,13 @@ final class RemoteManager {
                 program = [shell, "-l", "-c", "\(addPath); exec \(ShellQuote.quote(shell)) -i"]
                 execName = name
             } else {
-                program = [shell, "-l"]
+                // The leading dash is what says login shell, which every shell understands.
+                program = [shell]
                 execName = "-" + name
             }
+        } else if connection.isCShell {
+            program = [shell, "-c", trimmed]
+            execName = name
         } else {
             program = [shell, "-l", "-i", "-c", (addPath.map { $0 + "; " } ?? "") + trimmed]
             execName = name
