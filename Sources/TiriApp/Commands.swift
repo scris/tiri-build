@@ -198,6 +198,7 @@ enum ControlHandler {
         if request.cmd == "languages" {
             await AppModel.shared.languageServers.waitForLocations()
         }
+        if let response = await history(request) { return response }
         // Looking at a turn can mean snapshotting the files. The app keeps responding while it does.
         if request.cmd == "changes", let wanted = request.args["turn"]?.stringValue {
             let (turn, folders, snapshots) = await MainActor.run { () -> (AgentTurn?, [String], TurnSnapshots) in
@@ -307,6 +308,8 @@ enum ControlHandler {
             object["url"] = .string((model.existingController(for: item.id) as? WebController)?.currentURLString ?? spec.url)
         case .diff(let spec):
             object["path"] = .string(spec.path)
+            if let commit = spec.commit { object["commit"] = .string(commit) }
+            if spec.branch == true { object["branch"] = true }
         case .settings:
             break
         }

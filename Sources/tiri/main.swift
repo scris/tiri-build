@@ -60,6 +60,15 @@ func jsonString(_ value: JSONValue?) -> String {
 
 func cell(_ value: JSONValue?) -> String { value?.stringValue ?? "" }
 
+/// A renamed file says where it came from, after a tab, so the first two columns stay the same.
+func printChanges(_ value: JSONValue?) {
+    for entry in value?.arrayValue ?? [] {
+        var row = [cell(entry["status"]), cell(entry["path"])]
+        if entry["old"] != nil { row.append("from " + cell(entry["old"])) }
+        print(row.joined(separator: "\t"))
+    }
+}
+
 if rawJSON {
     if let data = try? ControlCoding.encodeLine(response) {
         FileHandle.standardOutput.write(data)
@@ -109,8 +118,18 @@ case "search":
         print("\(cell(entry["path"])):\(entry["line"]?.intValue ?? 0): \(cell(entry["text"]))")
     }
 case "changes":
+    printChanges(response.result)
+case "changes.branch":
+    for base in response.result?["bases"]?.arrayValue ?? [] {
+        print(cell(base["description"]))
+    }
+    printChanges(response.result?["changes"])
+case "changes.commit":
+    print([cell(response.result?["commit"]?["short"]), cell(response.result?["commit"]?["subject"])].joined(separator: " "))
+    printChanges(response.result?["changes"])
+case "log":
     for entry in response.result?.arrayValue ?? [] {
-        print([cell(entry["status"]), cell(entry["path"])].joined(separator: "\t"))
+        print([cell(entry["short"]), cell(entry["when"]), cell(entry["subject"])].joined(separator: "\t"))
     }
 case "diagnostics":
     for entry in response.result?["problems"]?.arrayValue ?? [] {

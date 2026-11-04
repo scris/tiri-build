@@ -105,10 +105,24 @@ public enum CLIParser {
             return request("select", payload)
 
         case "changes":
+            let usage = "usage: tiri changes [--branch | --commit <rev> | --turn <id|latest>]"
             var options = Options(args)
             let turn = try options.value("--turn")
+            let commit = try options.value("--commit")
+            let branch = options.flag("--branch")
             try options.finish()
+            guard [turn != nil, commit != nil, branch].filter({ $0 }).count <= 1 else { throw UsageError(usage) }
+            if branch { return request("changes.branch") }
+            if let commit { return request("changes.commit", ["commit": .string(commit)]) }
             return request("changes", turn.map { ["turn": .string($0)] } ?? [:])
+
+        case "log":
+            var options = Options(args)
+            let rawLimit = try options.value("--limit")
+            let limit = rawLimit.flatMap(Int.init)
+            if rawLimit != nil, (limit ?? 0) < 1 { throw UsageError("--limit must be a positive number") }
+            try options.finish()
+            return request("log", limit.map { ["limit": .int($0)] } ?? [:])
 
         case "turns":
             guard args.isEmpty else { throw UsageError("usage: tiri turns") }
@@ -151,11 +165,17 @@ public enum CLIParser {
             var options = Options(args)
             let tab = options.flag("--tab")
             let turn = try options.value("--turn")
-            guard let raw = options.positional() else { throw UsageError("usage: tiri diff <path> [--tab] [--turn <id|latest>]") }
+            let commit = try options.value("--commit")
+            let branch = options.flag("--branch")
+            let usage = "usage: tiri diff <path> [--tab] [--branch | --commit <rev> | --turn <id|latest>]"
+            guard let raw = options.positional() else { throw UsageError(usage) }
             try options.finish()
+            guard [turn != nil, commit != nil, branch].filter({ $0 }).count <= 1 else { throw UsageError(usage) }
             var payload: [String: JSONValue] = ["path": .string(absolute(raw, cwd: environment.cwd))]
             if tab { payload["mode"] = "tab" }
             if let turn { payload["turn"] = .string(turn) }
+            if let commit { payload["commit"] = .string(commit) }
+            if branch { payload["branch"] = true }
             return request("diff", payload)
 
         case "review":
@@ -437,10 +457,13 @@ public enum CLIParser {
       tiri web-dark on|off [<item-id>]
       tiri search <text>           (across the workspace's files, as ⌘⇧F does)
       tiri select <item-id> <text> [--to <text>]   (select it in a file, diff or page, to point at it)
-      tiri changes [--turn <id|latest>]   (files changed since the last commit, or in one agent's turn)
+      tiri changes [--branch | --commit <rev> | --turn <id|latest>]
+                                   (files changed since the last commit, since the branch left its base, in one commit, or in one agent's turn)
+      tiri log [--limit N]         (recent commits)
       tiri turns                   (agents' recent turns)
       tiri git                     (each repository's branch, and commits to pull and push)
-      tiri diff <path> [--tab] [--turn <id|latest>]   (what changed in one file; floats as a Peek)
+      tiri diff <path> [--tab] [--branch | --commit <rev> | --turn <id|latest>]
+                                   (what changed in one file; floats as a Peek)
       tiri review [add <path>[:line[-line]] <text> | remove <id> | clear | send [--to <item-id>]]
                                    (comments waiting to go to an agent, all at once)
       tiri diagnostics [<path> ...]   (errors and warnings; without paths, in files changed since the last commit)
@@ -661,6 +684,11 @@ public enum AgentGuide {
 
     ```sh
     tiri changes                          # files changed since the last commit
+    tiri changes --branch                 # everything since this branch left its base, uncommitted work included
+    tiri log                              # recent commits
+    tiri changes --commit HEAD~1          # what one commit changed
+    tiri diff src/app.ts --commit HEAD~1  # one file's changes in it
+    tiri diff src/app.ts --branch         # or on the whole branch
     tiri turns                            # recent turns, yours and other agents'
     tiri changes --turn latest            # what the latest turn changed
     tiri diff src/app.ts --turn latest    # one file's changes in it
@@ -668,6 +696,10 @@ public enum AgentGuide {
     tiri diff src/app.ts                  # floats what changed over your terminal
     tiri diff src/app.ts --tab            # or keeps it as a tab
     ```
+
+    After you commit, `tiri changes` is empty. To show the user what you did, use `--branch` or
+    `--commit`, and float the file that matters most. A merge shows what it brought in compared
+    with its first parent.
 
     ## Check your work
 

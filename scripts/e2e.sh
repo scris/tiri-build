@@ -180,6 +180,27 @@ expect "floating diff is a peek" "(peek)" "$CLI" items
 PEEK_DIFF=$("$CLI" items | grep '(peek)' | cut -f1)
 check "close the floating diff" "$CLI" close "$PEEK_DIFF"
 
+git -C "$PROJECT" -c user.name=t -c user.email=t@t commit -qam "second"
+expect "log lists commits" "second" "$CLI" log
+expect "a commit's files" "report.md" "$CLI" changes --commit HEAD
+expect "a root commit's files" "report.md" "$CLI" changes --commit HEAD~1
+expect "a branch says what it's compared with" "origin" "$CLI" changes --branch
+check "a commit's diff opens" "$CLI" diff "$PROJECT/report.md" --commit HEAD --tab
+expect "a commit's diff is named for it" "report.md ($(git -C "$PROJECT" rev-parse --short=7 HEAD))" "$CLI" items
+DIFF_ID=$("$CLI" items | grep -m1 'changes' | cut -f1)
+check "close the commit's diff" "$CLI" close "$DIFF_ID"
+check "a branch's diff floats" "$CLI" diff "$PROJECT/report.md" --branch
+PEEK_DIFF=$("$CLI" items | grep '(peek)' | cut -f1)
+check "close the branch's diff" "$CLI" close "$PEEK_DIFF"
+if "$CLI" changes --commit no-such-commit >/dev/null 2>&1; then
+    failed=$((failed + 1)); echo "FAIL  a missing commit is an error"
+else
+    passed=$((passed + 1)); echo "ok    a missing commit is an error"
+fi
+check "next change" "$CLI" run nextChange
+check "side by side" "$CLI" settings set diff.sideBySide on
+check "back to one column" "$CLI" settings set diff.sideBySide off
+
 expect "search finds text in files" "report.md:1" "$CLI" search Report
 expect "search reaches into folders" "app.py:1" "$CLI" search 'print("hi")'
 check "search with no match succeeds" "$CLI" search nothing-has-this-text
