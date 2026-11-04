@@ -636,6 +636,20 @@ private func file(_ name: String, preview: Bool = false) -> Item {
     private func claude(_ json: String) -> AgentHookEvent? { AgentHookEvent.parseClaude(Data(json.utf8)) }
     private func codex(_ json: String) -> AgentHookEvent? { AgentHookEvent.parseCodex(Data(json.utf8)) }
 
+    @Test func terminalOnlyAcceptsHooksFromItsOwnAgent() {
+        let claude = TerminalSpec(command: "claude --continue", cwd: "/")
+        #expect(claude.acceptsHook(from: "claude"))
+        #expect(!claude.acceptsHook(from: "codex"))
+
+        var shell = TerminalSpec(cwd: "/")
+        #expect(shell.acceptsHook(from: "codex"))
+        shell.typedAgent = "codex"
+        #expect(shell.acceptsHook(from: "codex"))
+        #expect(!shell.acceptsHook(from: "claude"))
+
+        #expect(TerminalSpec(command: "./run-agents.sh", cwd: "/").acceptsHook(from: "claude"))
+    }
+
     @Test func claudeLifecycle() {
         #expect(claude(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#) == AgentHookEvent(state: "idle", sessionID: "s1"))
         #expect(claude(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1"}"#)?.state == "working")

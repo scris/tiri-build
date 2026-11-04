@@ -331,6 +331,14 @@ public struct AgentHookEvent: Equatable, Sendable {
         return trimmed.count > 140 ? String(trimmed.prefix(139)) + "…" : trimmed
     }
 
+    /// A `claude -p` or SDK run. Whatever started it, it isn't the conversation in this terminal,
+    /// though its hooks see the same `TIRI_ITEM_ID`: it would take over the tab's status, and a
+    /// relaunch would resume it instead. Like `TerminalRestore`, one-shot runs have nothing to
+    /// come back to. A missing value counts as interactive, so an older Claude still reports.
+    public static func isOneShotClaude(entrypoint: String?) -> Bool {
+        entrypoint?.hasPrefix("sdk") == true
+    }
+
     /// Claude Code passes JSON on stdin with `hook_event_name`.
     public static func parseClaude(_ data: Data) -> AgentHookEvent? {
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }

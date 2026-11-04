@@ -30,6 +30,15 @@ public struct TerminalSpec: Codable, Hashable, Sendable {
     /// An agent typed at this shell's prompt rather than started by Tiri, while it's running.
     /// After a reboot, when a session can't have survived, the shell types its resume command.
     public var typedAgent: String?
+
+    /// Whether a hook from this agent is about this terminal. One agent running another, as in a
+    /// Claude session calling `codex exec`, reports through the same terminal, and a Codex
+    /// thread ID would send `claude --resume` looking for a conversation that isn't there.
+    public func acceptsHook(from tool: String) -> Bool {
+        let running = isShell ? typedAgent : AgentReference.agent(commandLine: [], command: command)?.rawValue
+        return running == nil || running == tool
+    }
+
     public init(command: String? = nil, cwd: String, title: String? = nil, sessionID: String? = nil) {
         self.command = command
         self.cwd = cwd

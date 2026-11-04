@@ -414,7 +414,8 @@ enum ControlHandler {
         case "notify":
             let id = try requireItem(request, model: model)
             guard case .terminal = model.anyItem(id)?.content else { throw ControlFailure("\(id) isn't a terminal") }
-            model.handleHookReport(item: id, state: request.args["state"]?.stringValue,
+            model.handleHookReport(item: id, tool: request.args["tool"]?.stringValue,
+                                   state: request.args["state"]?.stringValue,
                                    message: request.args["message"]?.stringValue,
                                    session: request.args["session"]?.stringValue)
             return .object(["item": .string(id), "status": .string(model.runtimes[id]?.status.rawValue ?? "idle")])

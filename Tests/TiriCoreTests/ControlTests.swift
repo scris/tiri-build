@@ -231,6 +231,40 @@ import Testing
         #expect(throws: CLIParser.UsageError.self) { try request("notify", "sleeping") }
     }
 
+    @Test func hookIgnoresOneShotClaudeRuns() throws {
+        func parse(_ entrypoint: String?) throws -> CLIParser.Parsed {
+            let env = CLIParser.Environment(cwd: "/", itemID: "i-1", claudeEntrypoint: entrypoint, fileExists: { _ in false }, readStdin: {
+                Data(#"{"hook_event_name":"SessionStart","session_id":"nested"}"#.utf8)
+            })
+            return try CLIParser.parse(["hook", "claude"], environment: env)
+        }
+        // These two values were read from real Claude Code 2.1.318 hooks.
+        guard case .quietSuccess = try parse("sdk-cli") else {
+            Issue.record("a claude -p run shouldn't report")
+            return
+        }
+        for entrypoint in ["cli", nil] {
+            guard case .request(let parsed, _) = try parse(entrypoint) else {
+                Issue.record("an interactive session should report")
+                return
+            }
+            #expect(parsed.args["session"] == "nested")
+            #expect(parsed.args["tool"] == "claude")
+        }
+    }
+
+    @Test func oneShotCheckOnlyAppliesToClaude() throws {
+        // A Codex hook under a Claude session inherits Claude's value, and isn't a Claude run.
+        let env = CLIParser.Environment(cwd: "/", itemID: "i-1", claudeEntrypoint: "sdk-cli", fileExists: { _ in false }, readStdin: {
+            Data(#"{"type":"agent-turn-complete","thread-id":"t1"}"#.utf8)
+        })
+        guard case .request(let parsed, _) = try CLIParser.parse(["hook", "codex"], environment: env) else {
+            Issue.record("expected request")
+            return
+        }
+        #expect(parsed.args["tool"] == "codex")
+    }
+
     @Test func hookReadsPayloadAndCarriesSession() throws {
         let env = CLIParser.Environment(cwd: "/", itemID: "i-1", fileExists: { _ in false }, readStdin: {
             Data(#"{"hook_event_name":"Stop","session_id":"s9","last_assistant_message":"ok"}"#.utf8)

@@ -1004,7 +1004,8 @@ final class AppModel {
         NSApp?.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
     }
 
-    func handleHookReport(item id: ItemID, state: String?, message: String?, session: String?) {
+    func handleHookReport(item id: ItemID, tool: String?, state: String?, message: String?, session: String?) {
+        if let tool, case .terminal(let spec)? = anyItem(id)?.content, !spec.acceptsHook(from: tool) { return }
         if let session, !session.isEmpty {
             if let index = workspaces.firstIndex(where: { $0.item(id) != nil }) {
                 workspaces[index].updateItem(id) { item in

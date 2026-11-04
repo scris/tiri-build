@@ -18,14 +18,17 @@ public enum CLIParser {
         public var cwd: String
         public var itemID: String?
         public var workspace: String?
+        /// `CLAUDE_CODE_ENTRYPOINT`, which Claude Code sets for its own hooks.
+        public var claudeEntrypoint: String?
         public var fileExists: @Sendable (String) -> Bool
         public var readStdin: @Sendable () -> Data
-        public init(cwd: String, itemID: String?, workspace: String? = nil,
+        public init(cwd: String, itemID: String?, workspace: String? = nil, claudeEntrypoint: String? = nil,
                     fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
                     readStdin: @escaping @Sendable () -> Data = { FileHandle.standardInput.readDataToEndOfFile() }) {
             self.cwd = cwd
             self.itemID = itemID
             self.workspace = workspace
+            self.claudeEntrypoint = claudeEntrypoint
             self.fileExists = fileExists
             self.readStdin = readStdin
         }
@@ -215,10 +218,11 @@ public enum CLIParser {
                 throw UsageError("usage: tiri hook claude|codex [payload]   (reads the payload from stdin)")
             }
             guard let item = environment.itemID else { return .quietSuccess }
+            if tool == "claude", AgentHookEvent.isOneShotClaude(entrypoint: environment.claudeEntrypoint) { return .quietSuccess }
             let payload = args.count > 1 ? Data(args[1].utf8) : environment.readStdin()
             let event = tool == "claude" ? AgentHookEvent.parseClaude(payload) : AgentHookEvent.parseCodex(payload)
             guard let event else { return .quietSuccess }
-            var body: [String: JSONValue] = ["item": .string(item)]
+            var body: [String: JSONValue] = ["item": .string(item), "tool": .string(tool)]
             if let state = event.state { body["state"] = .string(state) }
             if let message = event.message { body["message"] = .string(message) }
             if let session = event.sessionID { body["session"] = .string(session) }

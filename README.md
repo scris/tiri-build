@@ -128,6 +128,8 @@ Without hooks, Tiri estimates status from terminal activity, which is less preci
 
 **Turning them on:** Settings has an Agent Status section with an Install button for Claude Code and Codex, and Tiri offers the first time it sees one run. Your agent can start it too, with `tiri hooks install claude`. Either way Tiri shows what it will add and waits for your yes. It keeps your other hooks and settings, leaves a copy of the file next to it, and can remove its entries again.
 
+A `claude -p` run doesn't report, whether a session or a script started it, so it can't change the tab's status or which conversation comes back after a relaunch. Neither can one agent running inside another's terminal.
+
 Outside Tiri these hooks do nothing and print nothing, so they're safe to leave on. Codex asks you to trust hooks once, in `/hooks`.
 
 ## Dark mode

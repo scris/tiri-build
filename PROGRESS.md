@@ -9,7 +9,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - `swift test`: unit tests for the model, path parsing, persistence, import, settings, keybindings, CLI and an in-process control server.
 - `scripts/e2e.sh`: drives a real app through every CLI command, with isolated state.
 - Real launches, driven with real mouse and keyboard events and checked with window screenshots.
-- Real Claude Code sessions in Tiri terminals, in a scratch project: prompts, status, ⌘-clicking its output, relaunch and resume. Codex was launched to confirm its TUI renders, but no session was run.
+- Real Claude Code sessions in Tiri terminals, in a scratch project: prompts, status, ⌘-clicking its output, relaunch and resume, and a session running a nested `claude -p`, before and after the fix. Codex was launched to confirm its TUI renders, but no session was run.
 - Real folders, read-only, at their true paths: `~/ai-hotpoints-2026`, `~/nvcm-agent`, `~/mgx-dev`, `~/Documents/tiri`, and the real `seenot-web.code-workspace` in `~/Documents`, after you allowed access. No prompt appeared.
 - Dark mode on every viewer, on a virtual display, with real PDF, PowerPoint, Excel (51 MB) and Word files as temporary copies. Measured brightness in the content area confirms dark, light, and switching live both ways.
 - Real project contents, as copies with the same relative layout: `seenot-web.code-workspace` and its three folders, plus Office, PDF, HEIC, video and other files.
@@ -78,7 +78,8 @@ Open times run from the request until the content is showing, except for Office 
 - ⌘-clicking a labelled hyperlink whose target has no scheme can still show SwiftTerm's "Link blocked" alert, because SwiftTerm doesn't expose link targets. Text that looks like a path never reaches it. Fixing it needs a patch to SwiftTerm.
 - In dark mode, photos inside a PDF or Office file invert with the page, because the viewer can't tell them apart. The moon button shows true colors.
 - Large Office files show Quick Look's spinner for a few seconds before they appear.
-- A nested `claude -p` inside a hooked terminal can overwrite the stored session ID, so a relaunch resumes the wrong conversation.
+- A `codex exec` inside a Codex terminal may still overwrite the stored session ID, because nothing yet tells it apart from the session. Not tested with a real run.
+- Ignoring `claude -p` runs depends on `CLAUDE_CODE_ENTRYPOINT`, read from real hooks in Claude Code 2.1.318. If Claude Code changes it, those runs report again.
 - Status without hooks is an estimate. A long silent pause can read as done.
 - Multi-line link context isn't handled, such as a `16:5` under a path line from ripgrep.
 - Hard-wrap joining for paths is a heuristic, and hasn't been seen against a long real path from Claude.

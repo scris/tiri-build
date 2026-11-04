@@ -10,7 +10,8 @@ let environment = ProcessInfo.processInfo.environment
 let cliEnvironment = CLIParser.Environment(
     cwd: FileManager.default.currentDirectoryPath,
     itemID: environment["TIRI_ITEM_ID"],
-    workspace: environment["TIRI_WORKSPACE"]
+    workspace: environment["TIRI_WORKSPACE"],
+    claudeEntrypoint: environment["CLAUDE_CODE_ENTRYPOINT"]
 )
 
 let arguments = Array(CommandLine.arguments.dropFirst())
