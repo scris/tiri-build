@@ -174,7 +174,16 @@ final class TiriTerminalView: LocalProcessTerminalView {
         // resolves and hands back through `requestOpenLink`.
         if event.modifierFlags.contains(.command) {
             let variants = logicalLines(atWindowPoint: event.locationInWindow)
-            if followLink(in: variants, forceTab: event.modifierFlags.contains(.shift)) {
+            let forceTab = event.modifierFlags.contains(.shift)
+            var followed = followLink(in: variants, forceTab: forceTab)
+            if !followed {
+                let local = convert(event.locationInWindow, from: nil)
+                let size = cellSize
+                if size.width > 0, size.height > 0 {
+                    followed = followLocationUnderPath(row: Int((bounds.height - local.y) / size.height), column: Int(local.x / size.width), forceTab: forceTab)
+                }
+            }
+            if followed {
                 swallowNextMouseUp = true
                 return
             }
@@ -232,7 +241,14 @@ final class TiriTerminalView: LocalProcessTerminalView {
     /// What a ⌘-click does, and what `tiri follow` does.
     /// Returns false when the text there isn't a link and doesn't look like a path at all.
     func followLink(row: Int, column: Int, forceTab: Bool) -> Bool {
-        followLink(in: logicalLines(row: row, column: column), forceTab: forceTab)
+        if followLink(in: logicalLines(row: row, column: column), forceTab: forceTab) { return true }
+        return followLocationUnderPath(row: row, column: column, forceTab: forceTab)
+    }
+
+    private func followLocationUnderPath(row: Int, column: Int, forceTab: Bool) -> Bool {
+        guard let found = locationUnderPath(row: row, column: column) else { return false }
+        open(found.target, forceTab: forceTab)
+        return true
     }
 
     private func followLink(in variants: [(line: LogicalLine, column: Int)], forceTab: Bool) -> Bool {
@@ -318,6 +334,28 @@ final class TiriTerminalView: LocalProcessTerminalView {
         for variant in logicalLines(atWindowPoint: point) {
             if let (target, range) = resolveLink(in: variant.line, column: variant.column) {
                 return (target, variant.line, range)
+            }
+        }
+        let local = convert(point, from: nil)
+        let size = cellSize
+        guard size.width > 0, size.height > 0 else { return nil }
+        let row = Int((bounds.height - local.y) / size.height)
+        let column = Int(local.x / size.width)
+        if let found = locationUnderPath(row: row, column: column), let line = logicalLines(row: row, column: column).first?.line {
+            return (found.target, line, found.range)
+        }
+        return nil
+    }
+
+    /// `16:5` with its path on a line above, the way ripgrep's headings and eslint print them.
+    private func locationUnderPath(row: Int, column: Int) -> (target: LinkTarget, range: Range<Int>)? {
+        let rows = terminalStateSnapshot().visibleRows
+        guard let found = PathLinkDetector.locationUnderPath(atColumn: column, row: row, in: rows.map(\.text)),
+              let resolver = pathResolver() else { return nil }
+        for candidate in found.candidates {
+            let matches = resolver.resolveAll(candidate)
+            if let first = matches.first {
+                return (matches.count == 1 ? .path(first) : .choice(matches), found.range)
             }
         }
         return nil

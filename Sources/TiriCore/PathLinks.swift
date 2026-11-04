@@ -327,6 +327,42 @@ public enum PathLinkDetector {
         return candidate
     }
 
+    /// A location with its path on an earlier line, the way ripgrep's headings and eslint print them:
+    ///
+    ///     src/app.ts
+    ///     16:5:  const x = 1
+    ///
+    /// `rows` are the screen's lines. Nil unless the column is on the number. The path is what's
+    /// on the nearest line above that doesn't start with a number, as in VS Code.
+    public static func locationUnderPath(atColumn column: Int, row: Int, in rows: [String]) -> (candidates: [PathCandidate], range: Range<Int>)? {
+        guard rows.indices.contains(row),
+              let match = rows[row].prefixMatch(of: /( *)(\d+):(\d+)?/) else { return nil }
+        let start = match.1.count
+        let length = match.2.count + 1 + (match.3?.count ?? 0)
+        guard column >= start, column < start + length, let line = Int(match.2) else { return nil }
+        let col = match.3.flatMap { Int($0) }
+        var above = row - 1
+        while above >= 0 {
+            let text = rows[above].trimmingCharacters(in: .whitespaces)
+            // Between groups of context lines, ripgrep prints `--`.
+            if text.first?.isNumber == true || text == "--" {
+                above -= 1
+                continue
+            }
+            guard !text.isEmpty else { return nil }
+            // The whole line first, so a path with spaces works. Then what looks like a path in it,
+            // for a line an agent's output has decorated.
+            var candidates = [PathCandidate(path: text, line: line, col: col, range: start..<(start + length))]
+            for found in Self.candidates(in: rows[above]) where found.path.contains("/") || found.path.contains(".") {
+                if found.path != text {
+                    candidates.append(PathCandidate(path: found.path, line: line, col: col, range: start..<(start + length)))
+                }
+            }
+            return (candidates, start..<(start + length))
+        }
+        return nil
+    }
+
     private static func isBalancedClose(_ character: Character, in token: [Character]) -> Bool {
         let pairs: [Character: Character] = [")": "(", "]": "[", "}": "{"]
         guard let open = pairs[character] else { return false }
