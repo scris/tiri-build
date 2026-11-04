@@ -134,6 +134,7 @@ extension AppModel {
             AppCommand(id: "changesSinceCommit", title: "Changes: Since Last Commit", category: "View") { $0.setChangesScope(.sinceCommit) },
             AppCommand(id: "changesLatestTurn", title: "Changes: Latest Turn", category: "View") { $0.setChangesScope(.latestTurn) },
             AppCommand(id: "changesBranch", title: "Changes: This Branch", category: "View") { $0.setChangesScope(.branch) },
+            AppCommand(id: "conversations", title: "Past Conversations…", category: "Agent") { $0.openConversationPicker() },
             AppCommand(id: "changesRecentCommits", title: "Changes: Recent Commits", category: "View") { $0.setChangesScope(.recentCommits) },
             AppCommand(id: "changesOtherWork", title: "Changes: Other Work", category: "View") { $0.setChangesScope(.otherWork) },
             AppCommand(id: "nextChange", title: "Go to Next Change", category: "Go") { $0.goToChange(forward: true) },
@@ -249,6 +250,7 @@ enum ControlHandler {
         }
         if request.cmd == "worktree.add" { return await worktreeAdd(request) }
         if request.cmd == "work" { return await work(request) }
+        if request.cmd == "conversations" { return await conversations(request) }
         if request.cmd == "remote.connect" { return await remoteConnect(request) }
         if request.cmd == "remote.forward" { return await remoteForward(request) }
         let touched = paths(in: request)
@@ -409,6 +411,47 @@ enum ControlHandler {
     }
 
     @MainActor
+    private static func conversations(_ request: ControlRequest) async -> ControlResponse {
+        let model = AppModel.shared
+        let all = await model.loadConversations()
+        if let session = request.args["open"]?.stringValue {
+            guard let conversation = all.first(where: { $0.session == session || $0.id == session }) else {
+                return .failure(id: request.id, "No conversation \(session). Run tiri conversations to see them.")
+            }
+            guard let path = await model.showConversation(conversation) else { return .failure(id: request.id, "Couldn't read that conversation.") }
+            return .success(id: request.id, .object(["path": .string(path)]))
+        }
+        if let session = request.args["reopen"]?.stringValue {
+            guard let conversation = all.first(where: { $0.session == session || $0.id == session }) else {
+                return .failure(id: request.id, "No conversation \(session). Run tiri conversations to see them.")
+            }
+            model.reopen(conversation)
+            return .success(id: request.id, .object([:]))
+        }
+        if let session = request.args["hand"]?.stringValue {
+            guard let conversation = all.first(where: { $0.session == session || $0.id == session }) else {
+                return .failure(id: request.id, "No conversation \(session). Run tiri conversations to see them.")
+            }
+            let wanted = request.args["to"]?.stringValue?.lowercased()
+            guard let preset = model.settings.activePresets.first(where: { $0.name.lowercased() == wanted || $0.command.lowercased().hasPrefix(wanted ?? "\u{0}") }) else {
+                return .failure(id: request.id, "No agent called \(wanted ?? "that") in the New Terminal menu.")
+            }
+            guard let path = await model.showConversation(conversation) else { return .failure(id: request.id, "Couldn't read that conversation.") }
+            model.hand(conversation, shownAt: path, to: preset)
+            return .success(id: request.id, .object(["path": .string(path)]))
+        }
+        var shown = all
+        if let words = request.args["query"]?.stringValue, !words.isEmpty {
+            let lower = words.lowercased()
+            let said = await model.conversationsSaying(words, among: all)
+            shown = all.filter { $0.title.lowercased().contains(lower) || said.contains($0) }
+        }
+        return .success(id: request.id, .array(shown.prefix(100).map { conversation in
+            .object(["session": .string(conversation.session), "agent": .string(conversation.agent), "title": .string(AgentHookEvent.promptLine(conversation.title) ?? ""),
+                     "cwd": .string(conversation.cwd ?? ""), "when": .string(RelativeTime.text(conversation.date))])
+        }))
+    }
+
     private static func work(_ request: ControlRequest) async -> ControlResponse {
         let folders = AppModel.shared.active.folders
         let lines = await Task.detached(priority: .userInitiated) { Git.otherWork(in: folders) }.value

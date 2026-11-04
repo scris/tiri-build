@@ -35,7 +35,8 @@ launch_in_background() {
   : >"$DIR/app.log"
   open -g -n -a "$APP" --stdout "$DIR/app.log" --stderr "$DIR/app.log" \
     --env TIRI_HOME="$TIRI_HOME" --env TIRI_CONFIG_HOME="$TIRI_CONFIG_HOME" --env TIRI_SOCKET="$TIRI_SOCKET" --env TIRI_DEV_OFFSCREEN=1 \
-    ${TIRI_SSH_CONFIG:+--env TIRI_SSH_CONFIG="$TIRI_SSH_CONFIG"}
+    ${TIRI_SSH_CONFIG:+--env TIRI_SSH_CONFIG="$TIRI_SSH_CONFIG"} \
+    ${TIRI_CONVERSATIONS_HOME:+--env TIRI_CONVERSATIONS_HOME="$TIRI_CONVERSATIONS_HOME"}
   for _ in $(seq 1 50); do
     pid="$(pgrep -f "$NAME/TiriDev.app/Contents/MacOS/Tiri" | head -1 || true)"
     [ -n "$pid" ] && break

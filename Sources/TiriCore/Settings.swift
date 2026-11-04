@@ -442,6 +442,7 @@ public enum Keymap {
             ("alt+z", "toggleWordWrap"),
             ("cmd+shift+o", "symbolsInFile"),
             ("cmd+t", "symbolsInWorkspace"),
+            ("cmd+shift+h", "conversations"),
             ("cmd+=", "zoomIn"),
             ("cmd+shift+=", "zoomIn"),
             ("cmd+-", "zoomOut"),

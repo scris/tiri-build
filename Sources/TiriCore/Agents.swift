@@ -101,6 +101,12 @@ public struct AgentProfile: Sendable, Identifiable {
     /// a resume, like a network or login failure, leaves the conversation worth keeping.
     public var nothingToResume: [String] = []
 
+    // Its past conversations, in its own files, under its configuration folder.
+    public var conversationFiles: String? = nil
+    public var conversationFormat: ConversationFormat? = nil
+    /// Which lines of one say what it's about. The first prompt can be megabytes in.
+    public var conversationStart: String? = nil
+
     public var hookCommand: String { "tiri hook \(id) 2>/dev/null || true" }
 
     /// How to write a file and maybe some of its lines, which count from zero here.
@@ -137,7 +143,9 @@ public enum AgentCatalog {
             hookInstall: .jsonSettings(file: "settings.json"),
             hookEvents: ["SessionStart", "UserPromptSubmit", "PermissionRequest", "PostToolUse", "Notification", "Stop", "StopFailure"],
             parseHook: { AgentHookEvent.parseClaude($0) }, claimsHookPayload: nil, alsoRunsHooksOf: nil,
-            hookExample: AgentGuide.claudeHooks, nothingToResume: ["No conversation found"]),
+            hookExample: AgentGuide.claudeHooks, nothingToResume: ["No conversation found"],
+            conversationFiles: "projects/*/*.jsonl", conversationFormat: .claude,
+            conversationStart: "\"type\": ?\"user\""),
         AgentProfile(
             id: "codex", title: "Codex", command: "codex", website: "https://github.com/openai/codex",
             symbol: "chevron.left.forwardslash.chevron.right",
@@ -149,7 +157,9 @@ public enum AgentCatalog {
             configDirectory: ".codex", configDirectoryVariable: "CODEX_HOME",
             hookInstall: .tomlSection(file: "config.toml"), hookEvents: ["PermissionRequest"],
             parseHook: { AgentHookEvent.parseCodex($0) }, claimsHookPayload: nil, alsoRunsHooksOf: nil,
-            hookExample: AgentGuide.codexHooks, nothingToResume: ["No saved session found"]),
+            hookExample: AgentGuide.codexHooks, nothingToResume: ["No saved session found"],
+            conversationFiles: "sessions/*/*/*/*.jsonl", conversationFormat: .codex,
+            conversationStart: "\"type\": ?\"session_meta\"|\"role\": ?\"user\""),
         AgentProfile(
             id: "grok", title: "Grok", command: "grok", website: "https://x.ai/cli", symbol: "bolt",
             executableNames: ["grok"], pathFragments: ["/.grok/downloads/grok-", "/.grok/bin/"],
@@ -165,7 +175,9 @@ public enum AgentCatalog {
             claimsHookPayload: { $0.range(of: Data("\"hookEventName\"".utf8)) != nil },
             alsoRunsHooksOf: "claude", hookExample: AgentGuide.grokHooks,
             // It looks on a server too, so a network failure here must not look like this.
-            nothingToResume: ["session get failed: 404"]),
+            nothingToResume: ["session get failed: 404"],
+            conversationFiles: "sessions/*/*/chat_history.jsonl", conversationFormat: .grok,
+            conversationStart: "\"type\": ?\"user\""),
     ]
 
     /// Whether a resume that just failed said there's nothing to come back to. An agent with no entry

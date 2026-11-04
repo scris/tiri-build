@@ -126,6 +126,18 @@ public enum CLIParser {
             }
             return request("notebook." + action, payload)
 
+        case "conversations":
+            let usage = "usage: tiri conversations [words] | open <session> | reopen <session> | hand <session> <agent>"
+            if args.first == "open" || args.first == "reopen" {
+                guard args.count == 2 else { throw UsageError(usage) }
+                return request("conversations", [args[0]: .string(args[1])])
+            }
+            if args.first == "hand" {
+                guard args.count == 3 else { throw UsageError(usage) }
+                return request("conversations", ["hand": .string(args[1]), "to": .string(args[2])])
+            }
+            return request("conversations", args.isEmpty ? [:] : ["query": .string(args.joined(separator: " "))])
+
         case "work":
             guard args.isEmpty else { throw UsageError("usage: tiri work   (branches and worktrees besides this one, in plain terms)") }
             return request("work")

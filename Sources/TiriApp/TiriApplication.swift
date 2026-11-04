@@ -132,6 +132,7 @@ struct TiriMenus: Commands {
             item("nextTab")
             item("previousTab")
             item("nextAttention")
+            item("conversations")
             Divider()
             item("nextChange")
             item("previousChange")

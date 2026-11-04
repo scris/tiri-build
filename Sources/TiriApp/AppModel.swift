@@ -134,6 +134,8 @@ final class AppModel {
     var otherWork: [WorkLine] = []
     @ObservationIgnored var otherWorkInFlight = false
     @ObservationIgnored var otherWorkAt: Double = 0
+    @ObservationIgnored var conversationsLoaded: [ConversationSummary]?
+    @ObservationIgnored var conversationsLoading = false
     @ObservationIgnored var otherWorkWorkspace: WorkspaceID?
     @ObservationIgnored private var watchTicks = 0
     var scopeIsLoading = false

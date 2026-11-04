@@ -54,6 +54,10 @@ Fetch, pull and push are one click in the bottom bar. If one of them can't do th
 
 The **Agents** section of the sidebar has every running agent, in every workspace: what you last asked it, what it just did, and how many files it's changed. Click one to go there. It reads what agents report through their hooks, and `tiri activity` prints the same.
 
+## Past conversations
+
+⇧⌘H, or the clock in the Agents section, lists your Claude Code, Codex and Grok conversations, this workspace's first. Type to search everything said in them. Return reads one as a document, with what was said and what was done in a line each. **Reopen** (⌘↩ in the list) carries on with it in a terminal, in the folder it was in, and **Hand To** asks another agent to read it and carry on. It works the same on a server, for that server's conversations. Tiri only reads the agents' own files, and what it writes for reading stays private to you. `tiri conversations [words]`, `open`, `reopen` and `hand` do the same for agents.
+
 ## Tell an agent about a change
 
 Hover over a change in a diff and press **Undo** or **Ask**, or right-click for those and **Undo All Changes in This File**. The request goes to the agent that made the change, typed into its input for you to send, with the change quoted. If Tiri can't tell who made it, it asks.

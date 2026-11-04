@@ -679,6 +679,9 @@ struct FileActions: View {
             .font(.caption)
             .help("Open \((pdf as NSString).lastPathComponent) to the Side")
         }
+        if model.accessReady, let conversation = model.conversation(shownAt: path) {
+            ConversationBar(conversation: conversation, path: path)
+        }
         if model.accessReady, let notebook = model.controller(for: item.id) as? MarkdownController, notebook.isNotebook, !notebook.showingSource, notebook.canToggleSource {
             NotebookBar(viewer: notebook, kernel: model.notebookKernels.kernel(for: notebook.path))
         }

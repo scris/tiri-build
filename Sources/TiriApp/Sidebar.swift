@@ -101,6 +101,12 @@ struct SidebarView: View {
             let agents = model.agentRows
             if !agents.isEmpty {
                 sectionHeader("Agents", isOpen: $agentsOpen) {
+                    Button { model.openConversationPicker() } label: {
+                        Image(systemName: "clock.arrow.circlepath").font(.system(size: 10.5))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Past Conversations (⇧⌘H)")
                     Text("\(agents.count)")
                         .foregroundStyle(.tertiary)
                         .font(.caption)
