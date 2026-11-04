@@ -853,6 +853,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// happened long ago, and isn't asking for anything now.
     private var replayEndsAt: Double = 0
     private var isReplaying: Bool { ProcessClock.now() < replayEndsAt }
+    private var spawnedAt: Double = 0
 
     private func spawn() {
         if remoteDestination != nil {
@@ -860,6 +861,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             return
         }
         if TerminalSessions.isAlive(itemID) { replayEndsAt = ProcessClock.now() + 2000 }
+        spawnedAt = ProcessClock.now()
         let backend: TerminalBackend = LocalTerminalBackend()
         let launch = backend.launch(command: launchCommand, cwd: currentDirectory, shell: model.settings.terminalShell,
                                     itemID: itemID, workspaceID: workspaceID, socket: model.socketPath)
@@ -1264,6 +1266,12 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         sessionUp = false
         if handleEndOverSSH(exitCode: exitCode) { return }
         exited = true
+        // A session that never got a prompt has no conversation to resume, and the agent says so and
+        // quits. That's not worth a dead end after a reboot: start it fresh, which is what Restart does.
+        if !isRemote, launchCommand != nil, launchCommand != spec.command, let exitCode, exitCode != 0, ProcessClock.now() - spawnedAt < 15_000 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.restart() }
+            return
+        }
         model.updateRuntime(itemID) { runtime in
             runtime.status = .exited
             runtime.exitCode = exitCode
