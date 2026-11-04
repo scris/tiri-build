@@ -786,7 +786,9 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             return
         }
 
-        if launchCommand == nil {
+        // An agent typed at a shell's prompt is judged as an agent. Sitting at its own prompt isn't
+        // work, though the shell behind it is waiting, and after a relaunch no hook has spoken yet.
+        if launchCommand == nil, typed == nil {
             // Plain shells: busy means something other than the shell is in the foreground.
             if isShellBusy {
                 if foregroundBusySince == nil { foregroundBusySince = now }
