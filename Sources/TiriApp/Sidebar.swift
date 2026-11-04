@@ -487,7 +487,7 @@ struct AgentOverviewRowView: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { model.focusFromNotification(workspace: row.workspaceID, item: row.item) }
+        .onTapGesture { model.focusItem(row.item) }
         .help(row.agent + (row.files.isEmpty ? "" : ": " + row.files.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")))
     }
 }

@@ -584,7 +584,9 @@ enum ControlHandler {
             return .object(["item": .string(model.openWeb(url: target, split: split(request), in: sourceWorkspace))])
 
         case "term":
-            let cwd = request.args["cwd"]?.stringValue
+            var cwd = request.args["cwd"]?.stringValue
+            // Run on the Mac with a server's workspace in front, where it was run from means nothing there.
+            if let given = cwd, let destination = model.active.remote, model.remote.existingConnection(destination)?.map.contains(given) != true { cwd = nil }
             if let cwd {
                 var isDirectory: ObjCBool = false
                 guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDirectory), isDirectory.boolValue else {
@@ -595,7 +597,7 @@ enum ControlHandler {
             return .object(["item": .string(id)])
 
         case "activate":
-            NSApp.activate(ignoringOtherApps: true)
+            AppModel.bringAppForward()
             return .object([:])
 
         case "activity":

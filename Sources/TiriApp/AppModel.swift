@@ -1038,6 +1038,13 @@ final class AppModel {
     }
 
     private func defaultTerminalDirectory() -> String {
+        let directory = directoryOfFrontItem()
+        // On a server, somewhere that isn't on it would mean starting in the home folder there.
+        if let destination = active.remote, remote.existingConnection(destination)?.map.contains(directory) != true, let folder = active.folders.first { return folder }
+        return directory
+    }
+
+    private func directoryOfFrontItem() -> String {
         if let item = active.activeItem {
             switch item.content {
             case .terminal(let spec):
@@ -1141,8 +1148,14 @@ final class AppModel {
         }
     }
 
-    func focusFromNotification(workspace: WorkspaceID, item: ItemID) {
+    /// A test copy never comes forward: someone may be using this Mac.
+    static func bringAppForward() {
+        guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] != "1" else { return }
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func focusFromNotification(workspace: WorkspaceID, item: ItemID) {
+        Self.bringAppForward()
         window?.makeKeyAndOrderFront(nil)
         focusItem(item)
     }

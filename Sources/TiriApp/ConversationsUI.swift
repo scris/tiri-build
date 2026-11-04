@@ -201,8 +201,8 @@ extension AppModel {
             showToast(title: "That folder isn't there any more", detail: directory, symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
-        let id = newTerminal(command: command, cwd: directory, in: target?.id)
-        focusFromNotification(workspace: target?.id ?? activeID, item: id)
+        // Not bringing the app forward: an agent can ask for this while you're elsewhere.
+        focusItem(newTerminal(command: command, cwd: directory, in: target?.id))
     }
 
     /// Another agent picks it up by reading it, which works whichever agents they are.

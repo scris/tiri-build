@@ -1260,7 +1260,7 @@ extension AppModel {
     func answerSSHQuestion(_ prompt: String, host: String) async -> String? {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let isConfirmation = text.lowercased().contains("(yes/no")
-        NSApp.activate(ignoringOtherApps: true)
+        AppModel.bringAppForward()
         let alert = NSAlert()
         alert.alertStyle = isConfirmation ? .warning : .informational
         let name = host.isEmpty ? "this server" : host
