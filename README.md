@@ -54,6 +54,12 @@ Fetch, pull and push are one click in the bottom bar. If one of them can't do th
 
 The **Agents** section of the sidebar has every running agent, in every workspace: what you last asked it, what it just did, and how many files it's changed. Click one to go there. It reads what agents report through their hooks, and `tiri activity` prints the same.
 
+## Web pages agents can see
+
+Agents working on a page can read it for themselves, so you don't have to copy anything across. `tiri web console` has what it logged and its errors, `network` what it fetched and how that went, and `shot` saves a picture of it and says where. `text` is what it says, `click` and `type` use it, and `eval` runs anything in it. Add `--errors` or `--failed` for what's wrong, and `--item` when several pages are open. On a server the picture goes to that server.
+
+You've got two buttons of your own beside the address. A count appears when the page has errors, and clicking it quotes them in your agent. ◎ lets you point at something on the page: click it and your agent gets where it is and its HTML. Esc cancels. Scripts on the page can't see that you're picking.
+
 ## Past conversations
 
 ⇧⌘H, or the clock in the Agents section, lists your Claude Code, Codex and Grok conversations, this workspace's first. Type to search everything said in them. Return reads one as a document, with what was said and what was done in a line each. **Reopen** (⌘↩ in the list) carries on with it in a terminal, in the folder it was in, and **Hand To** asks another agent to read it and carry on. It works the same on a server, for that server's conversations. Tiri only reads the agents' own files, and what it writes for reading stays private to you. `tiri conversations [words]`, `open`, `reopen` and `hand` do the same for agents.

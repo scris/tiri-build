@@ -134,6 +134,7 @@ extension AppModel {
             AppCommand(id: "changesSinceCommit", title: "Changes: Since Last Commit", category: "View") { $0.setChangesScope(.sinceCommit) },
             AppCommand(id: "changesLatestTurn", title: "Changes: Latest Turn", category: "View") { $0.setChangesScope(.latestTurn) },
             AppCommand(id: "changesBranch", title: "Changes: This Branch", category: "View") { $0.setChangesScope(.branch) },
+            AppCommand(id: "pickOnPage", title: "Web: Pick Something on the Page", category: "Agent") { $0.frontWebController?.startPicking() },
             AppCommand(id: "conversations", title: "Past Conversations…", category: "Agent") { $0.openConversationPicker() },
             AppCommand(id: "changesRecentCommits", title: "Changes: Recent Commits", category: "View") { $0.setChangesScope(.recentCommits) },
             AppCommand(id: "changesOtherWork", title: "Changes: Other Work", category: "View") { $0.setChangesScope(.otherWork) },
@@ -250,6 +251,7 @@ enum ControlHandler {
         }
         if request.cmd == "worktree.add" { return await worktreeAdd(request) }
         if request.cmd == "work" { return await work(request) }
+        if request.cmd.hasPrefix("web.") { return await AppModel.shared.webCommand(request) }
         if request.cmd == "conversations" { return await conversations(request) }
         if request.cmd == "remote.connect" { return await remoteConnect(request) }
         if request.cmd == "remote.forward" { return await remoteForward(request) }
@@ -619,9 +621,14 @@ enum ControlHandler {
             return .object([:])
 
         case "dev.page":
-            guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", let script = request.args["script"]?.stringValue,
-                  let viewer = model.frontNotebook else { throw ControlFailure("Only for a test copy.") }
-            viewer.runInPage(script)
+            guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", let script = request.args["script"]?.stringValue else { throw ControlFailure("Only for a test copy.") }
+            if let web = model.frontWebController {
+                web.webView.evaluateJavaScript(script, in: nil, in: .defaultClient) { _ in }
+            } else if let viewer = model.frontNotebook {
+                viewer.runInPage(script)
+            } else {
+                throw ControlFailure("Nothing to run that in.")
+            }
             return .object([:])
 
         case "notebook.status", "notebook.run", "notebook.interrupt", "notebook.restart", "notebook.stop":

@@ -42,6 +42,14 @@ public enum CLIOutput {
             if let queued = response.result?["queued"]?.arrayValue, !queued.isEmpty { parts.append("\(queued.count) queued") }
             if let python = response.result?["python"]?.stringValue { parts.append(python) }
             say(parts.joined(separator: "\t"))
+        case "web.console", "web.network":
+            for line in response.result?.arrayValue ?? [] { say(line.stringValue ?? "") }
+        case "web.shot":
+            say(cell(response.result?["path"]))
+        case "web.text", "web.eval":
+            say(response.result?.stringValue ?? "")
+        case "web.click", "web.type":
+            break
         case "conversations":
             if let path = response.result?["path"]?.stringValue {
                 say(path)

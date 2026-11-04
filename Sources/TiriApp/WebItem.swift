@@ -30,6 +30,10 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
     var isLoading = false
     /// nil follows the `web.forceDark` setting.
     var forceDarkOverride: Bool?
+    var errorCount = 0
+    var picking = false
+    @ObservationIgnored var log: [WebLogEntry] = []
+    @ObservationIgnored var requests: [WebRequestEntry] = []
 
     var view: NSView { container }
 
@@ -70,6 +74,7 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        installTools()
         container.show(webView)
         webView.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         webView.onSelectionChange = { [weak self] selection, top in
@@ -108,6 +113,10 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
     }
 
     // MARK: Navigation
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        pageStarted()
+    }
 
     func load(_ url: URL) {
         requested = url

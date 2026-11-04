@@ -37,6 +37,9 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | Waking from real sleep on a server workspace | Dropped connections are tested, and wake triggers the same retry, but the Mac was kept awake | Close the lid, open it |
 | Running a notebook with a real mouse and keyboard | Everything runs for real, with a real kernel, but in a window that was kept in the background: ▶, double-click, ⇧↩ and Esc were sent to the page as events, and hover was only seen as a style. Answering an `input()` prompt was tested against the kernel, and the prompt was only seen | Run All, ▶ on hover, double-click, ⇧↩, a cell with `input()` |
 | A notebook on a Linux server | Tested through a private SSH server on this Mac: run, edit, dropped connection. Its changes reach the Mac on inotify on Linux, which hasn't run with this | Run one on a real server |
+| Hovering over a change, Undo and Ask, and ◎ on a page, with a real mouse | Tested off-screen with stand-in agents and events sent to the view. The routing, the text delivered and the buttons' look are real | Hover in a diff, press Undo. Press ◎ and click something |
+| The Agents section and Undo routing during a real agent's turn | Hook payloads are shaped like real ones and sent through the real CLI, but no real turn ran | Send an agent a prompt and watch the section |
+| A hand-off in a real agent | The prompt reaches a stand-in, and reads as intended. Past conversations are parsed from real files of all three agents, counted but not displayed | Hand To on a real conversation |
 | Quote in Agent from a notebook with a real agent | Tested with a stand-in command | Select in a notebook, press ⌘L with Claude Code running |
 | ⌘T with sourcekit-lsp on a built package | Tested with clangd. An unbuilt Swift package has no index, so it reports nothing | Build, press ⌘T, type a name |
 | The paperclip's picker, Back on a diff in a Peek, the pointer over a change mark | Everything else in these flows had real clicks. These weren't pressed through | Try each once |
@@ -113,19 +116,14 @@ Open times run from the request until the content is showing, except for Office 
 - ⌘-clicking a labelled hyperlink whose target has no scheme can still show SwiftTerm's "Link blocked" alert, because SwiftTerm doesn't expose link targets. Text that looks like a path never reaches it. Fixing it needs a patch to SwiftTerm.
 - In dark mode, photos inside a PDF or Office file invert with the page, because the viewer can't tell them apart. The moon button shows true colors.
 - Large Office files show Quick Look's spinner for a few seconds before they appear.
-- A `grok -p` inside a Grok terminal reports like the session around it, because nothing in its hooks tells them apart. Its session ID can then replace the real one, and the wrong conversation comes back after a relaunch.
-- A `codex exec` inside a Codex terminal may still overwrite the stored session ID, because nothing yet tells it apart from the session. Not tested with a real run.
 - Ignoring `claude -p` runs depends on `CLAUDE_CODE_ENTRYPOINT`, read from real hooks in Claude Code 2.1.318. If Claude Code changes it, those runs report again.
 - Status without hooks is an estimate. A long silent pause can read as done.
-- A tab moved to its own window has no text focus until you click it.
 - ⌘K may not survive a reattach: the session helper isn't told, so it may replay what was cleared. Not tested.
 - With several cursors, line commands like ⌘/ apply to the newest one and drop the rest.
 - On a server, files whose names differ only by case get one place on this Mac, so only the first shows. A toast says so, and terminals see them all.
 - Hard-wrap joining for paths is a heuristic, and hasn't been seen against a long real path from Claude.
 - Tiri shows `.env` files in the tree like any other file, as Cursor does.
 - macOS autocorrect can change words typed in the comment box.
-- ⌘Z with Claude Code focused typed a literal `z` into its input once. It doesn't happen in a plain shell. Not repeated, to avoid more real sessions.
-- A long wrapped command can lose lines on screen after reattaching.
 - Revealing a folder from a ⌘-click selects it, but its children can sit below the visible area.
 - A Latin-1 file shows `�`, with no way to reopen it in another encoding.
 - A file you've deleted stays in quick open until its index refreshes.
@@ -151,10 +149,10 @@ Open times run from the request until the content is showing, except for Office 
 | Compact rows let you click a middle segment | Rows act on the deepest folder | Simpler, and it's almost always what's meant |
 | Hides nothing but `.git` and `.DS_Store` by default | Also hides `node_modules` and `.build` | Spec §9 |
 
-## Next 5 tasks
+## Next tasks
 
-1. A real workday with several agents, because nothing here has had one, and fixing what it finds.
-2. Patch SwiftTerm so a labelled hyperlink with no scheme can't show "Link blocked", and read link targets directly.
-4. Staging and committing from the changes view, if reviewing there makes it wanted.
-5. An MCP wrapper around the control API, now that the CLI is stable.
-6. Completion on request, from the language server, if real use shows people want it. Snippets and AI ghost text are decided against.
+1. Patch SwiftTerm so a labelled hyperlink with no scheme can't show "Link blocked", and read link targets directly.
+2. Highlighting while typing in a notebook cell, and a way to reopen a file in another encoding.
+3. A second window with its own workspace.
+4. An MCP wrapper around the control API, now that the CLI is stable.
+5. Completion on request, from the language server, if real use shows people want it. Snippets and AI ghost text are decided against, and so is any Git control beyond fetch, pull and push: the rest is for agents.

@@ -12,6 +12,20 @@ import Testing
         return request
     }
 
+    @Test func webTools() throws {
+        #expect(try request("web", "console", "--errors", "--lines", "5").args["lines"]?.intValue == 5)
+        #expect(try request("web", "console", "--errors").args["errors"]?.boolValue == true)
+        #expect(try request("web", "network", "--failed", "--item", "i-1").args["item"]?.stringValue == "i-1")
+        #expect(try request("web", "shot").cmd == "web.shot")
+        #expect(try request("web", "click", "#go").args["selector"]?.stringValue == "#go")
+        let typed = try request("web", "type", "#q", "hello")
+        #expect(typed.args["text"]?.stringValue == "hello")
+        #expect(try request("web", "eval", "1+1").args["script"]?.stringValue == "1+1")
+        #expect(throws: CLIParser.UsageError.self) { try request("web", "click") }
+        #expect(throws: CLIParser.UsageError.self) { try request("web", "explode") }
+        #expect(throws: CLIParser.UsageError.self) { try request("web", "console", "--lines", "0") }
+    }
+
     @Test func notebooks() throws {
         let run = try request("notebook", "run", "a.ipynb")
         #expect(run.cmd == "notebook.run")

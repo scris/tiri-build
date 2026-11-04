@@ -126,6 +126,42 @@ public enum CLIParser {
             }
             return request("notebook." + action, payload)
 
+        case "web":
+            let usage = "usage: tiri web console [--errors] [--lines N] | network [--failed] [--lines N] | shot | text | click <selector> | type <selector> <text> | eval <script>   (all take --item <id>)"
+            var options = Options(Array(args.dropFirst()))
+            let item = try options.value("--item")
+            let rawLines = try options.value("--lines")
+            let errors = options.flag("--errors")
+            let failed = options.flag("--failed")
+            var payload: [String: JSONValue] = [:]
+            if let item { payload["item"] = .string(item) }
+            if let rawLines {
+                guard let lines = Int(rawLines), lines > 0 else { throw UsageError(usage) }
+                payload["lines"] = .int(lines)
+            }
+            if errors { payload["errors"] = true }
+            if failed { payload["failed"] = true }
+            switch args.first {
+            case "console", "network", "shot", "text":
+                try options.finish()
+            case "click":
+                guard let selector = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                payload["selector"] = .string(selector)
+            case "type":
+                guard let selector = options.positional(), let text = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                payload["selector"] = .string(selector)
+                payload["text"] = .string(text)
+            case "eval":
+                guard let script = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                payload["script"] = .string(script)
+            default:
+                throw UsageError(usage)
+            }
+            return request("web." + (args.first ?? ""), payload)
+
         case "conversations":
             let usage = "usage: tiri conversations [words] | open <session> | reopen <session> | hand <session> <agent>"
             if args.first == "open" || args.first == "reopen" {
@@ -807,6 +843,10 @@ public enum AgentGuide {
     tiri remote forward 3000              # reach a port on the server from this Mac, and print the address
     tiri notebook run report.ipynb        # run every cell; --cell N for one, counting from 0
     tiri notebook status report.ipynb     # is it still going? Results are in the file as they arrive
+    tiri activity                         # what every running agent is doing
+    tiri work                             # branches and worktrees besides this one, in plain terms
+    tiri conversations [words]            # past conversations of any agent; open, reopen, hand
+    tiri web console --errors             # the open page's errors; also network, shot, text, click, type, eval
     tiri diff src/app.ts                  # floats what changed over your terminal
     tiri diff src/app.ts --tab            # or keeps it as a tab
     ```

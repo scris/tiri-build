@@ -782,6 +782,25 @@ struct WebHeader: View {
                     controller.submitAddress()
                     controller.focus()
                 }
+            if controller.errorCount > 0 {
+                Button { controller.quoteErrors() } label: {
+                    Label("\(controller.errorCount)", systemImage: "exclamationmark.triangle.fill")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.orange)
+                .fixedSize()
+                .help("This page has errors. Click to quote them in your agent.")
+            }
+            Button { controller.startPicking() } label: {
+                Image(systemName: "scope")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(controller.picking ? Color.accentColor : .secondary)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+            .help("Pick something on the page and quote it in your agent")
             Button {
                 controller.toggleForceDark()
             } label: {
