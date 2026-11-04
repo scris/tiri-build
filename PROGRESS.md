@@ -21,32 +21,25 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | What | Why | How to check |
 |---|---|---|
 | The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
-| By hand, with the keyboard and mouse in a focused window | Tested on a virtual display without taking your screen, so these never had a real press: Shift+Enter and Option+Enter in Claude Code, ⌘V with a picture or a copied file, drag and drop, the paperclip's picker, ⌘-clicking a path | Try each one once |
 | Sessions over days, and across a reboot | Quit and relaunch are tested on a real Claude session. A long run isn't | Use it |
 | Resume by session ID on a real session | A relaunch reattaches to the running session, so this only happens after a reboot. The stored ID itself is verified across a relaunch, and `claude --continue` on a real session | Reboot, then see that the agent comes back |
 | Clicking a native notification | Needs the system permission prompt answered. In-app toasts and badges are verified | Allow notifications, then run `tiri notify done --item <id>` in a terminal in another workspace |
 | Codex hooks, and a Codex turn | Its composer is tested with lines and an image, unsent. Hook payloads are tested with documented-format JSON | Settings, Agent Status, then run a session |
-| Clicks on what's new: the switches, Add an Agent and the details in Your Agents, Manage Agents… in the + menu, the Comment button, a comment's mark, the Review section's buttons, the menu in Changes' header, Back and Quote in Agent on a diff | Buttons don't take clicks in an unfocused window. Each one's action is tested through the CLI and commands, and they've all been seen on screen, except the menu in Changes' header, which hasn't been seen open | Try each once |
 | Grok's permission prompt reporting "needs input" | Grok on this Mac runs with always-approve, so a real one never came up. Its payload is read from the docs, and every other Grok event is checked against real ones | Turn always-approve off, then ask Grok for something it has to ask about |
-| A real ⌘-click and ⌘-hover on a name in code | Unfocused windows don't take clicks. Followed through `tiri follow` and F12, which run the same search, but not the hit test under the mouse | Hold ⌘ over a name in a file, then click |
 | rust-analyzer, gopls, pyright, typescript-language-server, ruby-lsp and lua-language-server | clangd and sourcekit-lsp are tested for real: diagnostics, definition, references, hover, an edit on disk, and stopping when idle. On this Mac rust-analyzer is a rustup shim for a component that isn't installed, which did prove that case is reported. The others aren't installed. The protocol they share is the same, but each has its own habits | Open a file in each language, and press F12 on a name |
 | Claude Code asking for diagnostics by itself | The answer is tested through the real WebSocket with a token, the way Claude Code connects. Not watched during a real edit, which needs a real prompt | Ask Claude to make an edit that breaks something, with the file open in Tiri |
 | Per-turn diffs in a real session | Tested with real hook payloads through the real CLI, and real edits on disk. Not during a real agent turn, which needs a real prompt | Choose Latest Turn in Changes, then send your agent a prompt |
-| Seeing the folder panel, and a real ⌘-click on a path | Tested without taking your screen: the panel through accessibility, and the click through `tiri follow`, which runs the same code. An unfocused window doesn't draw the panel or take clicks | Open Tiri, press +, choose Claude Code; then ⌘-click a path |
-| Ask Claude Code against the real agent | Tested with a stand-in command, to avoid a real session on your account | Press Ask Claude Code on the Settings tab |
-| Pressing the agent buttons on the empty screen, and agents appearing after you install one | Buttons don't take clicks in an unfocused window, so tested without taking your screen through the palette command, which runs the same code. Coming back to the app needs real focus | New workspace, press Claude Code, choose a folder |
 | A `codex exec` inside a Claude terminal | Covered by unit tests only, to avoid a real Codex run | Ask a Claude session to run one, then check `tiri items` |
 | Fetch, pull and push against a real remote | Tested with a local bare repository, so no real remote changed. SSH keys, the keychain and push hooks are unproven from the app | Fetch in a real repository, then push something you mean to |
-| Clicking the status bar's buttons | Clicks don't reach an unfocused window, so tested through the palette commands, which run the same code. The confirmation's buttons had real presses through accessibility | Click the arrows and the `↓` and `↑` counts |
 | A real agent's conversation on a server | Testing Claude Code on a server needs your account on it, and credentials weren't copied there. Its screens render, its editor-protocol socket was exercised by a stand-in client with the real token and lock file, and hooks with documented payloads | Connect to a server where you're logged in, run `claude`, and try `/ide`, a Quote in Agent and a turn |
 | A Mac as the server | The helper is built and its commands were run on this Mac, but no full session against Remote Login | Connect to a Mac |
 | A password rather than a key, and one-time codes | Passphrases and unknown hosts had real keystrokes. Passwords and codes go through the same prompt | Connect to a host that asks |
 | Waking from real sleep on a server workspace | Dropped connections are tested, and wake triggers the same retry, but the Mac was kept awake | Close the lid, open it |
 | Quote in Agent from a notebook with a real agent | Tested with a stand-in command | Select in a notebook, press ⌘L with Claude Code running |
-| Wheel scrolling in two columns, the pointer over a mark, ⌘-hover in the left column | Tested with real clicks and keys, but not a real scroll or hover | Scroll a side-by-side diff; hold ⌘ over a name on its left |
 | ⌘T with sourcekit-lsp on a built package | Tested with clangd. An unbuilt Swift package has no index, so it reports nothing | Build, press ⌘T, type a name |
+| The paperclip's picker, Back on a diff in a Peek, the pointer over a change mark | Everything else in these flows had real clicks. These weren't pressed through | Try each once |
+| Dragging from Finder into an agent | Dragging from the explorer into Claude had real events | Drag a file in from Finder |
 | Reduce Transparency, Increase Contrast | Left to the system's glass, as the spec asks, but not exercised | Turn them on in Accessibility settings |
-| Terminal translucency setting | Implemented, not looked at | Set `terminal.translucent` |
 
 ## What works
 
@@ -80,7 +73,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **First run:** the empty screen offers the agents the user's own shell can find, or links to get them. Settings can link `tiri` into `~/.local/bin` for other terminals.
 - **Tree → terminal:** drag inserts a shell-quoted path.
 - **Agent attention:** status on the tab, item list and workspace switcher, toasts, dock badge, jump to next (⌘⇧U), hooks, fallback estimate when there are no hooks.
-- **Session restore:** layout, cwd and terminals. Agents resume. Other commands wait typed at the prompt, so nothing like `./deploy.sh` re-runs by itself.
+- **Session restore:** layout, cwd and terminals. Agents resume, and one with nothing to resume starts fresh. Other commands wait typed at the prompt, so nothing like `./deploy.sh` re-runs by itself.
 - **Dark mode:** every viewer. PDF, Office, iWork, RTF, font and web archive pages are inverted with their colors kept, with a moon button for true colors. Black artwork on transparency gets a light plate.
 - **Viewers:** markdown (rendered and source, with math and Mermaid), Jupyter notebooks (rendered and source), code with light highlighting, images (HEIC, GIF), SVG, PDF (keeps page and zoom on reload), audio, video, HTML, CSV and TSV of any size, Office and iWork through Quick Look, Quick Look for everything else. All reload when the file changes. A `.tex` file offers its PDF to the side.
 - **Web:** address bar, back, forward, reload, auto-reload for local files, forced dark.
@@ -122,7 +115,6 @@ Open times run from the request until the content is showing, except for Office 
 - A `codex exec` inside a Codex terminal may still overwrite the stored session ID, because nothing yet tells it apart from the session. Not tested with a real run.
 - Ignoring `claude -p` runs depends on `CLAUDE_CODE_ENTRYPOINT`, read from real hooks in Claude Code 2.1.318. If Claude Code changes it, those runs report again.
 - Status without hooks is an estimate. A long silent pause can read as done.
-- Once, after Tiri was killed rather than quit, the next launch of a dev copy had no main window until it was quit and opened again. Six later kills and relaunches, by SIGTERM and SIGKILL, couldn't repeat it.
 - A tab moved to its own window has no text focus until you click it.
 - ⌘K may not survive a reattach: the session helper isn't told, so it may replay what was cleared. Not tested.
 - With several cursors, line commands like ⌘/ apply to the newest one and drop the rest.
@@ -130,6 +122,12 @@ Open times run from the request until the content is showing, except for Office 
 - Hard-wrap joining for paths is a heuristic, and hasn't been seen against a long real path from Claude.
 - Tiri shows `.env` files in the tree like any other file, as Cursor does.
 - macOS autocorrect can change words typed in the comment box.
+- ⌘Z with Claude Code focused typed a literal `z` into its input once. It doesn't happen in a plain shell. Not repeated, to avoid more real sessions.
+- A long wrapped command can lose lines on screen after reattaching.
+- Revealing a folder from a ⌘-click selects it, but its children can sit below the visible area.
+- A Latin-1 file shows `�`, with no way to reopen it in another encoding.
+- A file you've deleted stays in quick open until its index refreshes.
+- The `terminal.translucent` setting has no visible effect, because the window behind it is opaque, so it's out of the Settings screen until that's worked out.
 - The first jump to the end of a very long diff lays out everything before it: about a second at 46,000 rows, longer at 180,000.
 - A 4.9 MB markdown file with 46,000 headings takes about 3.7 s to build, off the main thread. A 2,000-formula document takes about 1.3 s.
 

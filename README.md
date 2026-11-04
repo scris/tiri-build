@@ -22,7 +22,7 @@ TIRI_SIGN_IDENTITY="Apple Development: you@example.com (ABCDE12345)" ./build.sh
 
 ## Terminals outlive Tiri
 
-Quit Tiri, update it, or have it crash, and your agents keep working. When it comes back, each terminal reattaches and its screen is redrawn. Closing a terminal's tab is what ends it. A restart of your Mac still ends them, and then agents resume their conversations as before. You can turn this off in Settings, under Agents.
+Quit Tiri, update it, or have it crash, and your agents keep working. When it comes back, each terminal reattaches and its screen is redrawn. An agent with no conversation to resume starts fresh. Closing a terminal's tab is what ends it. A restart of your Mac still ends them, and then agents resume their conversations as before. You can turn this off in Settings, under Agents.
 
 ## Work on a server
 

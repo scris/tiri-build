@@ -810,7 +810,7 @@ struct LanguageStatusItem: View {
                         Text("\(definition.language): starting")
                             .foregroundStyle(.secondary)
                     } else if !model.languageServers.isRunning(definition) {
-                        Text("\(definition.language): searching files")
+                        Text("\(definition.language): no server running")
                             .foregroundStyle(.tertiary)
                     } else {
                         Text(definition.language)
