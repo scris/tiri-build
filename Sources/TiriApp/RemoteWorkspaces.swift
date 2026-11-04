@@ -239,7 +239,8 @@ final class RemoteManager {
                         guard let self else { return [] }
                         return Set(self.model.workspaces.filter { $0.remote == destination }.flatMap { $0.items.map(\.id) })
                     }
-                    for line in listing.text.split(whereSeparator: \.isNewline) where line.hasPrefix(tag + "-") && line.hasSuffix(".sock") {
+                    for line in listing.text.split(whereSeparator: \.isNewline)
+                    where line.hasPrefix(tag + "-") && line.hasSuffix(".sock") && line != tag + "-control.sock" {
                         let item = String(line.dropFirst(tag.count + 1).dropLast(5))
                         if self != nil, !keep.contains(item) {
                             _ = connection.run("\(ShellQuote.quote(bin + "/tiri-remote")) session kill \(ShellQuote.quote(run + "/" + line))", timeout: 10)
@@ -910,6 +911,37 @@ extension AppModel {
         let workspace = createWorkspace(name: name ?? (remoteFolder as NSString).lastPathComponent, folders: [local], remote: destination)
         remote.syncRoots(destination)
         return workspace
+    }
+
+    /// A Remote-SSH workspace from Cursor or VS Code: connects, then opens its folders together.
+    func importRemoteWorkspace(_ imported: CodeWorkspaceImporter.Imported, host: String) {
+        let name = SSHConfigFile.displayName(of: host)
+        let toast = showToast(title: "Connecting to \(name)…", detail: nil, symbol: "server.rack", tint: .secondary)
+        remote.whenReady(host) { [weak self] result in
+            guard let self else { return }
+            self.dismissToast(toast)
+            switch result {
+            case .failure(let failure):
+                self.showToast(title: "Couldn't connect to \(name)", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
+                               actionTitle: "Try Again") { [weak self] in self?.importRemoteWorkspace(imported, host: host) }
+            case .success(let connection):
+                Task {
+                    let folders = await Task.detached(priority: .userInitiated) { imported.folders.compactMap { connection.resolveFolder($0) } }.value
+                    if folders.count < imported.folders.count {
+                        let missing = imported.folders.count - folders.count
+                        self.showToast(title: "\(missing) folder\(missing == 1 ? "" : "s") not found on \(name)", detail: "Imported the rest of \(imported.name)",
+                                       symbol: "exclamationmark.triangle", tint: .orange)
+                    }
+                    guard let first = folders.first else { return }
+                    self.openRemoteFolder(first, on: host, name: imported.name)
+                    for folder in folders.dropFirst() {
+                        let local = connection.map.local(folder)
+                        try? FileManager.default.createDirectory(atPath: local, withIntermediateDirectories: true)
+                        self.addFolder(local)
+                    }
+                }
+            }
+        }
     }
 
     /// How a path reads to a person: as it is on its server, and with `~` when it's in the home folder.

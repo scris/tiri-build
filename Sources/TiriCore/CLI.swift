@@ -472,6 +472,9 @@ public enum CLIParser {
       tiri reveal <path>
       tiri preview <url-or-path> [--split right]
       tiri term [--cwd DIR] [--cmd "claude"] [--split right]
+      tiri remote                  (servers in use, and how their connections are)
+      tiri remote connect <host> [<folder>]   (a workspace on a server, over SSH)
+      tiri remote disconnect <host> | ports | forward <port>
       tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR>
                      remove-folder <DIR> | import <file.code-workspace> | rename <new-name> | delete <name>
       tiri items
@@ -721,6 +724,8 @@ public enum AgentGuide {
     tiri changes --turn latest            # what the latest turn changed
     tiri diff src/app.ts --turn latest    # one file's changes in it
     tiri git                              # each repository's branch, and commits to pull and push
+    tiri remote connect gpu ~/project     # a workspace on a server: terminals, files, changes and search all work there
+    tiri remote forward 3000              # reach a port on the server from this Mac, and print the address
     tiri diff src/app.ts                  # floats what changed over your terminal
     tiri diff src/app.ts --tab            # or keeps it as a tab
     ```

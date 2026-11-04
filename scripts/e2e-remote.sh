@@ -29,7 +29,7 @@ git init -q .; git add -A; git -c user.email=a@b -c user.name=a commit -qm first
 # Every run starts from nothing, here and there.
 scripts/dev-app.sh stop "$NAME" >/dev/null 2>&1
 rm -rf "${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}/$NAME/home" "${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}/$NAME/config"
-R 'for s in ~/.tiri/run/*.sock; do ~/.tiri/bin/tiri-remote session kill "$s" 2>/dev/null; done; true' 2>/dev/null
+R 'for s in ~/.tiri/run/*-i-*.sock; do ~/.tiri/bin/tiri-remote session kill "$s" 2>/dev/null; done; true' 2>/dev/null
 scripts/dev-app.sh start "$NAME" >/dev/null 2>&1
 has "connects" "tiri-e2e" "$(T remote connect "$HOST" '~/tiri-e2e')"
 has "state" "Connected" "$(T remote)"
@@ -78,7 +78,7 @@ if [ "$ups" -eq 12 ]; then ok "12 more terminals all run"; else bad "12 more ter
 has "commands still work with them" "src/app.py" "$(T search hello)"
 for item in $(T items | grep -F "[tiri-e2e]" | grep terminal | grep -v "$ID" | cut -f1); do T close "$item" >/dev/null 2>&1; done
 sleep 2
-COUNT="$(R 'ls ~/.tiri/run/*.sock 2>/dev/null | grep -vc -e control -e /c- ')"
+COUNT="$(R 'ls ~/.tiri/run/*.sock 2>/dev/null | grep -c -e -i- ')"
 [ "$COUNT" -le 3 ] && ok "closing tabs ends their programs" || bad "closing tabs ends their programs" "$COUNT sockets left"
 
 # The connection dying under a running program
@@ -167,6 +167,6 @@ has "a host that doesn't exist says so" "isn't a host" "$(T remote connect no-su
 has "a folder that doesn't exist says so" "isn't a folder" "$(T remote connect "$HOST" /no/such/folder 2>&1)"
 
 scripts/dev-app.sh stop "$NAME"
-R 'for s in ~/.tiri/run/*.sock; do ~/.tiri/bin/tiri-remote session kill "$s" 2>/dev/null; done; rm -rf ~/tiri-e2e /tmp/tiri-ws.py'
+R 'for s in ~/.tiri/run/*-i-*.sock; do ~/.tiri/bin/tiri-remote session kill "$s" 2>/dev/null; done; rm -rf ~/tiri-e2e /tmp/tiri-ws.py'
 echo; echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

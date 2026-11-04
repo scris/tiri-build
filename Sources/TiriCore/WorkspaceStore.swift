@@ -126,7 +126,7 @@ public enum CodeWorkspaceImporter {
         public var description: String {
             switch self {
             case .unreadable(let why): "Could not read the workspace file: \(why)"
-            case .noFolders: "The workspace file lists no local folders"
+            case .noFolders: "The workspace file lists no folders Tiri can open"
             }
         }
     }
@@ -134,10 +134,40 @@ public enum CodeWorkspaceImporter {
     public struct Imported: Equatable, Sendable {
         public var name: String
         public var folders: [String]
+        /// A workspace on a server, as Remote-SSH writes it. `folders` are then paths on that server.
+        public var remote: String?
+        /// Folders left out because they're on a server and this workspace has local ones.
+        public var skipped = 0
+    }
+
+    /// Where a Remote-SSH folder is: `vscode-remote://ssh-remote+host/path`. The host can be a plain
+    /// name, percent-encoded, or hex-encoded JSON, as VS Code writes when it has more to say.
+    public static func remoteFolder(uri: String) -> (host: String, path: String)? {
+        guard uri.hasPrefix("vscode-remote://") else { return nil }
+        let rest = uri.dropFirst("vscode-remote://".count)
+        guard let slash = rest.firstIndex(of: "/") else { return nil }
+        let authority = String(rest[..<slash]).removingPercentEncoding ?? String(rest[..<slash])
+        guard authority.hasPrefix("ssh-remote+") else { return nil }
+        var host = String(authority.dropFirst("ssh-remote+".count))
+        if host.count % 2 == 0, host.allSatisfy(\.isHexDigit) {
+            var bytes = Data()
+            var index = host.startIndex
+            while index < host.endIndex {
+                let next = host.index(index, offsetBy: 2)
+                bytes.append(UInt8(host[index..<next], radix: 16) ?? 0)
+                index = next
+            }
+            if let json = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any], let name = json["hostName"] as? String {
+                host = (json["user"] as? String).map { $0 + "@" + name } ?? name
+            }
+        }
+        let path = String(rest[slash...]).removingPercentEncoding ?? String(rest[slash...])
+        guard !host.isEmpty, let destination = SSHConfigFile.destination(from: host) else { return nil }
+        return (destination, path)
     }
 
     /// Read the `folders` list of a Cursor/VS Code workspace. Relative paths are resolved
-    /// against the file. Remote and virtual folders (`uri` with a non-file scheme) are skipped.
+    /// against the file. Virtual folders (`uri` with any other scheme) are skipped.
     public static func read(fileAt url: URL) throws -> Imported {
         let data: Data
         do {
@@ -163,8 +193,10 @@ public enum CodeWorkspaceImporter {
         }
         let base = fileURL.deletingLastPathComponent()
         var folders: [String] = []
+        var onServers: [(host: String, path: String)] = []
         for entry in list {
             var resolved: String?
+            if let uri = entry["uri"] as? String, let found = remoteFolder(uri: uri) { onServers.append(found) }
             if let path = entry["path"] as? String {
                 if path.hasPrefix("~/") {
                     resolved = FileManager.default.homeDirectoryForCurrentUser.path + String(path.dropFirst(1))
@@ -181,8 +213,14 @@ public enum CodeWorkspaceImporter {
                 if !folders.contains(standard) { folders.append(standard) }
             }
         }
+        let name = fileURL.deletingPathExtension().lastPathComponent
+        // A workspace is on this Mac or on one server. Local folders win if it's a mixture.
+        if folders.isEmpty, let host = onServers.first?.host {
+            let same = onServers.filter { $0.host == host }
+            return Imported(name: name, folders: same.map(\.path), remote: host, skipped: onServers.count - same.count)
+        }
         guard !folders.isEmpty else { throw ImportError.noFolders }
-        return Imported(name: fileURL.deletingPathExtension().lastPathComponent, folders: folders)
+        return Imported(name: name, folders: folders, skipped: onServers.count)
     }
 }
 

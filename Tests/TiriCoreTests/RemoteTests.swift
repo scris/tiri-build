@@ -132,3 +132,41 @@ import Testing
         #expect(String(decoding: back, as: UTF8.self) == #"{"uri":"file:///cache/gpu/home/a.py"}"#)
     }
 }
+
+@Suite struct CursorRemoteWorkspaceTests {
+    private func imported(_ text: String) throws -> CodeWorkspaceImporter.Imported {
+        try CodeWorkspaceImporter.parse(data: Data(text.utf8), fileURL: URL(fileURLWithPath: "/tmp/team.code-workspace"))
+    }
+
+    @Test func readsAPlainHost() throws {
+        let result = try imported(#"{ "folders": [ { "uri": "vscode-remote://ssh-remote+gpu/home/me/a" }, { "uri": "vscode-remote://ssh-remote%2Bgpu/home/me/b%20c" } ] }"#)
+        #expect(result.remote == "gpu")
+        #expect(result.folders == ["/home/me/a", "/home/me/b c"])
+        #expect(result.name == "team")
+    }
+
+    @Test func readsAHexHost() throws {
+        let hex = Data(#"{"hostName":"box.lab","user":"me"}"#.utf8).map { String(format: "%02x", $0) }.joined()
+        let result = try imported("{ \"folders\": [ { \"uri\": \"vscode-remote://ssh-remote+\(hex)/srv\" } ] }")
+        #expect(result.remote == "me@box.lab")
+        #expect(result.folders == ["/srv"])
+    }
+
+    @Test func aHostCantBeAnOption() {
+        #expect(CodeWorkspaceImporter.remoteFolder(uri: "vscode-remote://ssh-remote+-oProxyCommand=evil/srv") == nil)
+    }
+
+    @Test func localFoldersWinInAMixture() throws {
+        let result = try imported(#"{ "folders": [ { "path": "/tmp/x" }, { "uri": "vscode-remote://ssh-remote+gpu/a" } ] }"#)
+        #expect(result.remote == nil)
+        #expect(result.folders == ["/tmp/x"])
+        #expect(result.skipped == 1)
+    }
+
+    @Test func onlyOneServer() throws {
+        let result = try imported(#"{ "folders": [ { "uri": "vscode-remote://ssh-remote+a/x" }, { "uri": "vscode-remote://ssh-remote+b/y" } ] }"#)
+        #expect(result.remote == "a")
+        #expect(result.folders == ["/x"])
+        #expect(result.skipped == 1)
+    }
+}
