@@ -200,6 +200,7 @@ struct WorkspaceSwitcher: View {
                 Menu {
                     Button("New Workspace…") { model.newWorkspaceInteractive() }
                     Button("Connect to Server…") { model.connectToServerInteractive() }
+                    Button("New Worktree…") { model.newWorktreeInteractive() }
                     Button("Import .code-workspace…") { model.importWorkspaceInteractive() }
                 } label: {
                     Image(systemName: "plus")

@@ -46,7 +46,7 @@ public enum CLIOutput {
             }
         case "remote.forward":
             say("http://localhost:\(response.result?["local"]?.intValue ?? 0)")
-        case "remote.connect":
+        case "remote.connect", "worktree.add":
             say(cell(response.result?["workspace"]))
         case "remote.disconnect":
             break

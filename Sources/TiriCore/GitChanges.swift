@@ -310,7 +310,8 @@ public enum Git {
                 .map { connection.map.remote(String($0)) ?? String($0) }.joined(separator: ":")
         }
         let assignments = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\(ShellQuote.quote($0.value))" }.joined(separator: " ")
-        let script = "cd \(ShellQuote.quote(remote)) && env \(assignments) git \(RemoteShell.arguments(arguments))" + (includeErrors ? " 2>&1" : " 2>/dev/null")
+        let mapped = arguments.map { connection.map.remote($0) ?? $0 }
+        let script = "cd \(ShellQuote.quote(remote)) && env \(assignments) git \(RemoteShell.arguments(mapped))" + (includeErrors ? " 2>&1" : " 2>/dev/null")
         guard let result = connection.run(script, timeout: timeout) else { return nil }
         guard arguments.first == "rev-parse" else { return (result.status, result.output) }
         let lines = result.text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
@@ -389,6 +390,45 @@ public enum Git {
         let chosen = reasons.isEmpty ? Array(lines.suffix(2)) : Array(reasons.prefix(2))
         let text = chosen.joined(separator: " ")
         return text.isEmpty ? "Git stopped without saying why." : text
+    }
+
+    // MARK: Worktrees
+
+    /// Where a branch's worktree goes: beside the repository, in a folder of its own, so it never
+    /// shows up as changes in the repository itself.
+    public static func worktreePath(root: String, branch: String) -> String {
+        let parent = (root as NSString).deletingLastPathComponent
+        let name = (root as NSString).lastPathComponent
+        let slug = branch.replacingOccurrences(of: "/", with: "-")
+        return parent + "/" + name + ".worktrees/" + slug
+    }
+
+    /// The repository's main checkout, even from inside another worktree, which shouldn't nest.
+    public static func mainWorktree(of folder: String) -> String? {
+        guard let current = repositoryRoot(of: folder) else { return nil }
+        guard let result = run(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: current), result.status == 0 else { return current }
+        let common = String(decoding: result.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return common.hasSuffix("/.git") ? String(common.dropLast(5)) : current
+    }
+
+    public static func isPlausibleBranch(_ name: String) -> Bool {
+        !name.isEmpty && !name.hasPrefix("-") && !name.hasSuffix("/") && !name.hasSuffix(".lock") && !name.contains("..")
+            && name.allSatisfy { !$0.isWhitespace && !"~^:?*[\\".contains($0) }
+    }
+
+    /// A second checkout of the repository, so another agent can work at the same time without
+    /// their edits mixing. A branch that exists is checked out there, and otherwise it's made.
+    public static func addWorktree(branch: String, in folder: String) -> Result<String, TransferFailure> {
+        guard isPlausibleBranch(branch) else { return .failure(TransferFailure(message: "\(branch) can't be a branch name.")) }
+        guard let root = mainWorktree(of: folder) else { return .failure(TransferFailure(message: "This folder isn't in a git repository.")) }
+        let path = worktreePath(root: root, branch: branch)
+        let exists = run(["rev-parse", "--verify", "--quiet", "refs/heads/" + branch], in: root)?.status == 0
+        let arguments = exists ? ["worktree", "add", path, branch] : ["worktree", "add", "-b", branch, path]
+        guard let result = run(arguments, in: root, timeout: 300, includeErrors: true) else {
+            return .failure(TransferFailure(message: "Couldn't run git."))
+        }
+        guard result.status == 0 else { return .failure(TransferFailure(message: failureMessage(String(decoding: result.output, as: UTF8.self)))) }
+        return .success(path)
     }
 
     /// Changes under a workspace folder, reported by the path that folder is known by.

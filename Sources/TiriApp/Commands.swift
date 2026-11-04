@@ -37,6 +37,7 @@ extension AppModel {
                 if let path = model.activeFilePath { model.revealInTree(path) }
             },
             AppCommand(id: "newTerminal", title: "New Terminal", category: "Terminal") { $0.startTerminal() },
+            AppCommand(id: "newWorktree", title: "New Worktree…", category: "Workspace") { $0.newWorktreeInteractive() },
             AppCommand(id: "connectToServer", title: "Connect to Server…", category: "File") { $0.connectToServerInteractive() },
             AppCommand(id: "restartTerminal", title: "Restart Exited Terminal", category: "Terminal") { model in
                 if let id = model.active.focused.active {
@@ -221,6 +222,7 @@ enum ControlHandler {
             guard let answer else { return ControlResponse.failure(id: request.id, "Cancelled.") }
             return .success(id: request.id, .object(["answer": .string(answer)]))
         }
+        if request.cmd == "worktree.add" { return await worktreeAdd(request) }
         if request.cmd == "remote.connect" { return await remoteConnect(request) }
         if request.cmd == "remote.forward" { return await remoteForward(request) }
         let touched = paths(in: request)
@@ -359,6 +361,21 @@ enum ControlHandler {
         case .split(let split):
             return .object(["split": .string(split.axis.rawValue), "ratios": .array(split.ratios.map(JSONValue.double)),
                             "children": .array(split.children.map(describe(layout:)))])
+        }
+    }
+
+    @MainActor
+    private static func worktreeAdd(_ request: ControlRequest) async -> ControlResponse {
+        let model = AppModel.shared
+        guard let branch = request.args["branch"]?.stringValue else { return .failure(id: request.id, "Which branch?") }
+        let source = request.args["source"]?.stringValue.flatMap { model.existingController(for: $0) as? TerminalController }?.currentDirectory
+        guard let folder = source ?? model.active.folders.first else { return .failure(id: request.id, "This workspace has no folder.") }
+        // From a terminal it's an agent asking. Where you're looking stays your call.
+        switch await model.addWorktree(branch: branch, from: folder, activating: request.args["source"] == nil).value {
+        case .success(let workspace):
+            return .success(id: request.id, .object(["workspace": .string(workspace.name), "folder": .string(workspace.folders.first ?? "")]))
+        case .failure(let failure):
+            return .failure(id: request.id, failure.message)
         }
     }
 

@@ -94,6 +94,12 @@ public enum CLIParser {
             return request("askpass", ["prompt": .string(args.joined(separator: " ")),
                                        "host": .string(ProcessInfo.processInfo.environment["TIRI_ASKPASS_HOST"] ?? "")])
 
+        case "worktree":
+            guard args.count == 1 else { throw UsageError("usage: tiri worktree <branch>   (a second checkout, as a workspace, for another agent)") }
+            var payload: [String: JSONValue] = ["branch": .string(args[0])]
+            if let item = environment.itemID { payload["source"] = .string(item) }
+            return request("worktree.add", payload)
+
         case "remote":
             let usage = "usage: tiri remote [connect <host> [<folder>] | disconnect <host> | ports | forward <port>]"
             switch args.first {
@@ -472,6 +478,7 @@ public enum CLIParser {
       tiri reveal <path>
       tiri preview <url-or-path> [--split right]
       tiri term [--cwd DIR] [--cmd "claude"] [--split right]
+      tiri worktree <branch>       (a second checkout, as a workspace, so another agent's edits stay apart)
       tiri remote                  (servers in use, and how their connections are)
       tiri remote connect <host> [<folder>]   (a workspace on a server, over SSH)
       tiri remote disconnect <host> | ports | forward <port>

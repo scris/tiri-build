@@ -1279,12 +1279,12 @@ final class AppModel {
     }
 
     @discardableResult
-    func createWorkspace(name: String, folders: [String], remote destination: String? = nil) -> Workspace {
+    func createWorkspace(name: String, folders: [String], remote destination: String? = nil, activating: Bool = true) -> Workspace {
         var workspace = Workspace(name: uniqueName(name), folders: folders)
         workspace.remote = destination
         if !folders.isEmpty { workspace.addInitialTerminal(fallbackCwd: NSHomeDirectory()) }
         workspaces.append(workspace)
-        switchWorkspace(workspace.id)
+        if activating { switchWorkspace(workspace.id) } else { scheduleSave() }
         editorBridge.writeLock()
         return workspace
     }
@@ -1294,6 +1294,46 @@ final class AppModel {
         var number = 2
         while workspaces.contains(where: { $0.name == "\(name) \(number)" }) { number += 1 }
         return "\(name) \(number)"
+    }
+
+    /// Another agent, without their edits mixing with this one's: a worktree of this repository on a
+    /// branch of its own, as a workspace beside this one.
+    func newWorktreeInteractive() {
+        guard let folder = active.activeItem.flatMap({ item -> String? in
+            switch item.content {
+            case .terminal: return (existingController(for: item.id) as? TerminalController)?.currentDirectory
+            case .file(let spec): return active.folder(containing: spec.path)
+            case .diff(let spec): return active.folder(containing: spec.path)
+            default: return nil
+            }
+        }) ?? active.folders.first else {
+            showToast(title: "Open a folder in a git repository first", detail: nil, symbol: "arrow.triangle.branch", tint: .secondary)
+            return
+        }
+        openPrompt(title: "Branch for the new worktree. A new one is made if it doesn't exist.", initial: "") { [weak self] text in
+            self?.addWorktree(branch: text.trimmingCharacters(in: .whitespaces), from: folder)
+        }
+    }
+
+    @discardableResult
+    func addWorktree(branch: String, from folder: String, activating: Bool = true) -> Task<Result<Workspace, Git.TransferFailure>, Never> {
+        let host = active.remote
+        return Task { [weak self] in
+            let (result, root) = await Task.detached(priority: .userInitiated) { (Git.addWorktree(branch: branch, in: folder), Git.mainWorktree(of: folder)) }.value
+            let repository = ((root ?? folder) as NSString).lastPathComponent
+            guard let self else { return .failure(Git.TransferFailure(message: "Tiri is closing.")) }
+            switch result {
+            case .failure(let failure):
+                self.showToast(title: "Couldn't make a worktree for \(branch)", detail: failure.message, symbol: "exclamationmark.triangle", tint: .orange)
+                return .failure(failure)
+            case .success(let path):
+                let name = repository + ": " + branch
+                if let host, let remotePath = self.remote.existingConnection(host)?.map.remote(path) {
+                    return .success(self.openRemoteFolder(remotePath, on: host, name: name, activating: activating))
+                }
+                return .success(self.createWorkspace(name: name, folders: [path], activating: activating))
+            }
+        }
     }
 
     func newWorkspaceInteractive() {

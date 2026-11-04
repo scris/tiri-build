@@ -42,6 +42,10 @@ If a server forbids SSH forwarding, `tiri`, the Peek and agent status still work
 
 `tiri remote` lists the servers, and `tiri remote ports` what's forwarded.
 
+## Two agents, one repository
+
+**New Worktree…** in the workspaces' + menu, or `tiri worktree <branch>`, makes a second checkout of the repository on that branch, beside it in `<repo>.worktrees/`, and opens it as a workspace of its own. Their edits don't mix, so each one's Changes and turns show only its own work. It works on servers too. When you're done, delete the workspace and have an agent run `git worktree remove`.
+
 ## Give your agent lines, files and images
 
 Select lines in any file. Claude Code sees the selection the way it does in VS Code, because Tiri speaks its editor protocol: its status line shows what you've selected and it can read it. Run `/ide` in Claude if it isn't connected.

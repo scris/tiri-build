@@ -170,3 +170,45 @@ import Testing
         #expect(result.skipped == 1)
     }
 }
+
+@Suite struct WorktreeTests {
+    @Test func goesBesideTheRepository() {
+        #expect(Git.worktreePath(root: "/w/proj", branch: "feature/login") == "/w/proj.worktrees/feature-login")
+    }
+
+    @Test(arguments: ["main", "feature/login", "v1.2", "a_b"]) func goodNames(name: String) {
+        #expect(Git.isPlausibleBranch(name))
+    }
+
+    @Test(arguments: ["", "-x", "a b", "a..b", "a/", "x.lock", "a:b", "--orphan"]) func badNames(name: String) {
+        #expect(!Git.isPlausibleBranch(name))
+    }
+
+    @Test func makesOneAndItsBranch() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("tiri-wt-\(UUID().uuidString)").path
+        let root = base + "/proj"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        for arguments in [["init", "-q"], ["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "one"]] {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = arguments
+            process.currentDirectoryURL = URL(fileURLWithPath: root)
+            try process.run()
+            process.waitUntilExit()
+        }
+        guard case .success(let path) = Git.addWorktree(branch: "two/agents", in: root) else {
+            Issue.record("should have made it")
+            return
+        }
+        #expect(path.hasSuffix("proj.worktrees/two-agents"))
+        #expect(FileManager.default.fileExists(atPath: path + "/.git"))
+        if case .success = Git.addWorktree(branch: "two/agents", in: root) { Issue.record("the place is taken") }
+        // From inside that one, the next goes beside the repository too.
+        guard case .success(let next) = Git.addWorktree(branch: "three", in: path) else {
+            Issue.record("should have made the next")
+            return
+        }
+        #expect(next.hasSuffix("proj.worktrees/three"))
+    }
+}

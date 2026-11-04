@@ -708,7 +708,7 @@ enum RemoteRelay {
     private static let allowed: Set<String> = [
         "ping", "items", "open", "reveal", "preview", "term", "focus", "close", "notify", "send", "read", "follow", "select",
         "layout", "tree", "changes", "changes.branch", "changes.commit", "log", "diff", "turns", "git", "search", "diagnostics", "languages", "theme",
-        "review.list", "review.add", "review.remove", "review.clear", "review.send", "remote.forward", "remote.ports",
+        "review.list", "review.add", "review.remove", "review.clear", "review.send", "remote.forward", "remote.ports", "worktree.add",
     ]
     /// These answer about the workspace in front, so that has to be this server's.
     private static let aboutFront: Set<String> = ["layout", "tree", "changes", "changes.branch", "changes.commit", "log", "diff", "turns", "git", "search", "diagnostics", "languages",
@@ -905,16 +905,16 @@ extension AppModel {
 
     /// A workspace for a folder on a server. Starts with a terminal there, like any other.
     @discardableResult
-    func openRemoteFolder(_ remoteFolder: String, on destination: String, name: String? = nil) -> Workspace {
+    func openRemoteFolder(_ remoteFolder: String, on destination: String, name: String? = nil, activating: Bool = true) -> Workspace {
         let connection = remote.connection(destination)
         let local = connection.map.local(remoteFolder)
         if let existing = workspaces.first(where: { $0.remote == destination && $0.folders.contains(local) }) {
-            switchWorkspace(existing.id)
+            if activating { switchWorkspace(existing.id) }
             return existing
         }
         try? FileManager.default.createDirectory(atPath: local, withIntermediateDirectories: true)
         remote.remember(destination: destination, folder: remoteFolder)
-        let workspace = createWorkspace(name: name ?? (remoteFolder as NSString).lastPathComponent, folders: [local], remote: destination)
+        let workspace = createWorkspace(name: name ?? (remoteFolder as NSString).lastPathComponent, folders: [local], remote: destination, activating: activating)
         remote.syncRoots(destination)
         return workspace
     }
