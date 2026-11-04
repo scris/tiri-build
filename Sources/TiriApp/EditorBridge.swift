@@ -558,10 +558,31 @@ enum WebSelectionScript {
     static let source = """
     (function () {
       let pending = null;
+      // Rendered math is a pile of positioned glyphs. As text it's what was written.
+      function selectedText(selection) {
+        if (!selection || selection.rangeCount === 0) return '';
+        const range = selection.getRangeAt(0);
+        const around = range.commonAncestorContainer;
+        const element = around.nodeType === 1 ? around : around.parentElement;
+        const inside = element && element.closest('[data-tex]');
+        if (inside) return inside.dataset.tex;
+        if (!document.querySelector('[data-tex]')) return selection.toString();
+        const copy = range.cloneContents();
+        if (!copy.querySelector('[data-tex]')) return selection.toString();
+        for (const math of copy.querySelectorAll('[data-tex]')) math.replaceWith(math.dataset.tex);
+        for (const block of copy.querySelectorAll('p,div,li,pre,tr,h1,h2,h3,h4,h5,h6,blockquote,section')) block.append('\\n');
+        return copy.textContent.replace(/\\n{3,}/g, '\\n\\n').trim();
+      }
+      document.addEventListener('copy', function (event) {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || !document.querySelector('[data-tex]')) return;
+        event.clipboardData.setData('text/plain', selectedText(selection));
+        event.preventDefault();
+      });
       function report() {
         pending = null;
         const selection = window.getSelection();
-        const text = selection ? selection.toString() : '';
+        const text = selectedText(selection);
         if (!selection || selection.rangeCount === 0 || !text.trim()) {
           window.webkit.messageHandlers.tiriSelection.postMessage({ empty: true });
           return;

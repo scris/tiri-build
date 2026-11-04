@@ -29,9 +29,9 @@ final class HostContainer: NSView {
 /// Serves local files to web views, so markdown's relative images work and pages
 /// can't reach anything except by this route.
 final class LocalFileSchemeHandler: NSObject, WKURLSchemeHandler {
-    static let scheme = "tiri-file"
+    nonisolated static let scheme = "tiri-file"
 
-    static func baseURL(forDirectory directory: String) -> URL {
+    nonisolated static func baseURL(forDirectory directory: String) -> URL {
         var components = URLComponents()
         components.scheme = scheme
         components.host = ""
@@ -142,6 +142,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     private var pendingScrollY: Double?
     private var pendingAnchor: String?
     private var pendingLine: (Int?, Int?)
+    /// Each new render replaces any still under way.
+    private var renderGeneration = 0
 
     var view: NSView { container }
 
@@ -207,28 +209,49 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
             return
         }
         container.show(webView)
-        let source = (try? String(contentsOfFile: path, encoding: .utf8))
-            ?? String(data: FileManager.default.contents(atPath: path) ?? Data(), encoding: .isoLatin1)
-            ?? ""
+        renderGeneration += 1
+        let generation = renderGeneration
+        let path = path
+        let line = pendingLine.0
+        pendingLine = (nil, nil)
         let directory = (path as NSString).deletingLastPathComponent
         let base = LocalFileSchemeHandler.baseURL(forDirectory: directory)
-        let page = MarkdownRenderer.page(markdown: source, baseHref: base.absoluteString, title: (path as NSString).lastPathComponent)
-        if let line = pendingLine.0 {
+        let title = (path as NSString).lastPathComponent
+        // Off the main thread: a long document with lots of math shouldn't stall the app.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let source = (try? String(contentsOfFile: path, encoding: .utf8))
+                ?? String(data: FileManager.default.contents(atPath: path) ?? Data(), encoding: .isoLatin1)
+                ?? ""
+            let rendered = MarkdownRenderer.render(markdown: source, baseHref: base.absoluteString, title: title,
+                                                   extras: Self.extras())
             // Rendered stays rendered: `report.md:40` lands on the section holding line 40.
-            pendingAnchor = MarkdownRenderer.anchor(forLine: line, in: source)
-            pendingLine = (nil, nil)
+            let anchor = line.flatMap { MarkdownRenderer.anchor(forLine: $0, in: source) }
+            await MainActor.run {
+                guard let self, self.renderGeneration == generation else { return }
+                self.load(rendered, base: base, anchor: anchor, keepScroll: keepScroll)
+            }
         }
+    }
+
+    nonisolated private static func extras() -> DocumentExtras {
+        let document = UUID()
+        return DocumentExtras(renderMath: { MathEngine.shared.markup(tex: $0, display: $1, document: document) },
+                              mathStylesheet: { MathEngine.stylesheet })
+    }
+
+    private func load(_ rendered: RenderedDocument, base: URL, anchor: String?, keepScroll: Bool) {
+        if let anchor { pendingAnchor = anchor }
         if keepScroll {
             // Agents rewrite files as they work. A reload shouldn't lose your place.
             webView.evaluateJavaScript("window.scrollY") { [weak self] value, _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.pendingScrollY = value as? Double
-                    self.webView.loadHTMLString(page, baseURL: base)
+                    self.webView.loadHTMLString(rendered.html, baseURL: base)
                 }
             }
         } else {
-            webView.loadHTMLString(page, baseURL: base)
+            webView.loadHTMLString(rendered.html, baseURL: base)
         }
     }
 
