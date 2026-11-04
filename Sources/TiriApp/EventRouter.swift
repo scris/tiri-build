@@ -96,6 +96,7 @@ final class EventRouter {
             }
             // The keys that mean something to what has the keyboard work the same over there.
             if model.runOnFocusedItem(stroke: stroke, in: window) { return nil }
+            if window.firstResponder is TiriTerminalView, stroke.modifiers.contains(.command) { return Self.commandKeyInTerminal(event) }
             return event
         }
         guard let model, event.window === model.window, NSApp.modalWindow == nil, event.window?.attachedSheet == nil,
@@ -132,6 +133,7 @@ final class EventRouter {
         case .passThrough:
             if let terminal = event.window?.firstResponder as? TiriTerminalView {
                 terminal.owner?.noteKeyPress(isReturn: stroke.key == "enter")
+                if stroke.modifiers.contains(.command) { return Self.commandKeyInTerminal(event) }
             }
             return event
         case .pending:
@@ -160,6 +162,14 @@ final class EventRouter {
             model.run(command)
             return nil
         }
+    }
+
+    /// ⌘ belongs to the Mac: copy and paste work through the menu, and anything else does nothing, as in
+    /// Terminal. A program using the kitty keyboard protocol, like Claude Code, would otherwise be told
+    /// ⌘Z was pressed, and takes it for a typed `z`.
+    private static func commandKeyInTerminal(_ event: NSEvent) -> NSEvent? {
+        _ = NSApp.mainMenu?.performKeyEquivalent(with: event)
+        return nil
     }
 
     private func scheduleChordTimeout(after delay: TimeInterval = 2.5, thenRun command: String? = nil) {

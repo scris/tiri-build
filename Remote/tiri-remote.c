@@ -621,6 +621,66 @@ static void json_field(FILE *out, const char *name, const char *value) {
     json_string(out, value, strlen(value));
 }
 
+// The command lines above this process, nearest first. Words are joined with spaces, which is enough
+// for telling which agent ran a hook and whether it was a one-shot.
+static void write_ancestors(FILE *out) {
+    fputs(",\"ancestors\":[", out);
+    int pid = (int)getppid();
+    for (int depth = 0; depth < 16 && pid > 1; depth++) {
+        char line[4096] = "";
+        size_t length = 0;
+        int parent = 0;
+#if defined(__linux__)
+        char path[64];
+        snprintf(path, sizeof path, "/proc/%d/cmdline", pid);
+        int fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            ssize_t got = read(fd, line, sizeof line - 1);
+            close(fd);
+            if (got > 0) {
+                length = (size_t)got;
+                while (length > 0 && line[length - 1] == 0) length--;
+                for (size_t index = 0; index < length; index++) if (line[index] == 0) line[index] = ' ';
+                line[length] = 0;
+            }
+        }
+        snprintf(path, sizeof path, "/proc/%d/stat", pid);
+        fd = open(path, O_RDONLY);
+        if (fd >= 0) {
+            char stat[1024];
+            ssize_t got = read(fd, stat, sizeof stat - 1);
+            close(fd);
+            if (got > 0) {
+                stat[got] = 0;
+                // After the name in brackets, which can hold anything: state, then the parent.
+                char *end = strrchr(stat, ')');
+                if (end) sscanf(end + 1, " %*c %d", &parent);
+            }
+        }
+#else
+        char command[64];
+        snprintf(command, sizeof command, "ps -o ppid=,command= -p %d", pid);
+        FILE *pipe = popen(command, "r");
+        if (pipe) {
+            char row[4096];
+            if (fgets(row, sizeof row, pipe)) {
+                int skip = 0;
+                if (sscanf(row, " %d %n", &parent, &skip) >= 1) {
+                    snprintf(line, sizeof line, "%s", row + skip);
+                    length = strcspn(line, "\n");
+                    line[length] = 0;
+                }
+            }
+            pclose(pipe);
+        }
+#endif
+        if (depth) fputc(',', out);
+        json_string(out, line, length);
+        pid = parent;
+    }
+    fputc(']', out);
+}
+
 // argv[0] is `tiri`. Parsing happens on the Mac, in the one parser there is: this stays dumb on
 // purpose, so a new command needs nothing new on any server.
 static int run_relay(int argc, char **argv) {
@@ -671,6 +731,7 @@ static int run_relay(int argc, char **argv) {
     json_field(out, "item", getenv("TIRI_ITEM_ID"));
     json_field(out, "workspace", getenv("TIRI_WORKSPACE"));
     json_field(out, "entrypoint", getenv("CLAUDE_CODE_ENTRYPOINT"));
+    if (argc > 1 && strcmp(argv[1], "hook") == 0) write_ancestors(out);
     if (stdin_text) {
         fputs(",\"stdin\":", out);
         json_string(out, stdin_text, stdin_length);

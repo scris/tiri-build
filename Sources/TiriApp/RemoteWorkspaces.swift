@@ -795,6 +795,7 @@ enum RemoteRelay {
         let stdin = request.stdin
         var environment = CLIParser.Environment(
             cwd: map.local(request.cwd ?? connection.home ?? "/"), itemID: request.item, workspace: request.workspace, claudeEntrypoint: request.entrypoint,
+            ancestors: { [ancestors = request.ancestors ?? []] in ancestors.map { $0.split(separator: " ").map(String.init) } },
             fileExists: { path in
                 if FileManager.default.fileExists(atPath: path) { return true }
                 // Not in the copy yet: outside the workspace's folders, or only just made.

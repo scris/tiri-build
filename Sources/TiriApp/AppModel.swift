@@ -1825,7 +1825,20 @@ final class AppModel {
             window.setFrameOrigin(NSPoint(x: main.frame.minX + 60, y: main.frame.maxY - window.frame.height - 60))
         }
         window.makeKeyAndOrderFront(nil)
-        controller(for: id)?.focus()
+        giveKeyboard(to: id, in: window, tries: 20)
+    }
+
+    /// SwiftUI hosts the view a moment after the window appears, and until then there's nothing to focus.
+    private func giveKeyboard(to id: ItemID, in window: NSWindow, tries: Int) {
+        if let view = existingController(for: id)?.view, view.window === window {
+            controller(for: id)?.focus()
+            return
+        }
+        guard tries > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak window] in
+            guard let self, let window else { return }
+            self.giveKeyboard(to: id, in: window, tries: tries - 1)
+        }
     }
 
     /// Back to its tab, in the main window.

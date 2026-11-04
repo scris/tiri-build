@@ -176,6 +176,20 @@ public enum AgentCatalog {
         return profile.nothingToResume.contains { output.contains($0) }
     }
 
+    /// Whether the nearest agent above a hook is a one-shot run, like a `codex exec` an agent started
+    /// for itself. Those aren't the session in the terminal, and mustn't speak for it. Nearest first.
+    public static func isOneShotRun(ancestors: [[String]]) -> Bool {
+        for commandLine in ancestors {
+            for (index, token) in commandLine.prefix(3).enumerated() {
+                let name = (token as NSString).lastPathComponent.lowercased()
+                guard let profile = all.first(where: { $0.executableNames.contains(name) || $0.pathFragments.contains(where: token.lowercased().contains) }) else { continue }
+                let rest = commandLine.dropFirst(index + 1)
+                return rest.contains(where: profile.oneShotFlags.contains) || rest.first.map(profile.oneShotSubcommands.contains) == true
+            }
+        }
+        return false
+    }
+
     public static func profile(id: String) -> AgentProfile? {
         all.first { $0.id == id }
     }

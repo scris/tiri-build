@@ -346,6 +346,25 @@ static size_t state_command(int pid, char *out, size_t room) {
 static char last_report[8192];
 
 // A command's arguments split at %00.
+/// A shell at its prompt, rather than a program it's running.
+static int shell_in_front(int master, pid_t child) {
+    static char directory[4096], command[1024];
+    int foreground = state_foreground(master, child, directory, sizeof directory);
+#if defined(__APPLE__)
+    if (proc_name(foreground, command, sizeof command) <= 0) return 0;
+#else
+    if (!state_command(foreground, command, sizeof command)) return 0;
+#endif
+    const char *name = strrchr(command, '/');
+    name = name ? name + 1 : command;
+    if (*name == '-') name++;
+    static const char *const shells[] = {"zsh", "bash", "sh", "dash", "fish", "tcsh", "csh", "ksh", NULL};
+    for (int index = 0; shells[index]; index++) {
+        if (strcmp(name, shells[index]) == 0) return 1;
+    }
+    return 0;
+}
+
 static void report_state(int client, int master, pid_t child, int force, const char *tag) {
     static char directory[4096], command[1024], encoded[6000], message[8192];
     int foreground = state_foreground(master, child, directory, sizeof directory);
@@ -473,10 +492,14 @@ static void run_server(const launch_options *options, int listener) {
                         memset(&wanted, 0, sizeof wanted);
                         wanted.ws_row = (unsigned short)((payload[0] << 8) | payload[1]);
                         wanted.ws_col = (unsigned short)((payload[2] << 8) | payload[3]);
-                        // The same size wouldn't tell the program to redraw for the new view.
-                        struct winsize nudge = wanted;
-                        if (nudge.ws_col > 1) nudge.ws_col--;
-                        ioctl(master, TIOCSWINSZ, &nudge);
+                        // The same size wouldn't tell a program to redraw for the new view. A shell doesn't
+                        // need to: the replay already put its screen back, and a redraw moves up over rows
+                        // that have since wrapped differently, wiping or repeating lines.
+                        if (!shell_in_front(master, child)) {
+                            struct winsize nudge = wanted;
+                            if (nudge.ws_row > 1) nudge.ws_row--;
+                            ioctl(master, TIOCSWINSZ, &nudge);
+                        }
                         ioctl(master, TIOCSWINSZ, &wanted);
                     } else if (type == 'K') {
                         // An agent is usually its own process group, in the foreground.

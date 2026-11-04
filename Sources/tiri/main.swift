@@ -6,12 +6,38 @@ func fail(_ message: String, code: Int32 = 1) -> Never {
     exit(code)
 }
 
+/// The command lines of the processes above this one, nearest first.
+@Sendable func processAncestors() -> [[String]] {
+    var result: [[String]] = []
+    var pid = getppid()
+    for _ in 0..<16 where pid > 1 {
+        var request = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        if sysctl(&request, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size {
+            var buffer = [UInt8](repeating: 0, count: size)
+            if sysctl(&request, 3, &buffer, &size, nil, 0) == 0 {
+                // An argument count, then the executable's path, then NULs, then the arguments.
+                let count = buffer.withUnsafeBytes { Int($0.load(as: Int32.self)) }
+                let parts = buffer[MemoryLayout<Int32>.size..<size].split(separator: 0, omittingEmptySubsequences: true)
+                result.append(parts.dropFirst().prefix(count).map { String(decoding: $0, as: UTF8.self) })
+            }
+        }
+        var info = kinfo_proc()
+        var length = MemoryLayout<kinfo_proc>.stride
+        var lookup = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&lookup, 4, &info, &length, nil, 0) == 0, length > 0 else { break }
+        pid = info.kp_eproc.e_ppid
+    }
+    return result
+}
+
 let environment = ProcessInfo.processInfo.environment
 let cliEnvironment = CLIParser.Environment(
     cwd: FileManager.default.currentDirectoryPath,
     itemID: environment["TIRI_ITEM_ID"],
     workspace: environment["TIRI_WORKSPACE"],
-    claudeEntrypoint: environment["CLAUDE_CODE_ENTRYPOINT"]
+    claudeEntrypoint: environment["CLAUDE_CODE_ENTRYPOINT"],
+    ancestors: { processAncestors() }
 )
 
 let arguments = Array(CommandLine.arguments.dropFirst())

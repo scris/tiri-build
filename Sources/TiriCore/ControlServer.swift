@@ -284,6 +284,8 @@ public enum RemoteRelayMessage {
         public var item: String?
         public var workspace: String?
         public var entrypoint: String?
+        /// The command lines above `tiri` on the server, nearest first, with spaces between words.
+        public var ancestors: [String]?
         public var stdin: String?
     }
 

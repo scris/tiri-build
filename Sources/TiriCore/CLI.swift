@@ -20,18 +20,22 @@ public enum CLIParser {
         public var workspace: String?
         /// `CLAUDE_CODE_ENTRYPOINT`, which Claude Code sets for its own hooks.
         public var claudeEntrypoint: String?
+        /// The command lines above this process, nearest first. Asked for only by hooks.
+        public var ancestors: @Sendable () -> [[String]]
         public var fileExists: @Sendable (String) -> Bool
         public var readStdin: @Sendable () -> Data
         /// In a terminal on a server: where its absolute paths really are, and its home folder.
         public var translate: (@Sendable (String) -> String)?
         public var home: String?
         public init(cwd: String, itemID: String?, workspace: String? = nil, claudeEntrypoint: String? = nil,
+                    ancestors: @escaping @Sendable () -> [[String]] = { [] },
                     fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
                     readStdin: @escaping @Sendable () -> Data = { FileHandle.standardInput.readDataToEndOfFile() }) {
             self.cwd = cwd
             self.itemID = itemID
             self.workspace = workspace
             self.claudeEntrypoint = claudeEntrypoint
+            self.ancestors = ancestors
             self.fileExists = fileExists
             self.readStdin = readStdin
         }
@@ -374,6 +378,7 @@ public enum CLIParser {
             // Grok runs Claude Code's hooks too. It's still Grok that's talking.
             let agent = AgentCatalog.owner(ofHookPayload: payload, reportedAs: stated)
             if agent == .claude, AgentHookEvent.isOneShotClaude(entrypoint: environment.claudeEntrypoint) { return .quietSuccess }
+            if AgentCatalog.isOneShotRun(ancestors: environment.ancestors()) { return .quietSuccess }
             guard let event = agent.profile?.parseHook?(payload) else { return .quietSuccess }
             var body: [String: JSONValue] = ["item": .string(item), "tool": .string(agent.rawValue)]
             if let state = event.state { body["state"] = .string(state) }

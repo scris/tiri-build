@@ -16,6 +16,18 @@ import Testing
         #expect(AgentCatalog.identify(commandLine: commandLine, command: nil) == agent)
     }
 
+    @Test func oneShotRunsDontSpeakForTheSession() {
+        let session = ["/Users/r/.local/bin/grok", "--resume", "abc"]
+        #expect(!AgentCatalog.isOneShotRun(ancestors: [["/bin/sh", "-c", "tiri hook grok"], session, ["/bin/zsh", "-l", "-i", "-c", "grok --resume abc"]]))
+        // Started by the session around it: the nearest agent is the one that counts.
+        #expect(AgentCatalog.isOneShotRun(ancestors: [["/bin/sh", "-c", "tiri hook"], ["grok", "-p", "fix it"], session]))
+        #expect(AgentCatalog.isOneShotRun(ancestors: [["node", "/x/@openai/codex/bin/codex.js", "exec", "fix it"]]))
+        #expect(AgentCatalog.isOneShotRun(ancestors: [["/opt/bin/codex", "exec", "fix it"], ["codex"]]))
+        #expect(!AgentCatalog.isOneShotRun(ancestors: [["codex", "resume", "abc"]]))
+        #expect(!AgentCatalog.isOneShotRun(ancestors: [["/bin/zsh"], ["launchd"]]))
+        #expect(!AgentCatalog.isOneShotRun(ancestors: []))
+    }
+
     // Each agent's real words for an unknown session, from running it with a made-up ID.
     @Test(arguments: [
         ("claude --resume abc", "No conversation found with session ID: abc", true),

@@ -828,8 +828,27 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     // MARK: Lifecycle
 
+    /// A window's first layouts pass through sizes it won't keep. A session started at one of those
+    /// would be told its real size straight after, and a shell redrawing for that wipes lines above it.
     func didAttach() {
-        startIfNeeded(fallbackSize: false)
+        guard !started, !waitingToSettle else { return }
+        waitingToSettle = true
+        settle(lastWidth: terminalView.bounds.width, tries: 8)
+    }
+
+    private var waitingToSettle = false
+
+    private func settle(lastWidth: CGFloat, tries: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self else { return }
+            let width = self.terminalView.bounds.width
+            if width != lastWidth, tries > 0 {
+                self.settle(lastWidth: width, tries: tries - 1)
+                return
+            }
+            self.waitingToSettle = false
+            self.startIfNeeded(fallbackSize: false)
+        }
     }
 
     func startIfNeeded(fallbackSize: Bool) {
