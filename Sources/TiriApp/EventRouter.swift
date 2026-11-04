@@ -17,11 +17,14 @@ final class EventRouter {
 
     func install(model: AppModel) {
         self.model = model
+        // Nil means handled, and the event goes no further. It has to stay nil on the way out.
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handleKey(event) ?? event
+            guard let self else { return event }
+            return self.handleKey(event)
         } as Any)
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .otherMouseDown]) { [weak self] event in
-            self?.handleMouseDown(event) ?? event
+            guard let self else { return event }
+            return self.handleMouseDown(event)
         } as Any)
         // A SwiftUI drag gesture can be cancelled without calling onEnded. The mouse going up
         // is what really ends a tab drag, so a drop can't be lost and a ghost can't get stuck.
