@@ -63,6 +63,12 @@ Right-click a tab and choose **Move to New Window** to put a terminal, file or p
 
 Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes the file while you're editing, your text stays on screen and Tiri tells you, so nothing is overwritten without you choosing. Editing a Peek makes it a tab. This is for quick fixes, and it's still not a full editor: there's no autocomplete or language server.
 
+## Follow a name
+
+⌘-click a name in a file or a diff, or press F12, to see where it's defined. Holding ⌘ underlines what you can follow. It floats as a Peek, and **Back** (⌃-) returns you to where you were, through as many jumps as you made. ⇧F12 finds everywhere it's used.
+
+With no language server for that file, Tiri searches the workspace, the same way it does for a path. One match opens, several let you choose, and none shows a toast with a way to search. This is a good guess rather than a compiler's answer, and it doesn't need any setup.
+
 ## The sidebar
 
 Explorer, Changes and Open Items each fold: click a section's name. What's still open takes the room, and Tiri remembers which are folded.
@@ -119,6 +125,7 @@ Shortcuts follow Cursor. All of them can be changed in Settings, or by asking yo
 | Go to the next terminal needing attention | ⌘⇧U |
 | Add a review comment / send them all to an agent | ⌥⌘L / ⌥⇧⌘L |
 | Find in the current item | ⌘F |
+| Go to definition / find references / back | F12 / ⇧F12 / ⌃- |
 | Settings | ⌘, |
 
 In the explorer, a single click previews a file and a double-click keeps it open. Enter renames, Space previews, ⌘↓ opens and ⌘⌫ moves to the Trash. Drag a file from the explorer into a terminal to insert its shell-quoted path. Drag tabs to reorder them, move them between groups, or onto the edge of a pane to split it.

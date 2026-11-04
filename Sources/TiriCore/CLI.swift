@@ -407,7 +407,7 @@ public enum CLIParser {
       tiri diff <path> [--tab] [--turn <id|latest>]   (what changed in one file; floats as a Peek)
       tiri review [add <path>[:line[-line]] <text> | remove <id> | clear | send [--to <item-id>]]
                                    (comments waiting to go to an agent, all at once)
-      tiri follow <item-id> <row> <col>
+      tiri follow <item-id> <row> <col>   (what ⌘-click does, on a terminal's path or a file's name)
       tiri quit                    (terminals keep running, and Tiri comes back to them)
       tiri keys [set <command> <key> | unset <command> | reset <command>]
       tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open]

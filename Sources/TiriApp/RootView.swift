@@ -593,6 +593,7 @@ struct FileActions: View {
 
     var body: some View {
         let _ = model.controllerRevision
+        BackButton()
         Button {
             model.addFrontToAgent()
         } label: {

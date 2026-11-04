@@ -368,7 +368,7 @@ enum WebFind {
 
 // MARK: - Plain text and code: read-only, monospaced
 
-final class TextController: NSObject, ItemController, NSTextViewDelegate {
+final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewDelegate {
     let itemID: ItemID
     let path: String
     unowned let model: AppModel
@@ -442,6 +442,17 @@ final class TextController: NSObject, ItemController, NSTextViewDelegate {
         let selection = editorSelection
         guard !selection.isEmpty else { return nil }
         return AgentSelection(path: path, firstLine: selection.startLine, lastLine: selection.lastLine)
+    }
+
+    var symbolTextView: NSTextView { textView }
+
+    func fileLocation(ofCharacter index: Int) -> (line: Int, character: Int)? {
+        let string = textView.string as NSString
+        guard index <= string.length else { return nil }
+        let before = string.substring(to: index)
+        let line = before.utf16.reduce(0) { $0 + ($1 == 10 ? 1 : 0) }
+        let start = (before as NSString).range(of: "\n", options: .backwards)
+        return (line, start.location == NSNotFound ? index : index - NSMaxRange(start))
     }
 
     /// With nothing selected, a comment is on the line the cursor is in.
@@ -617,12 +628,20 @@ final class TextController: NSObject, ItemController, NSTextViewDelegate {
         }
         if view.selectedRange().length > 0 { add("Quote in Agent", #selector(quoteSelection)) }
         add("Add Comment", #selector(addComment))
+        if SymbolText.word(in: view.string as NSString, at: charIndex) != nil {
+            // A right-click doesn't move the cursor, and it's what was clicked that's being asked about.
+            view.setSelectedRange(NSRange(location: charIndex, length: 0))
+            add("Go to Definition", #selector(goToDefinitionFromMenu))
+            add("Find References", #selector(findReferencesFromMenu))
+        }
         menu.insertItem(.separator(), at: index)
         return menu
     }
 
     @objc private func quoteSelection() { model.addFrontToAgent() }
     @objc private func addComment() { model.beginReviewComment() }
+    @objc private func goToDefinitionFromMenu() { model.goToDefinition() }
+    @objc private func findReferencesFromMenu() { model.findReferences() }
 
     func textDidChange(_ notification: Notification) {
         isDirty = textView.string != savedText

@@ -31,6 +31,7 @@ final class EventRouter {
         } as Any)
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .mouseMoved]) { [weak self] event in
             self?.model?.terminalHoverEvent(event)
+            self?.model?.codeHoverEvent(event)
             return event
         } as Any)
     }
@@ -132,6 +133,7 @@ final class EventRouter {
             return event
         }
         model.handleLeftMouseDown(event)
+        if model.codeCommandClick(event) { return nil }
         return event
     }
 }

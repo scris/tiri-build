@@ -112,6 +112,8 @@ final class AppModel {
     @ObservationIgnored var turnChangesInFlight = false
     @ObservationIgnored let snapshots = TurnSnapshots()
     @ObservationIgnored let turnStore = TurnStore()
+    var navigationStops: [NavigationStop] = []
+    @ObservationIgnored var symbolHover: (view: NSTextView?, range: NSRange)?
     @ObservationIgnored var reviewPopover: NSPopover?
     @ObservationIgnored var reviewPopoverCloser: NSObjectProtocol?
     var changes: [ChangedFile] = []
@@ -553,6 +555,8 @@ final class AppModel {
         switch command {
         case "promotePeek", "promotePeekToSide": return active.peek != nil
         case "webReload": return frontWebController != nil
+        case "goBack": return canGoBack
+        case "goToDefinition", "findReferences": return canAskAboutSymbols()
         default: return true
         }
     }
@@ -832,8 +836,10 @@ final class AppModel {
         requestFocus()
     }
 
-    func dismissPeek(restoreFocus: Bool = true) {
+    func dismissPeek(restoreFocus: Bool = true, keepStops: Bool = false) {
         guard active.peek != nil else { return }
+        // Places inside a Peek go with it. Nothing's left to go back through.
+        if !keepStops { navigationStops.removeAll(where: \.inPeek) }
         peekHasKeyboard = false
         layoutRegistry.peekFrame = nil
         updateActive { $0.dismissPeek() }

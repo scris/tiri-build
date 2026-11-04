@@ -3,7 +3,7 @@ import SwiftUI
 import TiriCore
 
 /// What an agent changed in one file. An item like any other: a tab, a split or a Peek.
-final class DiffController: NSObject, ItemController, NSTextViewDelegate {
+final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewDelegate {
     let itemID: ItemID
     let path: String
     /// One agent's turn, or nil for everything since the last commit.
@@ -163,6 +163,19 @@ final class DiffController: NSObject, ItemController, NSTextViewDelegate {
         return AgentSelection(path: path, quote: DiffQuote.text(path: path, rows: rows))
     }
 
+    var symbolTextView: NSTextView { textView }
+
+    /// A row's text is a line of the file, unless it's a removed row or a hunk's heading.
+    func fileLocation(ofCharacter index: Int) -> (line: Int, character: Int)? {
+        let string = textView.string as NSString
+        guard index <= string.length else { return nil }
+        let before = string.substring(to: index)
+        let row = before.utf16.reduce(0) { $0 + ($1 == 10 ? 1 : 0) }
+        guard row < diff.lines.count, let line = diff.lines[row].newLine else { return nil }
+        let start = (before as NSString).range(of: "\n", options: .backwards)
+        return (line - 1, start.location == NSNotFound ? index : index - NSMaxRange(start))
+    }
+
     /// With nothing selected, a comment is on the row the cursor is in.
     var reviewAnchor: ReviewAnchor? {
         var rows = selectedRows
@@ -239,12 +252,20 @@ final class DiffController: NSObject, ItemController, NSTextViewDelegate {
         }
         if view.selectedRange().length > 0 { add("Quote in Agent", #selector(quoteSelection)) }
         add("Add Comment", #selector(addComment))
+        if SymbolText.word(in: view.string as NSString, at: charIndex) != nil {
+            // A right-click doesn't move the cursor, and it's what was clicked that's being asked about.
+            view.setSelectedRange(NSRange(location: charIndex, length: 0))
+            add("Go to Definition", #selector(goToDefinitionFromMenu))
+            add("Find References", #selector(findReferencesFromMenu))
+        }
         menu.insertItem(.separator(), at: index)
         return menu
     }
 
     @objc private func quoteSelection() { model.addFrontToAgent() }
     @objc private func addComment() { model.beginReviewComment() }
+    @objc private func goToDefinitionFromMenu() { model.goToDefinition() }
+    @objc private func findReferencesFromMenu() { model.findReferences() }
 
     var supportsFind: Bool { true }
 

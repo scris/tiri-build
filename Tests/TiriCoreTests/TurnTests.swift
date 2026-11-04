@@ -45,7 +45,8 @@ private struct Repository {
     }
 }
 
-@Suite struct TurnSnapshotTests {
+// One at a time: each runs git many times, and a busy machine slows down tests that have time limits.
+@Suite(.serialized) struct TurnSnapshotTests {
     @Test func aTurnShowsOnlyWhatItChanged() throws {
         let repo = try Repository()
         // Uncommitted work from before the turn isn't the turn's.

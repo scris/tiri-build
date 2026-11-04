@@ -239,8 +239,10 @@ public final class ControlClient {
 
     deinit { close(fd) }
 
+    /// A socket nobody's listening on fails at once. The wait is only for an app that's there but
+    /// busy, such as behind a permission prompt, which shouldn't lose its socket to a second launch.
     public static func isAlive(path: String) -> Bool {
-        guard let client = try? ControlClient(path: path, timeout: 1) else { return false }
+        guard let client = try? ControlClient(path: path, timeout: 3) else { return false }
         return (try? client.send(ControlRequest(cmd: "ping")))?.ok == true
     }
 

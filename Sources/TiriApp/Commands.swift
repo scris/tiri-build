@@ -92,6 +92,9 @@ extension AppModel {
             AppCommand(id: "foldExplorer", title: "Fold or Unfold Explorer", category: "View") { _ in SidebarSection.explorer.toggle() },
             AppCommand(id: "foldChanges", title: "Fold or Unfold Changes", category: "View") { _ in SidebarSection.changes.toggle() },
             AppCommand(id: "foldOpenItems", title: "Fold or Unfold Open Items", category: "View") { _ in SidebarSection.items.toggle() },
+            AppCommand(id: "goToDefinition", title: "Go to Definition", category: "Go") { $0.goToDefinition() },
+            AppCommand(id: "findReferences", title: "Find References", category: "Go") { $0.findReferences() },
+            AppCommand(id: "goBack", title: "Go Back", category: "Go") { $0.goBack() },
             AppCommand(id: "searchInFiles", title: "Search in Files", category: "Go") { $0.openSearch() },
             AppCommand(id: "gitFetch", title: "Git: Fetch", category: "Git") { model in
                 if let repository = model.frontRepository { model.fetch(repository) }
@@ -653,10 +656,14 @@ enum ControlHandler {
 
         case "follow":
             let id = try requireItem(request, model: model)
-            guard let terminal = model.controller(for: id) as? TerminalController else { throw ControlFailure("\(id) isn't a terminal") }
             guard let row = request.args["row"]?.intValue, let col = request.args["col"]?.intValue else {
                 throw ControlFailure("Missing row or column")
             }
+            if let viewer = model.controller(for: id) as? SymbolViewing {
+                guard model.followSymbol(in: viewer, row: row, column: col) else { throw ControlFailure("There's no name there") }
+                return .object(["item": .string(id)])
+            }
+            guard let terminal = model.controller(for: id) as? TerminalController else { throw ControlFailure("\(id) isn't a terminal or a code viewer") }
             guard terminal.terminalView.followLink(row: row, column: col, forceTab: false) else {
                 throw ControlFailure("There's no link or path there")
             }
