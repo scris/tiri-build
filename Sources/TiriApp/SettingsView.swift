@@ -53,9 +53,13 @@ struct SettingsView: View {
         }
     }
 
+    /// Its rows don't fold any narrower. In a thinner pane it scrolls sideways rather than clipping both edges.
+    private static let narrowestWidth: CGFloat = 480
+
     var body: some View {
+        GeometryReader { geometry in
         ScrollViewReader { proxy in
-        ScrollView {
+        ScrollView(geometry.size.width < Self.narrowestWidth ? [.vertical, .horizontal] : .vertical) {
             VStack(alignment: .leading, spacing: 22) {
                 AskAgentCard()
                 TextField("Search settings", text: $query)
@@ -109,12 +113,13 @@ struct SettingsView: View {
             .frame(maxWidth: 680)
             .padding(.horizontal, 24)
             .padding(.vertical, 22)
-            .frame(maxWidth: .infinity)
+            .frame(width: max(geometry.size.width, Self.narrowestWidth))
         }
         .background(Color(nsColor: .textBackgroundColor))
         .onAppear { scrollToAnchor(proxy) }
         .onChange(of: model.settingsAnchor) { _, _ in scrollToAnchor(proxy) }
         .onDisappear { model.cancelRecordingShortcut() }
+        }
         }
     }
 
