@@ -64,7 +64,7 @@ extension AppModel {
             AppCommand(id: "importWorkspace", title: "Import .code-workspace…", category: "Workspace") { $0.importWorkspaceInteractive() },
             AppCommand(id: "renameWorkspace", title: "Rename Workspace…", category: "Workspace") { $0.promptRenameWorkspace($0.activeID) },
             AppCommand(id: "deleteWorkspace", title: "Delete Workspace…", category: "Workspace") { $0.confirmDeleteWorkspace($0.activeID) },
-            AppCommand(id: "toggleMarkdownSource", title: "Markdown: Toggle Source", category: "View") { $0.toggleMarkdownSource() },
+            AppCommand(id: "toggleMarkdownSource", title: "Markdown or Notebook: Toggle Source", category: "View") { $0.toggleMarkdownSource() },
             AppCommand(id: "openInExternalEditor", title: "Open in External Editor", category: "File") { model in
                 let item = model.active.peek ?? model.active.activeItem
                 if let path = item?.filePath { model.openExternally(path: path) }

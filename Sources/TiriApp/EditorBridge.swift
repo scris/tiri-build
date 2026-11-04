@@ -532,7 +532,14 @@ final class QuoteButton: NSButton {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        applyColors()
+    }
+
+    /// Layer colors are fixed when they're set, and outside a window they resolve against the
+    /// Mac's appearance, not the app's. Set again whenever it's shown.
+    private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = NSColor.controlAccentColor.cgColor
             commentButton.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
             commentButton.layer?.borderColor = NSColor.separatorColor.cgColor
         }
@@ -544,7 +551,7 @@ final class QuoteButton: NSButton {
         let y = host.isFlipped ? top : host.bounds.height - top - frame.height
         setFrameOrigin(NSPoint(x: max(host.bounds.width - frame.width - 18, 8),
                                y: min(max(y, 4), max(host.bounds.height - frame.height - 4, 4))))
-        layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        applyColors()
         isHidden = false
     }
 
@@ -578,7 +585,7 @@ final class QuoteButton: NSButton {
         var y = host.isFlipped ? anchor.y : anchor.y - size.height
         y = min(max(y, 4), max(host.bounds.height - size.height - 4, 4))
         setFrameOrigin(NSPoint(x: max(host.bounds.width - size.width - 18, 8), y: y))
-        layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        applyColors()
         isHidden = false
     }
 }
@@ -593,23 +600,106 @@ enum WebSelectionScript {
     static let source = """
     (function () {
       let pending = null;
+      // A selection inside a shadow root is invisible to the plain API, and one reaching into it
+      // has no ranges at all. Notebook HTML outputs are in shadow roots, so ends are found the
+      // composed way.
+      function ends(selection) {
+        const hosts = document.querySelectorAll('.nb-html');
+        if (hosts.length && selection.getComposedRanges) {
+          const shadowRoots = Array.from(hosts, host => host.shadowRoot).filter(Boolean);
+          const composed = selection.getComposedRanges({ shadowRoots })[0];
+          if (composed && !composed.collapsed) return composed;
+        }
+        return selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+      }
+      function acrossRoots(found) {
+        let text = '';
+        let on = false;
+        let done = false;
+        let preformatted = 0;
+        const blocks = /^(P|DIV|LI|PRE|TR|H[1-6]|BLOCKQUOTE|SECTION|TABLE|FIGURE)$/;
+        const noText = /^(DIV|SECTION|MAIN|BODY|TABLE|THEAD|TBODY|TR|UL|OL|BLOCKQUOTE|#document-fragment)$/;
+        function visit(node) {
+          if (done) return;
+          if (node === found.startContainer) on = true;
+          if (node.nodeType === 3) {
+            if (on) {
+              let piece = node.data.slice(node === found.startContainer ? found.startOffset : 0, node === found.endContainer ? found.endOffset : undefined);
+              if (!preformatted) {
+                piece = piece.replace(/\\s+/g, ' ');
+                if (piece === ' ' && noText.test(node.parentNode.nodeName)) piece = '';
+              }
+              text += piece;
+            }
+            if (node === found.endContainer) done = true;
+            return;
+          }
+          if (node.nodeType !== 1 || node.tagName === 'STYLE' || node.tagName === 'SCRIPT') return;
+          if (node.dataset && node.dataset.tex !== undefined) {
+            // All of it or none of it, wherever in its glyphs the selection starts or ends.
+            if (node.contains(found.startContainer)) on = true;
+            if (on) text += node.dataset.tex;
+            if (node.contains(found.endContainer)) done = true;
+          } else {
+            if (node.tagName === 'PRE') preformatted += 1;
+            for (const child of (node.shadowRoot || node).childNodes) visit(child);
+            if (node.tagName === 'PRE') preformatted -= 1;
+          }
+          if (on && !done) {
+            if (blocks.test(node.tagName)) text += '\\n';
+            if (node.tagName === 'TD' || node.tagName === 'TH') text += '\\t';
+          }
+          if (node === found.endContainer) done = true;
+        }
+        visit(document.body);
+        return text.replace(/[ \\t]+\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
+      }
+      // Rendered math is a pile of positioned glyphs. As text it's what was written.
+      function selectedText(selection) {
+        const found = selection && ends(selection);
+        if (!found) return '';
+        if (document.querySelector('.nb-html')) return acrossRoots(found);
+        const around = found.commonAncestorContainer;
+        const element = around.nodeType === 1 ? around : around.parentElement;
+        const inside = element && element.closest('[data-tex]');
+        if (inside) return inside.dataset.tex;
+        return document.querySelector('[data-tex]') ? acrossRoots(found) : selection.toString();
+      }
+      document.addEventListener('copy', function (event) {
+        if (!document.querySelector('[data-tex],.nb-html')) return;
+        const text = selectedText(window.getSelection());
+        if (!text) return;
+        event.clipboardData.setData('text/plain', text);
+        event.preventDefault();
+      });
+      function elementOf(node) { return node.nodeType === 1 ? node : node.parentElement; }
       function report() {
         pending = null;
         const selection = window.getSelection();
-        const text = selection ? selection.toString() : '';
-        if (!selection || selection.rangeCount === 0 || !text.trim()) {
+        const text = selectedText(selection);
+        if (!text.trim()) {
           window.webkit.messageHandlers.tiriSelection.postMessage({ empty: true });
           return;
         }
-        const range = selection.getRangeAt(0);
-        const box = range.getBoundingClientRect();
+        const found = ends(selection);
+        let box;
+        if (found.startContainer.getRootNode() === found.endContainer.getRootNode()) {
+          const range = document.createRange();
+          range.setStart(found.startContainer, found.startOffset);
+          range.setEnd(found.endContainer, found.endOffset);
+          box = range.getBoundingClientRect();
+        } else {
+          box = { top: elementOf(found.startContainer).getBoundingClientRect().top, bottom: elementOf(found.endContainer).getBoundingClientRect().bottom };
+        }
         function block(node) {
-          let element = node.nodeType === 1 ? node : node.parentElement;
-          while (element && !(element.dataset && element.dataset.line !== undefined)) element = element.parentElement;
+          let element = elementOf(node);
+          while (element && !(element.dataset && element.dataset.line !== undefined)) {
+            element = element.parentElement || element.getRootNode().host;
+          }
           return element;
         }
-        const first = block(range.startContainer);
-        const last = block(range.endContainer);
+        const first = block(found.startContainer);
+        const last = block(found.endContainer);
         window.webkit.messageHandlers.tiriSelection.postMessage({
           text: text.slice(0, 20000), top: box.top, bottom: box.bottom, height: window.innerHeight,
           line: first ? Number(first.dataset.line) : -1,

@@ -29,9 +29,9 @@ final class HostContainer: NSView {
 /// Serves local files to web views, so markdown's relative images work and pages
 /// can't reach anything except by this route.
 final class LocalFileSchemeHandler: NSObject, WKURLSchemeHandler {
-    static let scheme = "tiri-file"
+    nonisolated static let scheme = "tiri-file"
 
-    static func baseURL(forDirectory directory: String) -> URL {
+    nonisolated static func baseURL(forDirectory directory: String) -> URL {
         var components = URLComponents()
         components.scheme = scheme
         components.host = ""
@@ -70,7 +70,9 @@ enum ViewerFactory {
         }
         switch kind {
         case .markdown:
-            return MarkdownController(itemID: itemID, spec: spec, model: model)
+            return MarkdownController(itemID: itemID, spec: spec, model: model, format: .markdown)
+        case .notebook:
+            return MarkdownController(itemID: itemID, spec: spec, model: model, format: .notebook)
         case .text:
             return TextController(itemID: itemID, spec: spec, model: model)
         case .image:
@@ -93,7 +95,7 @@ enum ViewerFactory {
     }
 }
 
-// MARK: - Markdown: rendered by default, source on request
+// MARK: - Markdown and notebooks: rendered by default, source on request
 
 /// Creating a WKWebView (and its web process) is most of the cost of opening a markdown file.
 /// One is kept warm, so the next open only has to render.
@@ -126,6 +128,9 @@ enum MarkdownWebViews {
 }
 
 final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
+    nonisolated enum Format: Sendable { case markdown, notebook }
+
+    let format: Format
     let itemID: ItemID
     let path: String
     unowned let model: AppModel
@@ -142,10 +147,29 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     private var pendingScrollY: Double?
     private var pendingAnchor: String?
     private var pendingLine: (Int?, Int?)
+    /// Each new render replaces any still under way.
+    private var renderGeneration = 0
+    private var pageHasDiagrams = false
+    private var pageHasPendingDiagrams = false
+    private var renderedDark = false
+    /// Drawn diagrams for each theme, by source, so a reload shows them straight away.
+    private var drawnDiagrams: [Bool: [String: DocumentExtras.Diagram]] = [:]
+    /// Why this notebook is showing its source, when rendering it isn't possible.
+    private var fallbackNotice: String?
+    private var fallbackWork: DispatchWorkItem?
+    private var hasRenderedPage = false
+    private var showingOpeningNote = false
+    private lazy var noticeView = SourceNoticeView()
 
     var view: NSView { container }
 
-    init(itemID: ItemID, spec: FileSpec, model: AppModel) {
+    private var inSource: Bool { showingSource || fallbackNotice != nil }
+    /// There's nothing to switch to when the file can't be rendered.
+    var canToggleSource: Bool { fallbackNotice == nil }
+    var kindName: String { format == .notebook ? "notebook" : "markdown" }
+
+    init(itemID: ItemID, spec: FileSpec, model: AppModel, format: Format = .markdown) {
+        self.format = format
         self.itemID = itemID
         self.path = spec.path
         self.model = model
@@ -178,13 +202,13 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     }
 
     private func renderedLines(_ selection: WebSelection) -> (first: Int, last: Int)? {
-        guard selection.line >= 0, selection.lineEnd >= selection.line else { return nil }
+        guard format == .markdown, selection.line >= 0, selection.lineEnd >= selection.line else { return nil }
         let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
         return MarkdownRenderer.sourceLines(blockStart: selection.line, blockEnd: selection.lineEnd, selected: selection.text, source: text)
     }
 
     func select(text: String, to end: String?) -> Bool {
-        if showingSource { return source?.select(text: text, to: end) ?? false }
+        if inSource { return source?.select(text: text, to: end) ?? false }
         webView.evaluateJavaScript(WebSelectionScript.selecting(text, to: end), in: nil, in: .defaultClient) { _ in }
         return true
     }
@@ -196,49 +220,203 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
         return controller
     }
 
-    private func render(keepScroll: Bool) {
-        if showingSource {
+    private func render(keepScroll: Bool, behindSource: Bool = false) {
+        if inSource, !behindSource {
             let text = sourceController()
-            container.show(text.view)
+            if let fallbackNotice {
+                noticeView.show(fallbackNotice, above: text.view)
+                container.show(noticeView)
+            } else {
+                container.show(text.view)
+            }
             if let line = pendingLine.0 {
                 text.goTo(line: line, col: pendingLine.1)
                 pendingLine = (nil, nil)
             }
             return
         }
-        container.show(webView)
-        let source = (try? String(contentsOfFile: path, encoding: .utf8))
-            ?? String(data: FileManager.default.contents(atPath: path) ?? Data(), encoding: .isoLatin1)
-            ?? ""
+        renderGeneration += 1
+        let generation = renderGeneration
+        if !behindSource {
+            container.show(webView)
+            if !hasRenderedPage { showOpeningNote(generation: generation) }
+        }
+        let path = path
+        let format = format
+        let line = format == .markdown ? pendingLine.0 : nil
+        if format == .markdown { pendingLine = (nil, nil) }
+        let dark = model.effectiveDark
+        renderedDark = dark
+        let diagrams = drawnDiagrams[dark] ?? [:]
         let directory = (path as NSString).deletingLastPathComponent
         let base = LocalFileSchemeHandler.baseURL(forDirectory: directory)
-        let page = MarkdownRenderer.page(markdown: source, baseHref: base.absoluteString, title: (path as NSString).lastPathComponent)
-        if let line = pendingLine.0 {
+        let title = (path as NSString).lastPathComponent
+        // Off the main thread: a long document with lots of math shouldn't stall the app.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            if format == .notebook {
+                let result = Self.renderNotebook(path: path, base: base, title: title, diagrams: diagrams)
+                await MainActor.run {
+                    guard let self, self.renderGeneration == generation else { return }
+                    switch result {
+                    case .success(let rendered): self.notebookRendered(rendered, base: base, keepScroll: keepScroll)
+                    case .failure(let failure): self.notebookFailed(failure)
+                    }
+                }
+                return
+            }
+            let source = (try? String(contentsOfFile: path, encoding: .utf8))
+                ?? String(data: FileManager.default.contents(atPath: path) ?? Data(), encoding: .isoLatin1)
+                ?? ""
+            let rendered = MarkdownRenderer.render(markdown: source, baseHref: base.absoluteString, title: title,
+                                                   extras: Self.extras(diagrams: diagrams))
             // Rendered stays rendered: `report.md:40` lands on the section holding line 40.
-            pendingAnchor = MarkdownRenderer.anchor(forLine: line, in: source)
-            pendingLine = (nil, nil)
+            let anchor = line.flatMap { MarkdownRenderer.anchor(forLine: $0, in: source) }
+            await MainActor.run {
+                guard let self, self.renderGeneration == generation else { return }
+                self.load(rendered, base: base, anchor: anchor, keepScroll: keepScroll)
+            }
         }
+    }
+
+    /// A big document takes seconds to read. A blank pane for that long looks broken.
+    private func showOpeningNote(generation: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, self.renderGeneration == generation, !self.hasRenderedPage, self.fallbackNotice == nil else { return }
+            self.showingOpeningNote = true
+            self.webView.loadHTMLString("""
+            <!DOCTYPE html><meta charset="utf-8"><style>:root{color-scheme:light dark}html{height:100%}body{height:100%;margin:0;display:flex;align-items:center;justify-content:center;font:13px -apple-system;color:GrayText}</style>Opening…
+            """, baseURL: nil)
+        }
+    }
+
+    nonisolated private static func renderNotebook(path: String, base: URL, title: String, diagrams: [String: DocumentExtras.Diagram]) -> Result<RenderedDocument, Notebook.Failure> {
+        let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int) ?? 0
+        if size > Notebook.maximumBytes { return .failure(.tooLarge(bytes: size)) }
+        // Not mapped: an agent cutting a mapped file short while it's being parsed would crash the app.
+        let data = (try? Data(contentsOf: URL(fileURLWithPath: path))) ?? Data()
+        do {
+            let notebook = try Notebook.parse(data)
+            let rendered = NotebookRenderer.render(notebook, baseHref: base.absoluteString, title: title, extras: extras(diagrams: diagrams),
+                                                   highlight: { CodeGrammar.shared.html(text: $0, language: $1) })
+            return .success(rendered)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private func notebookRendered(_ rendered: RenderedDocument, base: URL, keepScroll: Bool) {
+        fallbackWork?.cancel()
+        fallbackWork = nil
+        if fallbackNotice != nil {
+            // Fixing it by hand here: what's being typed stays until it's saved.
+            if source?.isDirty == true { return }
+            fallbackNotice = nil
+            model.controllerRevision += 1
+        }
+        load(rendered, base: base, anchor: nil, keepScroll: keepScroll)
+    }
+
+    /// An agent writing a notebook can leave it half written for a moment. What was showing
+    /// stays until it's clear that the file really is broken.
+    private func notebookFailed(_ failure: Notebook.Failure) {
+        let show = { [weak self] in
+            guard let self else { return }
+            let hadKeyboard = self.view.window?.firstResponder === self.webView
+            self.fallbackNotice = failure.message
+            self.quoteButton.isHidden = true
+            self.sourceController().reload()
+            self.render(keepScroll: false)
+            if hadKeyboard { self.source?.focus() }
+            self.model.controllerRevision += 1
+            self.model.viewerReady(self.itemID)
+        }
+        fallbackWork?.cancel()
+        guard hasRenderedPage, fallbackNotice == nil else {
+            show()
+            return
+        }
+        let work = DispatchWorkItem(block: show)
+        fallbackWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    nonisolated private static func extras(diagrams: [String: DocumentExtras.Diagram]) -> DocumentExtras {
+        let document = UUID()
+        return DocumentExtras(renderMath: { MathEngine.shared.markup(tex: $0, display: $1, document: document) },
+                              mathStylesheet: { MathEngine.stylesheet }, diagrams: diagrams)
+    }
+
+    private func load(_ rendered: RenderedDocument, base: URL, anchor: String?, keepScroll: Bool) {
+        container.show(webView)
+        hasRenderedPage = true
+        pageHasDiagrams = rendered.hasDiagrams
+        pageHasPendingDiagrams = rendered.hasPendingDiagrams
+        if let anchor { pendingAnchor = anchor }
         if keepScroll {
             // Agents rewrite files as they work. A reload shouldn't lose your place.
             webView.evaluateJavaScript("window.scrollY") { [weak self] value, _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.pendingScrollY = value as? Double
-                    self.webView.loadHTMLString(page, baseURL: base)
+                    self.webView.loadHTMLString(rendered.html, baseURL: base)
                 }
             }
         } else {
-            webView.loadHTMLString(page, baseURL: base)
+            webView.loadHTMLString(rendered.html, baseURL: base)
         }
+    }
+
+    /// Runs once the page is showing. Diagrams change its height, so a place it was asked to keep
+    /// gets restored again afterwards.
+    private func drawDiagrams(generation: Int, restoring place: @escaping @MainActor @Sendable () -> Void) {
+        let dark = renderedDark
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let library = WebLibrary.text("mermaid/mermaid.min.js")
+            await MainActor.run {
+                guard let self, self.renderGeneration == generation else { return }
+                guard let library else {
+                    self.webView.evaluateJavaScript(DiagramDrawing.giveUp, in: nil, in: DiagramDrawing.world) { _ in }
+                    return
+                }
+                self.webView.evaluateJavaScript(library + "\n;0", in: nil, in: DiagramDrawing.world) { _ in
+                    MainActor.assumeIsolated {
+                        guard self.renderGeneration == generation else { return }
+                        self.webView.callAsyncJavaScript(DiagramDrawing.draw, arguments: ["dark": dark], in: nil, in: DiagramDrawing.world) { result in
+                            MainActor.assumeIsolated {
+                                if case .success(let value) = result { self.remember(value, dark: dark) } else {
+                                    self.webView.evaluateJavaScript(DiagramDrawing.giveUp, in: nil, in: DiagramDrawing.world) { _ in }
+                                }
+                                if self.renderGeneration == generation { place() }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func remember(_ results: Any?, dark: Bool) {
+        guard let results = results as? [[String: Any]] else { return }
+        var known = drawnDiagrams[dark] ?? [:]
+        // Plenty for one document, and a file an agent keeps rewriting can't grow this for ever.
+        if known.count > 64 { known = [:] }
+        for result in results {
+            guard let key = result["key"] as? String else { continue }
+            if let svg = result["svg"] as? String {
+                known[key] = .drawn(svg: svg)
+            } else if let reason = result["reason"] as? String {
+                known[key] = .failed(reason: reason)
+            }
+        }
+        drawnDiagrams[dark] = known
     }
 
     private func fileChanged() {
         if !FileManager.default.fileExists(atPath: path) { return }
-        if showingSource {
-            source?.reload()
-        } else {
-            render(keepScroll: true)
-        }
+        if inSource { source?.reload() }
+        guard !showingSource else { return }
+        // Behind a notice, the source stays up unless the file now renders.
+        render(keepScroll: fallbackNotice == nil, behindSource: fallbackNotice != nil)
     }
 
     func toggleSource() {
@@ -253,14 +431,21 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if showingOpeningNote, !hasRenderedPage { return }
         model.viewerReady(itemID)
-        if let y = pendingScrollY {
-            pendingScrollY = nil
-            webView.evaluateJavaScript("window.scrollTo(0, \(y))", completionHandler: nil)
+        let scrollY = pendingScrollY
+        let anchor = pendingAnchor
+        pendingScrollY = nil
+        pendingAnchor = nil
+        let restorePlace: @MainActor @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            if let scrollY { self.webView.evaluateJavaScript("window.scrollTo(0, \(scrollY))", completionHandler: nil) }
+            if let anchor { self.scrollTo(anchor: anchor) }
         }
-        if let anchor = pendingAnchor {
-            pendingAnchor = nil
-            scrollTo(anchor: anchor)
+        restorePlace()
+        if pageHasPendingDiagrams {
+            pageHasPendingDiagrams = false
+            drawDiagrams(generation: renderGeneration, restoring: restorePlace)
         }
     }
 
@@ -297,10 +482,14 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     }
 
     func focus() {
-        if showingSource { source?.focus() } else { webView.window?.makeFirstResponder(webView) }
+        if inSource { source?.focus() } else { webView.window?.makeFirstResponder(webView) }
     }
 
-    func applySettings() { source?.applySettings() }
+    func applySettings() {
+        source?.applySettings()
+        // A drawn diagram's colors are fixed when it's drawn. Everything else follows by itself.
+        if !inSource, pageHasDiagrams, renderedDark != model.effectiveDark { render(keepScroll: true) }
+    }
 
     private func scrollTo(anchor: String) {
         let escaped = anchor.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
@@ -309,40 +498,97 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
 
     func goTo(line: Int?, col: Int?) {
         guard let line else { return }
-        if showingSource {
+        if inSource {
             source?.goTo(line: line, col: col)
             return
         }
+        // A notebook's lines are its JSON's, and don't exist in the rendered page.
+        guard format == .markdown else { return }
         let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
         if let anchor = MarkdownRenderer.anchor(forLine: line, in: text) { scrollTo(anchor: anchor) }
     }
 
     func teardown() {
         token = nil
-        if showingSource == false { webView.stopLoading() }
+        fallbackWork?.cancel()
+        if hasRenderedPage { webView.stopLoading() }
     }
 
     var supportsFind: Bool { true }
 
-    var selectedTextForFind: String? { showingSource ? source?.selectedTextForFind : nil }
+    var selectedTextForFind: String? { inSource ? source?.selectedTextForFind : nil }
     var agentReference: AgentSelection? {
-        if showingSource { return source?.agentReference }
-        guard let selection = webView.selection else { return nil }
+        if inSource { return source?.agentReference }
+        guard hasRenderedPage, let selection = webView.selection else { return nil }
         if let lines = renderedLines(selection) {
             return AgentSelection(path: path, firstLine: lines.first, lastLine: lines.last)
         }
-        return AgentSelection(path: path, quote: AgentReference.quotation(from: (path as NSString).lastPathComponent, text: selection.text))
+        var name = (path as NSString).lastPathComponent
+        if format == .notebook, selection.line >= 0 {
+            let first = selection.line + 1
+            let last = max(selection.lineEnd + 1, first)
+            name += first == last ? ", cell \(first)" : ", cells \(first)-\(last)"
+        }
+        return AgentSelection(path: path, quote: AgentReference.quotation(from: name, text: selection.text))
     }
     var isDirty: Bool { source?.isDirty ?? false }
     func save(overwriting: Bool) -> SaveResult { source?.save(overwriting: overwriting) ?? .saved }
 
     func find(_ query: String, backwards: Bool) -> Bool {
-        if showingSource { return source?.find(query, backwards: backwards) ?? false }
+        if inSource { return source?.find(query, backwards: backwards) ?? false }
         return WebFind.run(webView, query: query, backwards: backwards)
     }
 
     func clearFind() {
-        if showingSource { source?.clearFind() } else { WebFind.clear(webView) }
+        if inSource { source?.clearFind() } else { WebFind.clear(webView) }
+    }
+}
+
+/// A line of explanation above what it's about.
+final class SourceNoticeView: NSView {
+    private let label = NSTextField(wrappingLabelWithString: "")
+    private let line = NSBox()
+    private weak var content: NSView?
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+
+    init() {
+        super.init(frame: .zero)
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        label.isSelectable = false
+        line.boxType = .separator
+        addSubview(label)
+        addSubview(line)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    func show(_ notice: String, above view: NSView) {
+        label.stringValue = notice
+        if content !== view {
+            content?.removeFromSuperview()
+            content = view
+            // Scroll views draw past their edges, which would cover the line above.
+            view.clipsToBounds = true
+            addSubview(view, positioned: .below, relativeTo: label)
+        }
+        needsLayout = true
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        let width = max(bounds.width - 28, 40)
+        let height = ceil(label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 200)).height ?? 16)
+        label.frame = CGRect(x: 14, y: 8, width: width, height: height)
+        let top = height + 16
+        line.frame = CGRect(x: 0, y: top - 1, width: bounds.width, height: 1)
+        content?.frame = CGRect(x: 0, y: top, width: bounds.width, height: max(bounds.height - top, 0))
     }
 }
 
@@ -386,6 +632,11 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var savedText = ""
     private var diskChangedUnderEdits = false
     private var menuProblems: [LSPDiagnostic] = []
+    private var folderToken: FileWatchHub.Token?
+    /// The PDF this LaTeX file builds, once there is one.
+    private(set) var compiledPDF: String? {
+        didSet { if compiledPDF != oldValue { model.controllerRevision += 1 } }
+    }
     private(set) var isDirty = false {
         didSet { if isDirty != oldValue { model.controllerRevision += 1 } }
     }
@@ -403,9 +654,20 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         configure()
         if watches {
             token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.reload() }
+            watchForCompiledPDF()
         }
         reload()
         model.languageServers.viewerOpened(path)
+    }
+
+    /// An agent's first latexmk makes the PDF while this is open, so its folder gets watched.
+    private func watchForCompiledPDF() {
+        guard (path as NSString).pathExtension.lowercased() == "tex" else { return }
+        compiledPDF = CompiledPDF.find(forTex: path)
+        folderToken = FileWatchHub.shared.watch(path: (path as NSString).deletingLastPathComponent, recursive: true) { [weak self] in
+            guard let self else { return }
+            self.compiledPDF = CompiledPDF.find(forTex: self.path)
+        }
     }
 
     @objc private func selectionDidChange(_ notification: Notification) {
@@ -766,6 +1028,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     func teardown() {
         token = nil
+        folderToken = nil
         model.languageServers.viewerClosed(path)
     }
 
@@ -1077,6 +1340,16 @@ nonisolated final class CodeGrammar: @unchecked Sendable {
         context.evaluateScript(source)
         context.evaluateScript("var hl = globalThis.hljs || hljs; function tiriHighlight(t, l) { return hl.highlight(t, { language: l, ignoreIllegals: true }).value; }")
         self.context = context
+    }
+
+    /// highlight.js's own markup, for pages that style its classes.
+    func html(text: String, language: String) -> String? {
+        guard text.utf16.count <= Self.maximumLength else { return nil }
+        return queue.sync {
+            load()
+            guard let context, context.evaluateScript("!!hl.getLanguage(\(Self.quote(language)))")?.toBool() == true else { return nil }
+            return context.objectForKeyedSubscript("tiriHighlight")?.call(withArguments: [text, language])?.toString()
+        }
     }
 
     func spans(text: String, language: String) -> [SyntaxHighlighter.Span]? {
@@ -1463,6 +1736,7 @@ final class PDFController: NSObject, ForceDarkCapable {
     private var token: FileWatchHub.Token?
     private var observers: [NSObjectProtocol] = []
     private var watchedScroll = false
+    private var pendingPage: Int?
     // Outside the host, because in dark mode everything inside it is inverted.
     private let container = HostContainer()
     private lazy var quoteButton: QuoteButton = {
@@ -1477,6 +1751,7 @@ final class PDFController: NSObject, ForceDarkCapable {
         self.itemID = itemID
         self.path = spec.path
         self.model = model
+        pendingPage = spec.line
         host = DarkPaperHost(content: pdfView, forceDark: spec.forceDark, model: model)
         super.init()
         container.show(host)
@@ -1561,9 +1836,44 @@ final class PDFController: NSObject, ForceDarkCapable {
     }
 
     private func load() {
-        let page = pdfView.currentPage.flatMap { pdfView.document?.index(for: $0) }
-        pdfView.document = PDFDocument(url: URL(fileURLWithPath: path))
-        if let page, let target = pdfView.document?.page(at: page) { pdfView.go(to: target) }
+        let url = URL(fileURLWithPath: path)
+        guard pdfView.document != nil else {
+            pdfView.document = PDFDocument(url: url)
+            if let pendingPage { goTo(line: pendingPage, col: nil) }
+            pendingPage = nil
+            return
+        }
+        // latexmk writes in place, so a change can arrive with half a file. The finished file
+        // sends another change, and until then what's showing stays.
+        guard Self.isComplete(url), let document = PDFDocument(url: url), document.pageCount > 0 else { return }
+        // An agent recompiling shouldn't lose your place: same page, same spot on it, same zoom.
+        let place = pdfView.currentDestination
+        let pageIndex = place?.page.flatMap { pdfView.document?.index(for: $0) }
+        let keepsFit = pdfView.autoScales
+        let scale = pdfView.scaleFactor
+        pdfView.document = document
+        if keepsFit {
+            pdfView.autoScales = true
+        } else {
+            pdfView.autoScales = false
+            pdfView.scaleFactor = scale
+        }
+        pdfView.layoutDocumentView()
+        if let pageIndex, let place, let page = document.page(at: min(pageIndex, document.pageCount - 1)) {
+            pdfView.go(to: PDFDestination(page: page, at: place.point))
+        }
+        // The selection went with the old document.
+        updateQuoteButton()
+    }
+
+    /// A PDF ends with `%%EOF`, give or take a few bytes.
+    nonisolated private static func isComplete(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd(), size > 0 else { return false }
+        try? handle.seek(toOffset: size > 2048 ? size - 2048 : 0)
+        let tail = (try? handle.readToEnd()) ?? Data()
+        return tail.range(of: Data("%%EOF".utf8)) != nil
     }
 
     func goTo(line: Int?, col: Int?) {
@@ -1738,13 +2048,19 @@ final class AudioPlayerView: NSView {
 final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTableViewDelegate {
     let itemID: ItemID
     let path: String
+    private let container = HostContainer()
     private let scrollView = NSScrollView()
     private let table = NSTableView()
-    private var rows: [[String]] = []
+    private lazy var noticeView = SourceNoticeView()
+    private var file: CSVFile?
+    private var numericColumns: Set<Int> = []
+    /// A table asks for a row one cell at a time.
+    private var cachedRow: (index: Int, cells: [String])?
     private var token: FileWatchHub.Token?
     private var generation = 0
+    private var findTask: Task<Void, Never>?
 
-    var view: NSView { scrollView }
+    var view: NSView { container }
 
     init(itemID: ItemID, path: String) {
         self.itemID = itemID
@@ -1761,6 +2077,7 @@ final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTa
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
+        container.show(scrollView)
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
         load()
     }
@@ -1770,39 +2087,79 @@ final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTa
         let current = generation
         let path = path
         Task.detached(priority: .userInitiated) { [weak self] in
-            let data = FileManager.default.contents(atPath: path) ?? Data()
-            let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-            let parsed = CSVParser.parse(text)
+            // A file being replaced can be gone for a moment. What's showing stays until it's back.
+            guard let file = CSVFile(path: path) else { return }
+            let numeric = file.numericColumns()
             await MainActor.run {
                 guard let self, self.generation == current else { return }
-                self.display(parsed)
+                self.display(file, numeric: numeric)
             }
         }
     }
 
-    private func display(_ parsed: CSVParser.Table) {
-        rows = parsed.rows
+    private func display(_ new: CSVFile, numeric: Set<Int>) {
+        let sameColumns = file?.header == new.header && file?.columnCount == new.columnCount
+        file = new
+        numericColumns = numeric
+        cachedRow = nil
+        // An agent adding rows shouldn't reset your column widths or your place.
+        if !sameColumns { rebuildColumns() }
+        table.reloadData()
+        showNotice()
+    }
+
+    private func rebuildColumns() {
         table.tableColumns.forEach { table.removeTableColumn($0) }
-        let width = max(parsed.header.count, parsed.rows.map(\.count).max() ?? 0)
-        for index in 0..<width {
+        guard let file else { return }
+        for index in 0..<max(file.header.count, file.columnCount) {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("\(index)"))
-            column.title = index < parsed.header.count ? parsed.header[index] : ""
-            column.width = columnWidth(index: index, header: column.title)
+            column.title = index < file.header.count ? file.header[index] : ""
+            column.headerCell.alignment = numericColumns.contains(index) ? .right : .left
+            column.width = columnWidth(index: index, header: column.title, file: file)
             column.minWidth = 40
             table.addTableColumn(column)
         }
-        table.reloadData()
     }
 
-    private func columnWidth(index: Int, header: String) -> CGFloat {
-        var longest = header.count
-        for row in rows.prefix(200) where index < row.count {
-            longest = max(longest, row[index].count)
+    private static let cellFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+
+    private func columnWidth(index: Int, header: String, file: CSVFile) -> CGFloat {
+        let attributes: [NSAttributedString.Key: Any] = [.font: Self.cellFont]
+        var widest = (header as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium)]).width
+        // Both ends: the last rows of a long file have the longest ids.
+        let sample = Array(0..<min(file.rowCount, 100)) + Array(max(file.rowCount - 50, 100)..<max(file.rowCount, 100))
+        for row in sample {
+            let cells = file.row(row)
+            if index < cells.count { widest = max(widest, (cells[index] as NSString).size(withAttributes: attributes).width) }
         }
-        return min(max(CGFloat(longest) * 7.5 + 18, 60), 420)
+        return min(max(ceil(widest) + 18, 50), 420)
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+    private func showNotice() {
+        var notice: String?
+        if let file {
+            if file.header.isEmpty {
+                notice = "This file is empty."
+            } else if file.isTruncated {
+                notice = "Showing the first \(file.rowCount.formatted()) rows."
+            }
+        }
+        if let notice {
+            noticeView.show(notice, above: scrollView)
+            container.show(noticeView)
+        } else {
+            container.show(scrollView)
+        }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { file?.rowCount ?? 0 }
+
+    private func cells(_ row: Int) -> [String] {
+        if let cachedRow, cachedRow.index == row { return cachedRow.cells }
+        let cells = file?.row(row) ?? []
+        cachedRow = (row, cells)
+        return cells
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let column = tableColumn, let index = Int(column.identifier.rawValue) else { return nil }
@@ -1811,36 +2168,54 @@ final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTa
             let field = NSTextField(labelWithString: "")
             field.identifier = identifier
             field.lineBreakMode = .byTruncatingTail
-            field.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            field.font = Self.cellFont
             field.isSelectable = true
             return field
         }()
-        let cells = rows[row]
-        field.stringValue = index < cells.count ? cells[index] : ""
+        let cells = cells(row)
+        let cell = index < cells.count ? cells[index] : ""
+        // One line to a row. A line break shows as a mark, and the whole cell is a hover away.
+        let hasBreak = cell.utf8.contains(10) || cell.utf8.contains(13)
+        field.stringValue = hasBreak ? cell.replacingOccurrences(of: "\r\n", with: " ⏎ ").replacingOccurrences(of: "\n", with: " ⏎ ") : cell
+        field.alignment = numericColumns.contains(index) ? .right : .left
+        field.toolTip = hasBreak || cell.count > 50 ? cell : nil
         return field
     }
 
     func focus() { table.window?.makeFirstResponder(table) }
-    func teardown() { token = nil }
+
+    func teardown() {
+        token = nil
+        findTask?.cancel()
+    }
 
     var supportsFind: Bool { true }
 
+    /// Off the main thread, because a file can have millions of rows. The bar's "not found" state
+    /// updates when the answer arrives, as it does for web pages.
     func find(_ query: String, backwards: Bool) -> Bool {
-        guard !rows.isEmpty else { return false }
-        let start = table.selectedRow >= 0 ? table.selectedRow : (backwards ? rows.count : -1)
-        let count = rows.count
-        for step in 1...count {
-            let row = ((start + (backwards ? -step : step)) % count + count) % count
-            if rows[row].contains(where: { $0.range(of: query, options: .caseInsensitive) != nil }) {
-                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-                table.scrollRowToVisible(row)
-                return true
+        guard let file else { return false }
+        findTask?.cancel()
+        let start = table.selectedRow >= 0 ? table.selectedRow : nil
+        findTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let row = file.find(query, from: start, backwards: backwards) { Task.isCancelled }
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, !Task.isCancelled else { return }
+                if let row {
+                    self.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                    self.table.scrollRowToVisible(row)
+                }
+                AppModel.shared.find?.notFound = row == nil
             }
         }
-        return false
+        return true
     }
 
-    func clearFind() { table.deselectAll(nil) }
+    func clearFind() {
+        findTask?.cancel()
+        table.deselectAll(nil)
+    }
 }
 
 // MARK: - Office, iWork and everything else

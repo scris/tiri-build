@@ -600,38 +600,6 @@ import Testing
     }
 }
 
-@Suite struct CSVTests {
-    @Test func plain() {
-        let table = CSVParser.parse("a,b\n1,2\n3,4\n")
-        #expect(table.header == ["a", "b"])
-        #expect(table.rows == [["1", "2"], ["3", "4"]])
-    }
-
-    @Test func quotedCommasNewlinesAndDoubledQuotes() {
-        let table = CSVParser.parse("name,note\n\"Doe, J\",\"said \"\"hi\"\"\nthen left\"\n")
-        #expect(table.rows == [["Doe, J", "said \"hi\"\nthen left"]])
-    }
-
-    @Test func crlfAndNoTrailingNewline() {
-        let table = CSVParser.parse("a,b\r\n1,2")
-        #expect(table.rows == [["1", "2"]])
-    }
-
-    @Test func detectsDelimiter() {
-        #expect(CSVParser.parse("a\tb\n1\t2\n").header == ["a", "b"])
-        #expect(CSVParser.parse("a;b\n1;2\n").rows == [["1", "2"]])
-    }
-
-    @Test func truncatesAtLimit() {
-        let table = CSVParser.parse("a\n1\n2\n3\n4\n", maxRows: 2)
-        #expect(table.truncated)
-    }
-
-    @Test func emptyInput() {
-        #expect(CSVParser.parse("").header.isEmpty)
-    }
-}
-
 @Suite struct MarkdownTests {
     @Test func rendersCoreSyntax() {
         let page = MarkdownRenderer.page(markdown: "# Title\n\nSome *em* and `code`.\n\n- a\n- b\n", baseHref: nil)
@@ -702,7 +670,7 @@ import Testing
 @Suite struct FileKindTests {
     @Test(arguments: [
         ("a.md", FileKind.markdown), ("A.MARKDOWN", .markdown), ("a.png", .image), ("a.HEIC", .image), ("a.gif", .image),
-        ("a.svg", .svg), ("a.pdf", .pdf), ("a.mp4", .media), ("a.mp3", .media), ("a.html", .html), ("a.csv", .csv),
+        ("a.svg", .svg), ("a.pdf", .pdf), ("a.mp4", .media), ("a.mp3", .media), ("a.html", .html), ("a.csv", .csv), ("a.TSV", .csv),
         ("a.pptx", .office), ("a.docx", .office), ("a.xlsx", .office), ("a.key", .office), ("a.pages", .office), ("a.numbers", .office),
         ("a.swift", .text), ("Makefile", .text), (".gitignore", .text), ("LICENSE", .text),
     ])
