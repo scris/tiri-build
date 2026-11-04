@@ -282,8 +282,9 @@ final class TiriTerminalView: LocalProcessTerminalView {
             }
         }
         let candidates = variants.flatMap { PathLinkDetector.candidates(atColumn: $0.column, in: $0.line.text) }
-        // A bare word isn't a path. It may be the label of a real hyperlink.
-        guard let shown = candidates.first(where: { $0.path.contains("/") || $0.path.contains(".") })?.path else { return false }
+        // A bare word isn't a path, and nor is a sentence with a path in it, like an error message.
+        // It may be the label of a real hyperlink.
+        guard let shown = candidates.first(where: { !$0.path.contains(" ") && ($0.path.contains("/") || $0.path.contains(".")) })?.path else { return false }
         searchAgain(for: shown, forceTab: forceTab) { [weak self] in
             guard let resolver = self?.pathResolver() else { return [] }
             for variant in variants {
@@ -818,7 +819,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     private func oscNotification(_ text: String) {
         // A progress report (OSC 9;4) isn't a request for attention.
         if text.hasPrefix("4;") { return }
-        if hookActive { return }
+        if hookActive || isReplaying { return }
         model.setStatus(itemID, .needsInput, message: text.replacingOccurrences(of: "notify;", with: ""))
     }
 
@@ -831,15 +832,34 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     func startIfNeeded(fallbackSize: Bool) {
         guard !started else { return }
         if !fallbackSize, terminalView.bounds.width < 40 { return }
+        if fallbackSize { takeSizeOfItsPane() }
         started = true
         spawn()
     }
+
+    /// In a tab that isn't showing it has no size yet, and what a running program printed replays
+    /// at whatever it has. Replayed narrower than it was printed, a shell's prompts leave marks.
+    private func takeSizeOfItsPane() {
+        let frames = model.layoutRegistry.contentFrames
+        let group = model.workspaces.first { $0.id == workspaceID }?.group(containing: itemID)?.id
+        guard terminalView.window == nil || container.superview == nil,
+              let frame = group.flatMap({ frames[$0] }) ?? frames.values.max(by: { $0.width < $1.width }) else { return }
+        let inset = TerminalContainer.padding
+        terminalView.setFrameSize(NSSize(width: max(frame.width - inset.left - inset.right, 40),
+                                         height: max(frame.height - inset.top - inset.bottom, 40)))
+    }
+
+    /// Coming back to a running session replays what it printed. A bell or a notification in there
+    /// happened long ago, and isn't asking for anything now.
+    private var replayEndsAt: Double = 0
+    private var isReplaying: Bool { ProcessClock.now() < replayEndsAt }
 
     private func spawn() {
         if remoteDestination != nil {
             spawnOnServer()
             return
         }
+        if TerminalSessions.isAlive(itemID) { replayEndsAt = ProcessClock.now() + 2000 }
         let backend: TerminalBackend = LocalTerminalBackend()
         let launch = backend.launch(command: launchCommand, cwd: currentDirectory, shell: model.settings.terminalShell,
                                     itemID: itemID, workspaceID: workspaceID, socket: model.socketPath)
@@ -1310,7 +1330,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
 
     func bellRang() {
-        if hookActive { return }
+        if hookActive || isReplaying { return }
         if launchCommand != nil {
             model.setStatus(itemID, .needsInput)
         } else if !model.isLookingAt(itemID) {

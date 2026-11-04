@@ -184,6 +184,27 @@ static int send_frame(int fd, char type, const void *data, uint32_t count) {
     return count ? write_all(fd, data, count) : 0;
 }
 
+// Before each prompt zsh prints a % and a line's width of spaces, so a prompt can't overwrite a
+// line left unfinished. On a fresh line it erases itself, but only at the width it was printed for.
+// A view that's since changed size would show it above every prompt, so it isn't replayed.
+static size_t without_prompt_marks(unsigned char *data, size_t count) {
+    static const char mark[] = "\033[1m\033[7m%\033[27m\033[1m\033[0m";
+    const size_t mark_length = sizeof mark - 1;
+    size_t kept = 0;
+    for (size_t index = 0; index < count;) {
+        if (data[index] == 0x1B && count - index >= mark_length && memcmp(data + index, mark, mark_length) == 0) {
+            size_t after = index + mark_length;
+            while (after < count && data[after] == ' ') after++;
+            if (count - after >= 3 && memcmp(data + after, "\r \r", 3) == 0) {
+                index = after + 3;
+                continue;
+            }
+        }
+        data[kept++] = data[index++];
+    }
+    return kept;
+}
+
 static int send_replay(int fd) {
     // Start at the beginning of a line if the buffer has wrapped, so nothing begins mid-sequence.
     size_t skip = 0;
@@ -206,13 +227,23 @@ static int send_replay(int fd) {
     }
     size_t remaining = ring_count - skip;
     size_t position = (ring_start + skip) % RING_BYTES;
-    while (remaining > 0) {
-        size_t chunk = RING_BYTES - position;
-        if (chunk > remaining) chunk = remaining;
-        if (chunk > READ_BYTES) chunk = READ_BYTES;
-        if (send_frame(fd, 'D', ring + position, (uint32_t)chunk) < 0) return -1;
-        position = (position + chunk) % RING_BYTES;
-        remaining -= chunk;
+    unsigned char *flat = remaining ? malloc(remaining) : NULL;
+    if (flat) {
+        size_t first = RING_BYTES - position;
+        if (first > remaining) first = remaining;
+        memcpy(flat, ring + position, first);
+        memcpy(flat + first, ring, remaining - first);
+        remaining = without_prompt_marks(flat, remaining);
+        for (size_t sent = 0; sent < remaining;) {
+            size_t chunk = remaining - sent;
+            if (chunk > READ_BYTES) chunk = READ_BYTES;
+            if (send_frame(fd, 'D', flat + sent, (uint32_t)chunk) < 0) {
+                free(flat);
+                return -1;
+            }
+            sent += chunk;
+        }
+        free(flat);
     }
     // The relay needs to know whether there was anything to replay. See relay().
     unsigned char had_output = ring_count > 0;
