@@ -28,20 +28,11 @@ public struct EditorSelection: Sendable, Equatable {
 
 /// How a reference to a file or some of its lines is written into an agent's input.
 public enum AgentReference {
-    public enum Agent: String, Sendable { case claude, codex, other }
+    public typealias Agent = AgentIdentity
 
-    /// From what's running: the executable and arguments, then the terminal's own command.
-    /// Claude's installed executable is named after its version, so the path has to be read too,
-    /// and an agent started by node appears as node with the agent as its first argument.
-    public static func agent(commandLine: [String], command: String?) -> Agent? {
-        var tokens = Array(commandLine.prefix(3))
-        if let command, let first = command.split(separator: " ").first { tokens.append(String(first)) }
-        for token in tokens.map({ $0.lowercased() }) {
-            let name = (token as NSString).lastPathComponent
-            if name == "claude" || token.contains("/claude/versions/") || token.contains("claude-code/") { return .claude }
-            if name == "codex" || token.contains("/@openai/codex/") { return .codex }
-        }
-        return nil
+    /// See `AgentCatalog.identify`.
+    public static func agent(commandLine: [String], command: String?, custom: Set<String> = []) -> Agent? {
+        AgentCatalog.identify(commandLine: commandLine, command: command, custom: custom)
     }
 
     /// A path from the terminal's folder when it's inside it, because it's shorter and is what agents print.
@@ -53,18 +44,10 @@ public enum AgentReference {
 
     /// Lines count from zero here and from one on screen. A path with a space gets quotes.
     public static func text(path: String, cwd: String?, firstLine: Int?, lastLine: Int?, agent: Agent) -> String {
-        var shown = display(path: path, cwd: cwd)
-        if let first = firstLine {
-            let last = lastLine ?? first
-            switch agent {
-            case .claude:
-                shown += last == first ? "#L\(first + 1)" : "#L\(first + 1)-\(last + 1)"
-            case .codex, .other:
-                shown += last == first ? ":\(first + 1)" : ":\(first + 1)-\(last + 1)"
-            }
-        }
-        if shown.contains(" ") { shown = "\"" + shown + "\"" }
-        return (agent == .claude ? "@" : "") + shown + " "
+        let shown = display(path: path, cwd: cwd)
+        // An agent Tiri has no entry for gets what anyone could read.
+        return agent.profile?.mention(shown, firstLine: firstLine, lastLine: lastLine)
+            ?? AgentProfile.mention(shown, firstLine: firstLine, lastLine: lastLine, prefix: "", style: .colon)
     }
 
     private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "tif", "bmp"]

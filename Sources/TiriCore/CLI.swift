@@ -272,15 +272,16 @@ public enum CLIParser {
 
         case "hook":
             // Reads the agent's payload. Never fails loudly: a hook must not disturb the agent.
-            guard let tool = args.first, tool == "claude" || tool == "codex" else {
-                throw UsageError("usage: tiri hook claude|codex [payload]   (reads the payload from stdin)")
+            guard let tool = args.first, let stated = AgentIdentity(rawValue: tool), stated.profile?.parseHook != nil else {
+                throw UsageError("usage: tiri hook \(hookAgents) [payload]   (reads the payload from stdin)")
             }
             guard let item = environment.itemID else { return .quietSuccess }
-            if tool == "claude", AgentHookEvent.isOneShotClaude(entrypoint: environment.claudeEntrypoint) { return .quietSuccess }
             let payload = args.count > 1 ? Data(args[1].utf8) : environment.readStdin()
-            let event = tool == "claude" ? AgentHookEvent.parseClaude(payload) : AgentHookEvent.parseCodex(payload)
-            guard let event else { return .quietSuccess }
-            var body: [String: JSONValue] = ["item": .string(item), "tool": .string(tool)]
+            // Grok runs Claude Code's hooks too. It's still Grok that's talking.
+            let agent = AgentCatalog.owner(ofHookPayload: payload, reportedAs: stated)
+            if agent == .claude, AgentHookEvent.isOneShotClaude(entrypoint: environment.claudeEntrypoint) { return .quietSuccess }
+            guard let event = agent.profile?.parseHook?(payload) else { return .quietSuccess }
+            var body: [String: JSONValue] = ["item": .string(item), "tool": .string(agent.rawValue)]
             if let state = event.state { body["state"] = .string(state) }
             if let message = event.message { body["message"] = .string(message) }
             if let session = event.sessionID { body["session"] = .string(session) }
@@ -290,13 +291,13 @@ public enum CLIParser {
             return request("notify", body)
 
         case "hooks":
-            if args.count == 2, args[0] == "install" || args[0] == "remove", AgentHooks.Tool(rawValue: args[1]) != nil {
+            if args.count == 2, args[0] == "install" || args[0] == "remove", AgentHooks.Tool(rawValue: args[1])?.profile?.hookInstall != nil {
                 return request("hooks.\(args[0])", ["tool": .string(args[1])])
             }
-            guard args.first == "claude" || args.first == "codex", args.count == 1 else {
-                throw UsageError("usage: tiri hooks install|remove claude|codex   (Tiri asks you first)\n       tiri hooks claude|codex   (prints the config)")
+            guard args.count == 1, let example = args.first.flatMap(AgentIdentity.init(rawValue:))?.profile?.hookExample else {
+                throw UsageError("usage: tiri hooks install|remove \(hookAgents)   (Tiri asks you first)\n       tiri hooks \(hookAgents)   (prints the config)")
             }
-            return .printText(args[0] == "claude" ? AgentGuide.claudeHooks : AgentGuide.codexHooks)
+            return .printText(example)
 
         case "theme":
             guard args.count == 1, ThemeMode(rawValue: args[0]) != nil else { throw UsageError("usage: tiri theme light|dark|system") }
@@ -391,6 +392,11 @@ public enum CLIParser {
         }
     }
 
+    /// `claude|codex|grok`, as it stands.
+    private static var hookAgents: String {
+        AgentCatalog.all.filter { $0.parseHook != nil }.map(\.id).joined(separator: "|")
+    }
+
     private static let workspaceUsage = "usage: tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR> | remove-folder <DIR> | import <file.code-workspace> | rename <new-name> [<workspace>] | delete <name>"
 
     public static let usage = """
@@ -405,9 +411,10 @@ public enum CLIParser {
       tiri items
       tiri focus <item-id> | close <item-id>
       tiri notify <working|needs-input|done> [--message TEXT]
-      tiri hook claude|codex    (for agent hooks: reads the payload, prints nothing)
-      tiri hooks install|remove claude|codex   (Tiri asks you first)
-      tiri hooks claude|codex   (prints the hooks config)
+      tiri hook <agent>         (for agent hooks: reads the payload, prints nothing)
+      tiri hooks install|remove <agent>   (Tiri asks you first)
+      tiri hooks <agent>        (prints the hooks config)
+                                (agents with hooks: claude, codex, grok)
       tiri theme light|dark|system
       tiri web-dark on|off [<item-id>]
       tiri search <text>           (across the workspace's files, as ⌘⇧F does)
@@ -539,6 +546,21 @@ public enum AgentGuide {
     command = "tiri hook codex"
     """#
 
+    public static let grokHooks = #"""
+    # ~/.grok/hooks/tiri.json. Grok also runs the hooks in ~/.claude/settings.json by default.
+    {
+      "hooks": {
+        "SessionStart": [{ "hooks": [{ "type": "command", "command": "tiri hook grok" }] }],
+        "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "tiri hook grok" }] }],
+        "PostToolUse": [{ "hooks": [{ "type": "command", "command": "tiri hook grok" }] }],
+        "Notification": [{ "hooks": [{ "type": "command", "command": "tiri hook grok" }] }],
+        "Stop": [{ "hooks": [{ "type": "command", "command": "tiri hook grok" }] }],
+        "StopFailure": [{ "hooks": [{ "type": "command", "command": "tiri hook grok" }] }],
+        "StopCancelled": [{ "hooks": [{ "type": "command", "command": "tiri hook grok" }] }]
+      }
+    }
+    """#
+
     public static let markdown = #"""
     # Tiri, for agents
 
@@ -590,9 +612,9 @@ public enum AgentGuide {
     ```
 
     The item defaults to `$TIRI_ITEM_ID`. Outside Tiri, `notify` quietly does nothing, so it's
-    safe in hooks and scripts. For Claude Code and Codex, `tiri hook claude|codex` reads the hook
+    safe in hooks and scripts. For Claude Code, Codex and Grok, `tiri hook <agent>` reads the hook
     payload and does this for you, and also records the session id so a relaunch resumes exactly
-    this conversation. `tiri hooks claude|codex` prints the config to add.
+    this conversation. `tiri hooks <agent>` prints the config to add.
 
     ## Terminals
 

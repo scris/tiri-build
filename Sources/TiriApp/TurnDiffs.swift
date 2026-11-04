@@ -31,6 +31,8 @@ extension AppModel {
     /// An agent took a prompt. What's there now is what the turn starts from.
     func turnStarted(item: ItemID, prompt: String?) {
         guard settings.perTurnDiffs, let (workspace, folders) = turnRoots(for: item), let source = anyItem(item) else { return }
+        // Two hooks can report one event: an agent's own, and another's it also runs.
+        if let last = turns.last(where: { $0.item == item }), last.isOpen, Date().timeIntervalSince(last.started) < 3 { return }
         let turn = AgentTurn(workspace: workspace.id, item: item, title: title(for: source), prompt: AgentTurn.shortPrompt(prompt))
         let previous = turns.last { $0.item == item && $0.isOpen }?.id
         turns.append(turn)
@@ -57,6 +59,7 @@ extension AppModel {
     /// something to start from, and a later one starts where the last ended.
     func turnEnded(item: ItemID) {
         guard settings.perTurnDiffs, let (workspace, folders) = turnRoots(for: item), let source = anyItem(item) else { return }
+        if let last = turns.last(where: { $0.item == item }), let ended = last.ended, Date().timeIntervalSince(ended) < 3 { return }
         let snapshots = self.snapshots
         let open = turns.last { $0.item == item && $0.isOpen }?.id
         let last = turns.last { $0.item == item && !$0.isOpen }

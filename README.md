@@ -1,6 +1,6 @@
 # Tiri
 
-A neutral, native macOS workspace for people who do their work through CLI agents like Claude Code and Codex, and use the "IDE" to see, review and organize.
+A neutral, native macOS workspace for people who do their work through CLI agents like Claude Code, Codex and Grok, and use the "IDE" to see, review and organize.
 
 Terminals, files and web previews are equal items in one tab and pane system. There is no bundled AI, and no bottom terminal panel. Your agents can drive the whole app through a local CLI.
 
@@ -30,7 +30,7 @@ Select lines in any file. Claude Code sees the selection the way it does in VS C
 
 Select something in a file, a diff, rendered markdown, an HTML file, a web page or a PDF, and a **Quote in Agent** button appears beside it. It, ⌘L and right-click all do the same thing. With one agent running, your selection goes straight to it. With several, in any workspace, Tiri asks which session should get it, with the one you last used first. Then it moves you there.
 
-Claude Code gets a real mention. Codex gets the path and line range typed in, since it has no editor protocol. From a diff, both get the selected change itself, with its + and − marks, because a removed line isn't in the file any more.
+Claude Code gets a real mention. Codex and Grok get the path and line range typed in, in the form each one reads, since they have no editor protocol. From a diff, both get the selected change itself, with its + and − marks, because a removed line isn't in the file any more.
 
 A selection in rendered markdown becomes the source lines it came from, so Claude gets `@report.md#L12-20` rather than a copy of the words. HTML, web pages and PDFs have no lines to point at, so the selected text goes in as a quotation, with its page number from a PDF. Office files show through Quick Look, which doesn't let an app read a selection, so ⌘L adds the whole file.
 
@@ -178,9 +178,15 @@ Without hooks, Tiri estimates status from terminal activity, which is less preci
 
 A `claude -p` run doesn't report, whether a session or a script started it, so it can't change the tab's status or which conversation comes back after a relaunch. Neither can one agent running inside another's terminal.
 
-**Turning them on:** Settings has an Agent Status section with an Install button for Claude Code and Codex, and Tiri offers the first time it sees one run. Your agent can start it too, with `tiri hooks install claude`. Either way Tiri shows what it will add and waits for your yes. It keeps your other hooks and settings, leaves a copy of the file next to it, and can remove its entries again.
+**Turning them on:** Settings has an Agent Status section with an Install button for each agent, and Tiri offers the first time it sees one run. Your agent can start it too, with `tiri hooks install claude`. Either way Tiri shows what it will add and waits for your yes. It keeps your other hooks and settings, leaves a copy of the file next to it, and can remove its entries again.
 
-Outside Tiri these hooks do nothing and print nothing, so they're safe to leave on. Codex asks you to trust hooks once, in `/hooks`.
+Outside Tiri these hooks do nothing and print nothing, so they're safe to leave on. Codex asks you to trust hooks once, in `/hooks`. Grok asks you to trust each folder before it runs any hooks. Grok also runs the hooks in your Claude Code settings by default, so if those are on, it already reports. Its Install button adds a file of Tiri's own at `~/.grok/hooks/tiri.json` and changes nothing of yours, for when you've turned that off.
+
+## Other agents
+
+Tiri isn't tied to these three. Add any program to the New Terminal menu in Settings, under Agents, and you can hand it lines, files, review comments and problems from Tiri, as plain text it can read. What it can't do without more is report its status exactly or resume a conversation by its ID.
+
+Supporting one fully takes one entry in `AgentCatalog` (`Sources/TiriCore/Agents.swift`), which says how to recognize it, write a mention, resume it, install hooks and read their payloads. Everything else reads from there.
 
 ## Dark mode
 
@@ -212,4 +218,4 @@ swift test          # unit tests and an in-process control server test
 scripts/e2e.sh      # drives a real app through every CLI command, with isolated state
 ```
 
-`TiriCore` holds the models, persistence, path parsing, workspace import and control protocol, with no UI. `TiriApp` is the SwiftUI and AppKit app. `tiri` is the CLI. See [PROGRESS.md](PROGRESS.md) for current status.
+`TiriCore` holds the models, persistence, path parsing, workspace import, control protocol and the catalog of agents, with no UI. `TiriApp` is the SwiftUI and AppKit app. `tiri` is the CLI. See [PROGRESS.md](PROGRESS.md) for current status.

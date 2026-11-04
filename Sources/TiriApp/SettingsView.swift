@@ -252,7 +252,9 @@ struct AgentHooksSection: View {
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(tool.title)
-                            Text(installed
+                            Text(!installed && model.hooksCoverage(tool) != nil
+                                 ? "Reports through your \(model.hooksCoverage(tool)?.title ?? "") hooks, which it runs too. It asks you to trust a folder before they do."
+                                 : installed
                                  ? "Reports exactly when it's working, waiting for you or done, and resumes the right conversation."
                                  : "Tiri is estimating its status from terminal activity. A hook makes it exact.")
                                 .font(.caption)

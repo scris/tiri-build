@@ -28,12 +28,8 @@ public struct TiriSettings: Equatable, Sendable {
     public var terminalTranslucent = false
     public var terminalScrollback = 10_000
     public var terminalShell = ""
-    public var terminalPresets = [
-        TerminalPreset(name: "Shell", command: ""),
-        TerminalPreset(name: "Claude Code", command: "claude"),
-        TerminalPreset(name: "Codex", command: "codex"),
-    ]
-    public var terminalResume = ["claude": "claude --continue", "codex": "codex resume --last"]
+    public var terminalPresets = AgentCatalog.defaultPresets
+    public var terminalResume = AgentCatalog.defaultResume
     public var terminalRestoreWithResume = true
     public var terminalKeepRunning = true
     public var perTurnDiffs = true
@@ -66,12 +62,14 @@ public struct TiriSettings: Equatable, Sendable {
       "terminal.presets": [
         { "name": "Shell", "command": "" },
         { "name": "Claude Code", "command": "claude" },
-        { "name": "Codex", "command": "codex" }
+        { "name": "Codex", "command": "codex" },
+        { "name": "Grok", "command": "grok" }
       ],
       // How agent terminals come back after a relaunch. Keyed by tool name.
       "terminal.resume": {
         "claude": "claude --continue",
-        "codex": "codex resume --last"
+        "codex": "codex resume --last",
+        "grok": "grok --continue"
       },
       "terminal.restoreWithResume": true,
       // Terminals keep running when Tiri quits, and it comes back to them.

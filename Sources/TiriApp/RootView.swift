@@ -470,8 +470,11 @@ struct EmptyGroupView: View {
             }
             if noAgents {
                 HStack(spacing: 18) {
-                    Link("Get Claude Code", destination: URL(string: "https://claude.com/product/claude-code")!)
-                    Link("Get Codex", destination: URL(string: "https://github.com/openai/codex")!)
+                    ForEach(AgentCatalog.all) { agent in
+                        if let url = URL(string: agent.website) {
+                            Link("Get \(agent.title)", destination: url)
+                        }
+                    }
                 }
             } else {
                 agentButtons

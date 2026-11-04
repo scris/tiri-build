@@ -247,7 +247,7 @@ extension AppModel {
                     (controller(for: item.id) as? TerminalController)?.startIfNeeded(fallbackSize: true)
                 }
                 guard let terminal = existingController(for: item.id) as? TerminalController,
-                      terminal.isRunning, let agent = AgentReference.agent(commandLine: terminal.foregroundCommandLine, command: spec.command) else { continue }
+                      terminal.isRunning, let agent = AgentReference.agent(commandLine: terminal.foregroundCommandLine, command: spec.command, custom: customAgentNames) else { continue }
                 sessions.append(AgentSession(terminal: terminal, agent: agent, item: item, workspace: workspace))
             }
         }
@@ -258,11 +258,20 @@ extension AppModel {
         return sessions.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
     }
 
+    /// Whatever else is in the New Terminal menu counts as an agent you can hand things to.
+    var customAgentNames: Set<String> {
+        Set(settings.terminalPresets.compactMap { preset -> String? in
+            guard let name = preset.command.split(separator: " ").first.map(String.init),
+                  AgentCatalog.profile(executable: name) == nil else { return nil }
+            return (name as NSString).lastPathComponent.lowercased()
+        })
+    }
+
     /// With one agent running there's nothing to ask. With several, you choose.
     func withAgent(asking question: String, _ deliver: @escaping (TerminalController, AgentReference.Agent) -> Void) {
         let sessions = activeAgentSessions()
         guard let first = sessions.first else {
-            showToast(title: "No agent is running", detail: "Start Claude Code or Codex from the + button, then try again.",
+            showToast(title: "No agent is running", detail: "Start one from the + button, then try again.",
                       symbol: "sparkles", tint: .secondary)
             return
         }
@@ -271,11 +280,11 @@ extension AppModel {
             return
         }
         let rows = sessions.map { session in
-            let name = session.agent == .claude ? "Claude Code" : (session.agent == .codex ? "Codex" : "Agent")
+            let name = session.agent.title
             let status = runtimes[session.item.id]?.status.rawValue ?? "idle"
             return PaletteModel.Row(id: session.item.id, title: name + " · " + title(for: session.item),
                                     detail: session.workspace.name + " · " + status,
-                                    symbol: session.agent == .claude ? "sparkle" : "chevron.left.forwardslash.chevron.right") { [weak self] _ in
+                                    symbol: session.agent.profile?.symbol ?? "terminal") { [weak self] _ in
                 self?.closePalette(restoreFocus: false)
                 deliver(session.terminal, session.agent)
             }
@@ -310,7 +319,7 @@ extension AppModel {
             terminal.send(text: AgentReference.bracketedPaste(quote))
             return
         }
-        if agent == .claude,
+        if agent.profile?.speaksEditorProtocol == true,
            editorBridge.mention(path: reference.path, firstLine: reference.firstLine, lastLine: reference.lastLine, in: terminal) {
             return
         }
@@ -332,7 +341,7 @@ extension AppModel {
         for path in paths {
             if AgentReference.isImage(path: path) {
                 terminal.send(text: AgentReference.bracketedPaste(path) + " ")
-            } else if agent == .claude, editorBridge.mention(path: path, firstLine: nil, lastLine: nil, in: terminal) {
+            } else if agent.profile?.speaksEditorProtocol == true, editorBridge.mention(path: path, firstLine: nil, lastLine: nil, in: terminal) {
                 continue
             } else {
                 terminal.send(text: AgentReference.text(path: EditorBridge.realPath(path), cwd: EditorBridge.realPath(terminal.currentDirectory),

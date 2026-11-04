@@ -771,8 +771,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             model.terminalTypedAgentChanged(item: itemID, agent: typed)
         }
         if !hookActive, let agent = runningAgent {
-            if agent == .claude { model.offerHooksIfNeeded(.claude) }
-            if agent == .codex { model.offerHooksIfNeeded(.codex) }
+            model.offerHooksIfNeeded(agent)
         }
         let now = ProcessClock.now()
         let quietFor = now - activity.lastOutput

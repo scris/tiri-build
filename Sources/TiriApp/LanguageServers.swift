@@ -99,6 +99,14 @@ final class LanguageServerHub {
         await task.value
     }
 
+    /// Soon after launch, so that it's done before anyone asks.
+    func prepare() {
+        guard isEnabled else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            Task { await self?.locateServers() }
+        }
+    }
+
     /// For an agent asking which there are: an answer rather than "still looking".
     func waitForLocations() async {
         await locateServers()
@@ -489,6 +497,12 @@ final class LanguageServerHub {
     // MARK: Questions
 
     private func asking(_ path: String, within seconds: TimeInterval) async -> Session? {
+        // Someone's waiting, and a slow shell can take seconds to say what it has. The search can
+        // answer now, and by the next question this will be done.
+        guard lookedUp else {
+            Task { await locateServers() }
+            return nil
+        }
         let real = Git.real(path)
         guard let session = await session(for: real, asked: true), await ready(session, within: seconds) else { return nil }
         session.lastUsed = Date()

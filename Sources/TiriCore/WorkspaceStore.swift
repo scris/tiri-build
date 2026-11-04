@@ -272,21 +272,24 @@ public enum TerminalRestore {
         let tool = tokens[0]
         let name = (tool as NSString).lastPathComponent
         guard let template = resume[name], !template.isEmpty else { return .prefill(trimmed) }
-        // One-shot runs have nothing to come back to.
-        if tokens.contains("-p") || tokens.contains("--print") || tokens.dropFirst().first == "exec" {
+        let profile = AgentCatalog.profile(executable: name)
+        let subcommand = tokens.dropFirst().first
+        // One-shot runs have nothing to come back to. An agent Tiri has no entry for gets the usual spellings.
+        let oneShotFlags = profile?.oneShotFlags ?? ["-p", "--print"]
+        let oneShotSubcommands = profile?.oneShotSubcommands ?? ["exec"]
+        if tokens.contains(where: oneShotFlags.contains) || subcommand.map(oneShotSubcommands.contains) == true {
             return .prefill(trimmed)
         }
-        let alreadyResuming = tokens.contains("--continue") || tokens.contains("--resume")
-            || tokens.contains("-c") || tokens.dropFirst().first == "resume"
+        let resumingFlags = profile?.resumingFlags ?? ["--continue", "--resume", "-c"]
+        let resumingSubcommands = profile?.resumingSubcommands ?? ["resume"]
+        let alreadyResuming = tokens.contains(where: resumingFlags.contains) || subcommand.map(resumingSubcommands.contains) == true
         let flags = safeFlags(in: Array(tokens.dropFirst()), rawArguments: trimmed)
 
         guard enabled else { return .run(name + flags) }
         if let sessionID, !sessionID.isEmpty, sessionID.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) {
             let extra = alreadyResuming ? "" : flags
-            switch name {
-            case "claude": return .run("claude --resume \(sessionID)\(extra)")
-            case "codex": return .run("codex resume \(sessionID)\(extra)")
-            default: break
+            if let command = profile?.resumeCommand {
+                return .run(command.replacingOccurrences(of: "{id}", with: sessionID) + extra)
             }
         }
         if alreadyResuming { return .run(trimmed) }
@@ -378,6 +381,40 @@ public struct AgentHookEvent: Equatable, Sendable {
             return AgentHookEvent(state: "done", message: snippet(object["last_assistant_message"] as? String), sessionID: session, turn: .end)
         case "StopFailure":
             return AgentHookEvent(state: "done", message: snippet(object["error"] as? String) ?? "Stopped with an error", sessionID: session, turn: .end)
+        default:
+            return session == nil ? nil : AgentHookEvent(sessionID: session)
+        }
+    }
+
+    /// Grok's payload reads a lot like Claude Code's, and these are where it doesn't. `Stop` also
+    /// fires as a session closes, with a reason of `shutdown`, after the real end of its last turn.
+    /// An interrupted turn gets its own event. These were read from real payloads.
+    public static func parseGrok(_ data: Data) -> AgentHookEvent? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let session = (object["session_id"] as? String) ?? (object["sessionId"] as? String)
+        func text(_ names: String...) -> String? {
+            for name in names { if let value = object[name] as? String { return value } }
+            return nil
+        }
+        switch object["hook_event_name"] as? String {
+        case "SessionStart":
+            return AgentHookEvent(state: "idle", sessionID: session)
+        case "UserPromptSubmit":
+            return AgentHookEvent(state: "working", sessionID: session, turn: .start, prompt: object["prompt"] as? String)
+        case "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart":
+            return AgentHookEvent(state: "working", sessionID: session)
+        case "Notification":
+            let type = text("notification_type", "notificationType", "type")
+            // Only this one is waiting for you. A finished turn has `Stop`, and idle isn't news.
+            guard type == "permission_prompt" else { return AgentHookEvent(sessionID: session) }
+            return AgentHookEvent(state: "needs-input", message: snippet(text("message", "title")) ?? "Wants your permission", sessionID: session)
+        case "Stop":
+            if text("reason") == "shutdown" { return AgentHookEvent(sessionID: session) }
+            return AgentHookEvent(state: "done", message: snippet(text("last_assistant_message", "lastAssistantMessage")), sessionID: session, turn: .end)
+        case "StopFailure":
+            return AgentHookEvent(state: "done", message: snippet(text("error", "message")) ?? "Stopped with an error", sessionID: session, turn: .end)
+        case "StopCancelled":
+            return AgentHookEvent(state: "done", message: "Stopped", sessionID: session, turn: .end)
         default:
             return session == nil ? nil : AgentHookEvent(sessionID: session)
         }

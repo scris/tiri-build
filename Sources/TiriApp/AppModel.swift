@@ -201,6 +201,8 @@ final class AppModel {
         didFinishLaunching = true
         editorBridge.start()
         loadTurns()
+        adoptNewAgents()
+        languageServers.prepare()
         // Whatever isn't in a tab any more has nothing to come back to.
         TerminalSessions.endAll(except: Set(workspaces.flatMap { $0.items.map(\.id) }))
         router.install(model: self)
@@ -1716,8 +1718,8 @@ final class AppModel {
                 self.changesInFlight = false
                 self.refreshReviewLines()
                 self.refreshTurnChanges()
-                if self.activeID == workspace, self.changes != found { self.changes = found }
                 if self.activeID == workspace { self.barHasRepositories = !repositories.isEmpty }
+                if self.activeID == workspace, self.changes != found { self.changes = found }
                 if self.activeID == workspace, self.repositories != repositories {
                     self.repositories = repositories
                     self.watchGitDirectories(of: repositories, folders: folders)
@@ -1908,6 +1910,28 @@ final class AppModel {
         }
     }
 
+    /// Which agent's hooks already reach this one, if any do. Grok runs Claude Code's by default.
+    func hooksCoverage(_ tool: AgentHooks.Tool) -> AgentHooks.Tool? {
+        guard let other = tool.profile?.alsoRunsHooksOf.flatMap(AgentIdentity.init(rawValue:)), hooksInstalled(other) else { return nil }
+        return other
+    }
+
+    /// A settings file can list the New Terminal menu in full, which would hide a new agent.
+    private func adoptNewAgents() {
+        let key = "knownAgents"
+        let known = UserDefaults.standard.stringArray(forKey: key).map(Set.init) ?? AgentCatalog.alwaysKnown
+        let adopted = AgentCatalog.adopting(into: settings.terminalPresets, resume: settings.terminalResume, known: known)
+        UserDefaults.standard.set(adopted.known.sorted(), forKey: key)
+        if adopted.presets != settings.terminalPresets {
+            _ = setSetting("terminal.presets", to: .array(adopted.presets.map { preset in
+                .object(["name": .string(preset.name), "command": .string(preset.command)])
+            }))
+        }
+        if adopted.resume != settings.terminalResume {
+            _ = setSetting("terminal.resume", to: .object(adopted.resume.mapValues(JSONValue.string)))
+        }
+    }
+
     private func applyHooks(_ tool: AgentHooks.Tool, install: Bool) {
         let url = AgentHooks.configURL(for: tool)
         let manager = FileManager.default
@@ -1915,12 +1939,18 @@ final class AppModel {
             let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
             let updated = install ? try AgentHooks.installing(tool, in: text) : try AgentHooks.removing(tool, from: text)
             try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if manager.fileExists(atPath: url.path) {
+            if manager.fileExists(atPath: url.path), case .ownFile? = tool.profile?.hookInstall {
+                // Tiri's own file, with nothing of anyone else's to keep.
+            } else if manager.fileExists(atPath: url.path) {
                 let backup = url.appendingPathExtension("tiri-backup")
                 try? manager.removeItem(at: backup)
                 try manager.copyItem(at: url, to: backup)
             }
-            try updated.write(to: url, atomically: true, encoding: .utf8)
+            if updated.isEmpty, case .ownFile = tool.profile?.hookInstall {
+                try? manager.removeItem(at: url)
+            } else {
+                try updated.write(to: url, atomically: true, encoding: .utf8)
+            }
             hooksRevision += 1
             showToast(title: install ? "\(tool.title) hooks are on" : "\(tool.title) hooks are off",
                       detail: install ? "New \(tool.title) sessions report their status exactly." : nil,
@@ -1933,7 +1963,7 @@ final class AppModel {
     /// Once, the first time an agent runs without hooks. Dismissing it is an answer.
     func offerHooksIfNeeded(_ tool: AgentHooks.Tool) {
         let key = "offeredHooks.\(tool.rawValue)"
-        guard !UserDefaults.standard.bool(forKey: key), !hooksInstalled(tool) else { return }
+        guard tool.profile?.hookInstall != nil, !UserDefaults.standard.bool(forKey: key), !hooksInstalled(tool), hooksCoverage(tool) == nil else { return }
         UserDefaults.standard.set(true, forKey: key)
         showToast(title: "Get exact status from \(tool.title)?", detail: "Right now Tiri is estimating when it's working or done.",
                   symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up") { [weak self] in
