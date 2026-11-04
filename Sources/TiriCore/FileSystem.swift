@@ -302,7 +302,32 @@ public enum FileClassifier {
     public static func language(path: String) -> String? {
         let url = URL(fileURLWithPath: path)
         let ext = url.pathExtension.lowercased()
+        if ["sty", "cls", "ltx", "dtx"].contains(ext) { return "latex" }
         return ext.isEmpty ? nil : ext
+    }
+}
+
+// MARK: - LaTeX
+
+public enum CompiledPDF {
+    /// Where build tools usually put output, relative to the source and to its parent.
+    private static let buildFolders = ["build", "out", "output", "_build", "dist", "target", "pdf", ".latex", ".build", "aux"]
+
+    /// The same-named PDF beside a `.tex` file or in a build folder near it, newest first.
+    public static func find(forTex path: String) -> String? {
+        let manager = FileManager.default
+        let name = ((path as NSString).lastPathComponent as NSString).deletingPathExtension + ".pdf"
+        let folder = (path as NSString).deletingLastPathComponent
+        let parent = (folder as NSString).deletingLastPathComponent
+        var candidates = [folder + "/" + name]
+        for build in buildFolders {
+            candidates.append(folder + "/" + build + "/" + name)
+            candidates.append(parent + "/" + build + "/" + name)
+        }
+        func modified(_ candidate: String) -> Date {
+            (try? manager.attributesOfItem(atPath: candidate))?[.modificationDate] as? Date ?? .distantPast
+        }
+        return candidates.filter { manager.fileExists(atPath: $0) }.max { modified($0) < modified($1) }
     }
 }
 

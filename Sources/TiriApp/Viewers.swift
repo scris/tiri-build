@@ -632,6 +632,11 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var savedText = ""
     private var diskChangedUnderEdits = false
     private var menuProblems: [LSPDiagnostic] = []
+    private var folderToken: FileWatchHub.Token?
+    /// The PDF this LaTeX file builds, once there is one.
+    private(set) var compiledPDF: String? {
+        didSet { if compiledPDF != oldValue { model.controllerRevision += 1 } }
+    }
     private(set) var isDirty = false {
         didSet { if isDirty != oldValue { model.controllerRevision += 1 } }
     }
@@ -649,9 +654,20 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         configure()
         if watches {
             token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.reload() }
+            watchForCompiledPDF()
         }
         reload()
         model.languageServers.viewerOpened(path)
+    }
+
+    /// An agent's first latexmk makes the PDF while this is open, so its folder gets watched.
+    private func watchForCompiledPDF() {
+        guard (path as NSString).pathExtension.lowercased() == "tex" else { return }
+        compiledPDF = CompiledPDF.find(forTex: path)
+        folderToken = FileWatchHub.shared.watch(path: (path as NSString).deletingLastPathComponent, recursive: true) { [weak self] in
+            guard let self else { return }
+            self.compiledPDF = CompiledPDF.find(forTex: self.path)
+        }
     }
 
     @objc private func selectionDidChange(_ notification: Notification) {
@@ -1011,6 +1027,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     func teardown() {
         token = nil
+        folderToken = nil
         model.languageServers.viewerClosed(path)
     }
 
@@ -1718,6 +1735,7 @@ final class PDFController: NSObject, ForceDarkCapable {
     private var token: FileWatchHub.Token?
     private var observers: [NSObjectProtocol] = []
     private var watchedScroll = false
+    private var pendingPage: Int?
     // Outside the host, because in dark mode everything inside it is inverted.
     private let container = HostContainer()
     private lazy var quoteButton: QuoteButton = {
@@ -1732,6 +1750,7 @@ final class PDFController: NSObject, ForceDarkCapable {
         self.itemID = itemID
         self.path = spec.path
         self.model = model
+        pendingPage = spec.line
         host = DarkPaperHost(content: pdfView, forceDark: spec.forceDark, model: model)
         super.init()
         container.show(host)
@@ -1816,9 +1835,44 @@ final class PDFController: NSObject, ForceDarkCapable {
     }
 
     private func load() {
-        let page = pdfView.currentPage.flatMap { pdfView.document?.index(for: $0) }
-        pdfView.document = PDFDocument(url: URL(fileURLWithPath: path))
-        if let page, let target = pdfView.document?.page(at: page) { pdfView.go(to: target) }
+        let url = URL(fileURLWithPath: path)
+        guard pdfView.document != nil else {
+            pdfView.document = PDFDocument(url: url)
+            if let pendingPage { goTo(line: pendingPage, col: nil) }
+            pendingPage = nil
+            return
+        }
+        // latexmk writes in place, so a change can arrive with half a file. The finished file
+        // sends another change, and until then what's showing stays.
+        guard Self.isComplete(url), let document = PDFDocument(url: url), document.pageCount > 0 else { return }
+        // An agent recompiling shouldn't lose your place: same page, same spot on it, same zoom.
+        let place = pdfView.currentDestination
+        let pageIndex = place?.page.flatMap { pdfView.document?.index(for: $0) }
+        let keepsFit = pdfView.autoScales
+        let scale = pdfView.scaleFactor
+        pdfView.document = document
+        if keepsFit {
+            pdfView.autoScales = true
+        } else {
+            pdfView.autoScales = false
+            pdfView.scaleFactor = scale
+        }
+        pdfView.layoutDocumentView()
+        if let pageIndex, let place, let page = document.page(at: min(pageIndex, document.pageCount - 1)) {
+            pdfView.go(to: PDFDestination(page: page, at: place.point))
+        }
+        // The selection went with the old document.
+        updateQuoteButton()
+    }
+
+    /// A PDF ends with `%%EOF`, give or take a few bytes.
+    nonisolated private static func isComplete(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd(), size > 0 else { return false }
+        try? handle.seek(toOffset: size > 2048 ? size - 2048 : 0)
+        let tail = (try? handle.readToEnd()) ?? Data()
+        return tail.range(of: Data("%%EOF".utf8)) != nil
     }
 
     func goTo(line: Int?, col: Int?) {

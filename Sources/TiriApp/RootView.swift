@@ -655,6 +655,17 @@ struct FileActions: View {
             .foregroundStyle(document.forceDarkActive ? Color.accentColor : .secondary)
             .help(document.forceDarkActive ? "Showing dark. Click for true colors" : "Show this document dark")
         }
+        if model.accessReady, let pdf = (model.controller(for: item.id) as? TextController)?.compiledPDF {
+            Button {
+                model.open(path: pdf, intent: .split(.right))
+            } label: {
+                Label("PDF", systemImage: "doc.richtext").labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .font(.caption)
+            .help("Open \((pdf as NSString).lastPathComponent) to the Side")
+        }
         if model.accessReady, let markdown = model.controller(for: item.id) as? MarkdownController, markdown.canToggleSource {
             Button {
                 model.toggleMarkdownSource(item.id)
