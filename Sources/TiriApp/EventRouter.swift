@@ -104,8 +104,8 @@ final class EventRouter {
         // A press we've already acted on is simply swallowed.
         if event.timestamp == lastHandledKeyTimestamp { return nil }
 
-        // Escape belongs to the Peek when the keyboard is in it. Never otherwise:
-        // in a terminal it would interrupt the agent.
+        // Escape closes what's floating first. Only with nothing floating does it reach a terminal,
+        // where it would interrupt the agent.
         if stroke.key == "escape", stroke.modifiers.isEmpty {
             if model.handleEscape() {
                 lastHandledKeyTimestamp = event.timestamp

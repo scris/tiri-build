@@ -171,7 +171,7 @@ When you ⌘-click a file in a Claude Code or Codex session, it opens as a float
 
 - ⌘-click the next path to replace it, so you can go through a list of files.
 - **Open as Tab** (⌘↩) keeps it. **Open to the Side** (⌥⌘↩) puts it in a split.
-- Esc, or clicking outside it, closes it and returns you to the terminal.
+- Esc, or clicking outside it, closes it and returns you to the terminal, without reaching the agent, even when an agent opened it and your keyboard stayed in the terminal. The next Esc is the agent's.
 - ⌘⇧-click skips the Peek and opens a tab.
 
 When an agent runs `tiri open report.md` in a Tiri terminal, the file floats the same way, and the keyboard stays in the session. Settings can change what ⌘-click does.

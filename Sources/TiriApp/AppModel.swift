@@ -598,14 +598,14 @@ final class AppModel {
             editor.codeView.dropExtraCursors()
             return true
         }
-        if active.peek != nil, peekHasKeyboard, !firstResponderIsTerminal {
+        // Whoever opened it, and whatever has the keyboard. Esc is for what's floating in front of
+        // you, and the agent underneath only gets the next one.
+        if active.peek != nil {
             dismissPeek()
             return true
         }
         return false
     }
-
-    private var firstResponderIsTerminal: Bool { window?.firstResponder is TiriTerminalView }
 
     private var firstResponderIsFindField: Bool {
         guard let responder = window?.firstResponder as? NSTextView else { return false }
