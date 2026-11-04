@@ -21,14 +21,26 @@ final class PaletteModel {
     }
 
     struct Row: Identifiable {
+        /// Something on the row for the mouse, beside what clicking the row does.
+        struct Button {
+            let title: String
+            let action: () -> Void
+        }
+
         let id: String
-        let title: String
+        var title: String
         var positions: [Int] = []
         var detail: String?
         /// A second line, with what matched between `ConversationIndex`'s marks.
         var excerpt: String?
+        /// Always two lines, so that rows don't move as a second line arrives, and the detail keeps its
+        /// place at the end of the first, where a long title can't squeeze it out.
+        var twoLines = false
         var shortcut: String?
         var symbol: String?
+        var button: Button?
+        /// It's scrolled into view, for work worth doing only for what's seen.
+        var appeared: (() -> Void)?
         /// Shows it without leaving where you were, for arrowing through a list.
         var preview: (() -> Void)?
         var action: (_ alternate: Bool) -> Void
@@ -88,6 +100,14 @@ final class PaletteModel {
         return mode
     }
 
+    /// A new title for a row already showing, without looking again or moving anything. What it replaced
+    /// goes beneath it, unless that's already showing where a search matched.
+    func retitle(_ id: String, _ title: String, below: String) {
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
+        rows[index].title = title
+        if rows[index].excerpt?.isEmpty != false { rows[index].excerpt = below }
+    }
+
     func refresh() {
         searchTask?.cancel()
         note = nil
@@ -103,7 +123,8 @@ final class PaletteModel {
             provider(asked) { [weak self] found in
                 // A slower answer to an earlier question doesn't get a say.
                 guard let self, self.query == asked else { return }
-                let keepsRow = self.rows.indices.contains(self.selection) ? self.rows[self.selection].id : nil
+                // Only a row you've moved to: otherwise the top stays selected as better results arrive.
+                let keepsRow = self.selection > 0 && self.rows.indices.contains(self.selection) ? self.rows[self.selection].id : nil
                 self.rows = found
                 self.selection = keepsRow.flatMap { id in found.firstIndex { $0.id == id } } ?? 0
             }
@@ -599,6 +620,7 @@ struct PaletteView: View {
                             ForEach(Array(palette.rows.enumerated()), id: \.element.id) { index, row in
                                 PaletteRowView(row: row, selected: index == palette.selection)
                                     .id(row.id)
+                                    .onAppear { row.appeared?() }
                                     .contentShape(Rectangle())
                                     .onTapGesture {
                                         palette.selection = index
@@ -609,7 +631,7 @@ struct PaletteView: View {
                         .padding(6)
                     }
                     // A list that fits its rows: a lone result shouldn't sit in a tall empty panel.
-                    .frame(height: min(palette.rows.reduce(CGFloat(12)) { $0 + ($1.excerpt?.isEmpty == false ? 45 : 29) }, 380))
+                    .frame(height: min(palette.rows.reduce(CGFloat(12)) { $0 + ($1.isTall ? 45 : 29) }, 380))
                     .onChange(of: palette.selection) { _, value in
                         if palette.rows.indices.contains(value) {
                             proxy.scrollTo(palette.rows[value].id)
@@ -673,6 +695,8 @@ struct PaletteRowView: View {
         return text
     }
 
+    @State private var hovering = false
+
     var body: some View {
         HStack(spacing: 8) {
             if let symbol = row.symbol {
@@ -687,12 +711,21 @@ struct PaletteRowView: View {
                         .font(.system(size: 13))
                         .lineLimit(1)
                         .layoutPriority(1)
+                    if row.twoLines { Spacer(minLength: 8) }
                     if let detail = row.detail, !detail.isEmpty {
-                        Text(detail)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                        if row.twoLines {
+                            Text(detail)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                        } else {
+                            Text(detail)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
                     }
                 }
                 if let excerpt = row.excerpt, !excerpt.isEmpty {
@@ -709,13 +742,23 @@ struct PaletteRowView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
+            if let button = row.button, selected || hovering {
+                Button(button.title, action: button.action)
+                    .controlSize(.small)
+                    .fixedSize()
+            }
         }
         .padding(.horizontal, 8)
-        .frame(height: row.excerpt?.isEmpty == false ? 44 : 28)
+        .frame(height: row.isTall ? 44 : 28)
+        .onHover { hovering = $0 }
         .background {
             if selected {
                 RoundedRectangle(cornerRadius: 7).fill(Color.accentColor.opacity(0.22))
             }
         }
     }
+}
+
+extension PaletteModel.Row {
+    fileprivate var isTall: Bool { twoLines || excerpt?.isEmpty == false }
 }

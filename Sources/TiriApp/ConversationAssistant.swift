@@ -31,6 +31,16 @@ nonisolated enum ConversationAssistant {
         return (try? await session.respond(to: query, generating: Terms.self).content.terms) ?? []
     }
 
+    /// A short title for a conversation, or nil if it can't write one. Output goes through the permissive
+    /// guardrails because a conversation can hold anything, and this only restates what's already there.
+    static func label(digest: String) async -> String? {
+        guard isAvailable else { return nil }
+        let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
+        let session = LanguageModelSession(model: model, instructions: Conversations.labelInstructions)
+        guard let answer = try? await session.respond(to: digest).content else { return nil }
+        return Conversations.cleanLabel(answer)
+    }
+
     /// Which of these fit what the person remembers, as positions in the list.
     static func best(for query: String, among candidates: [(title: String, excerpt: String)]) async -> [Int] {
         guard isAvailable, candidates.count > 1 else { return [] }

@@ -139,6 +139,13 @@ final class AppModel {
     @ObservationIgnored var conversationIndex: ConversationIndex?
     @ObservationIgnored var conversationsIndexing = false
     @ObservationIgnored var conversationIndexing: Task<Void, Never>?
+    /// Titles the Mac's model has written, by file.
+    @ObservationIgnored var conversationLabels: [String: (label: String, seconds: Int)]?
+    @ObservationIgnored var conversationsWantingLabels: [ConversationSummary] = []
+    @ObservationIgnored var conversationLabeler: Task<Void, Never>?
+    @ObservationIgnored var conversationSummarizing: Task<Void, Never>?
+    /// How far summarizing everything has got, for Settings.
+    var conversationsSummarized: (done: Int, total: Int)?
     /// A look that's under way, and where, so that asking again joins it rather than starting another.
     @ObservationIgnored var conversationLook: (place: String?, task: Task<[ConversationSummary], Never>)?
     @ObservationIgnored var otherWorkWorkspace: WorkspaceID?
@@ -235,6 +242,7 @@ final class AppModel {
         startWatchingAgents()
         guard !didFinishLaunching else { return }
         didFinishLaunching = true
+        updateSummarizingAll()
         // Another Tiri has these workspaces. Attaching to a terminal takes it from whoever has it, so
         // this one touches nothing, and brings that one forward.
         if ControlClient.isAlive(path: TiriPaths.socket) {
@@ -2576,6 +2584,7 @@ final class AppModel {
         let previous = settings
         settings = settingsStore.settings
         if previous.languageServers, !settings.languageServers { languageServers.stopAll() }
+        if previous.conversationsSummarizeAll != settings.conversationsSummarizeAll { updateSummarizingAll() }
         rebuildKeybindings()
         if let error = settingsStore.currentError {
             banner = AppBanner(message: error, isError: true)

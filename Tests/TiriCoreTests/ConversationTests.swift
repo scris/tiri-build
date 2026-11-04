@@ -284,4 +284,45 @@ import Testing
         #expect(ConversationIndex.terms(in: "the time we fixed The login") == ["time", "fixed", "login"])
         #expect(ConversationIndex.terms(in: "云 服务器").contains("云"))
     }
+
+    // MARK: Titles
+
+    @Test func aTitleSaysWhatALinkOrPathIsRatherThanSpellingItOut() {
+        #expect(Conversations.readableTitle("https://canvas.cmu.edu/courses/57016/assignments/1042795 so about this personal assignment") == "canvas.cmu.edu so about this personal assignment")
+        #expect(Conversations.readableTitle("'/Users/r/Documents/chore-tools/iti-pdd' now this is the newest requirement") == "iti-pdd now this is the newest requirement")
+        #expect(Conversations.readableTitle("so i want to see how to make '/Users/r/Documents/sem/p1-ai-podcast' online") == "so i want to see how to make p1-ai-podcast online")
+        #expect(Conversations.readableTitle("https://www.dmv.ca.gov/portal/file/california-driver-handbook-pdf") == "dmv.ca.gov · california driver handbook pdf")
+        #expect(Conversations.readableTitle("Fix the login") == "Fix the login")
+        #expect(Conversations.readableTitle("and/or this / that") == "and/or this / that")
+    }
+
+    @Test func whatTheModelReadsFitsItsContextHoweverLongTheConversation() throws {
+        let turns = (0..<500).map { (you: "request number \($0) " + String(repeating: "x", count: 400), agent: "answer \($0)") }
+        let digest = try #require(Conversations.labelDigest(turns))
+        #expect(digest.count < 4000)
+        #expect(digest.contains("request number 0 "))
+        #expect(digest.contains("request number 499 "))
+        #expect(digest.contains("answer 499"))
+        #expect(Conversations.labelDigest([(you: "", agent: "only the agent")]) == nil)
+    }
+
+    @Test func aModelsAnswerIsMadeFitToShow() {
+        #expect(Conversations.cleanLabel("\"Fix the login page.\"") == "Fix the login page")
+        #expect(Conversations.cleanLabel("Title: Terminal translucency\nmore") == "Terminal translucency")
+        #expect(Conversations.cleanLabel("把终端改成半透明。") == "把终端改成半透明")
+        #expect(Conversations.cleanLabel("") == nil)
+        #expect(Conversations.cleanLabel(String(repeating: "long ", count: 40)) == nil)
+    }
+
+    @Test func labelsAreKeptAndGoWithTheFile() throws {
+        let index = try temporaryIndex()
+        index.storeLabel(file: "/a", seconds: 5, label: "Terminal translucency")
+        index.storeLabel(file: "/a", seconds: 6, label: "Newer")
+        index.storeLabel(file: "/b", seconds: 1, label: "")
+        #expect(index.labels()["/a"]?.label == "Newer")
+        #expect(index.labels()["/a"]?.seconds == 6)
+        #expect(index.labels()["/b"]?.label == "")
+        index.remove(files: ["/a"])
+        #expect(index.labels()["/a"] == nil)
+    }
 }

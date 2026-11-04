@@ -77,12 +77,18 @@ struct MainToolbar: ToolbarContent {
                     }
                 }
                 Divider()
+                Button("Past Conversations…") { model.openConversationPicker() }
                 Button("Manage Agents…") { model.openAgentSettings() }
             } label: {
                 Label("New Terminal", systemImage: "plus")
             }
             .menuIndicator(.hidden)
             .help("New terminal or agent")
+
+            Button { model.openConversationPicker() } label: {
+                Label("Past Conversations", systemImage: "clock.arrow.circlepath")
+            }
+            .help("Find and go back to a past conversation (⇧⌘H)")
 
             Button { model.chooseFilesForAgent() } label: {
                 Label("Add Files or Images to Agent", systemImage: "paperclip")
@@ -411,7 +417,12 @@ struct EmptyGroupView: View {
                 start
             } else {
                 VStack(spacing: 22) {
-                    agentButtons
+                    VStack(spacing: 12) {
+                        agentButtons
+                        Button("Past Conversations…") { model.openConversationPicker() }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                    }
                     VStack(spacing: 8) {
                         row("Open a file", "quickOpen")
                         row("New terminal", "newTerminal")
@@ -493,6 +504,7 @@ struct EmptyGroupView: View {
                 agentButtons
             }
             HStack(spacing: 18) {
+                Button("Past Conversations…") { model.openConversationPicker() }
                 Button("Shell…") { model.startTerminal() }
                 Button("Just Open a Folder…") {
                     model.chooseFolderForActiveWorkspace { _ in }

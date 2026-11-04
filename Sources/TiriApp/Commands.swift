@@ -461,7 +461,7 @@ enum ControlHandler {
             shown = inTitle + found.conversations.filter { !inTitle.contains($0) }
         }
         return .success(id: request.id, .array(shown.prefix(100).map { conversation in
-            var entry: [String: JSONValue] = ["session": .string(conversation.session), "agent": .string(conversation.agent), "title": .string(AgentHookEvent.promptLine(conversation.title) ?? ""),
+            var entry: [String: JSONValue] = ["session": .string(conversation.session), "agent": .string(conversation.agent), "title": .string(model.conversationTitle(conversation)),
                                               "cwd": .string(conversation.cwd ?? ""), "when": .string(RelativeTime.text(conversation.date))]
             if let excerpt = excerpts[conversation.file] { entry["match"] = .string(ConversationIndex.plain(excerpt)) }
             return .object(entry)

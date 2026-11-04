@@ -195,6 +195,16 @@ struct SettingRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if definition.key == "conversations.summarizeAll", model.settings.conversationsSummarizeAll {
+                        let done = model.conversationsSummarized.map { $0.done >= $0.total ? "All \($0.total) summarized" : "\($0.done) of \($0.total) summarized" }
+                        let waiting = AppModel.isPluggedIn ? nil : "Waiting to be plugged in"
+                        let status = [done, waiting].compactMap { $0 }
+                        if !status.isEmpty {
+                            Text(status.joined(separator: ". "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if !isWide { control }

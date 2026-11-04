@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import IOKit.ps
 import SwiftUI
 import TiriCore
 
@@ -163,17 +164,116 @@ extension AppModel {
         let profile = AgentCatalog.profile(id: conversation.agent)
         let place = conversation.cwd.map { ($0 as NSString).lastPathComponent }
         let detail = [profile?.title, place, RelativeTime.text(conversation.date)].compactMap { $0 }.joined(separator: " · ")
-        let title = AgentHookEvent.promptLine(conversation.title) ?? conversation.title
+        let title = conversationTitle(conversation)
+        // Beneath the title: where a search matched, or else what you actually asked, in your own words.
         // Saying the title again wouldn't tell you anything.
-        let excerpt = excerpt.flatMap { title.contains(ConversationIndex.plain($0)) ? nil : $0 }
-        return PaletteModel.Row(id: conversation.id, title: title, detail: detail, excerpt: excerpt,
-                                symbol: profile?.symbol ?? "text.bubble") { [weak self] alternate in
+        let prompt = Conversations.readableTitle(conversation.title)
+        let excerpt = excerpt.flatMap { title.contains(ConversationIndex.plain($0)) ? nil : $0 } ?? (title == prompt ? nil : prompt)
+        let read = { [weak self] in
             guard let self else { return }
             self.closePalette(restoreFocus: false)
+            Task { await self.showConversation(conversation) }
+        }
+        return PaletteModel.Row(id: conversation.id, title: title, detail: detail, excerpt: excerpt, twoLines: true, symbol: profile?.symbol ?? "text.bubble",
+                                button: .init(title: "Read", action: read), appeared: { [weak self] in self?.wantLabel(for: conversation) }) { [weak self] alternate in
+            guard let self else { return }
             if alternate {
-                self.reopen(conversation)
+                read()
             } else {
-                Task { await self.showConversation(conversation) }
+                self.closePalette(restoreFocus: false)
+                self.reopen(conversation)
+            }
+        }
+    }
+
+    // MARK: Clear titles
+
+    /// What the Mac's model called it, or else its first prompt, with links and paths made short.
+    func conversationTitle(_ conversation: ConversationSummary) -> String {
+        if let label = conversationLabelsLoaded()?[conversation.file]?.label, !label.isEmpty { return label }
+        return Conversations.readableTitle(conversation.title)
+    }
+
+    private func conversationLabelsLoaded() -> [String: (label: String, seconds: Int)]? {
+        if conversationLabels == nil, let index = openConversationIndex() { conversationLabels = index.labels() }
+        return conversationLabels
+    }
+
+    private var mayLabelConversations: Bool {
+        settings.conversationsUseMacModel && ConversationAssistant.isAvailable
+    }
+
+    /// A row came into view. On a server the whole file would have to come over first, so those keep their first prompts.
+    private func wantLabel(for conversation: ConversationSummary) {
+        guard mayLabelConversations, conversation.destination == nil,
+              conversationLabelsLoaded()?[conversation.file]?.seconds != Int(conversation.date.timeIntervalSince1970) else { return }
+        conversationsWantingLabels.removeAll { $0.id == conversation.id }
+        conversationsWantingLabels.append(conversation)
+        // Scrolling past hundreds shouldn't leave a queue of them.
+        if conversationsWantingLabels.count > 40 { conversationsWantingLabels.removeFirst(conversationsWantingLabels.count - 40) }
+        runConversationLabeler()
+    }
+
+    /// One at a time, since the model takes one at a time: what's in view, the latest first, then, if
+    /// you've said so in Settings and it's plugged in, everything else.
+    private func runConversationLabeler() {
+        guard conversationLabeler == nil else { return }
+        conversationLabeler = Task { [weak self] in
+            while let self, let next = self.nextConversationToLabel() {
+                await self.label(next.conversation)
+                // In the background, it should never be the reason a Mac's fans come on.
+                if next.inBackground { try? await Task.sleep(for: .seconds(1)) }
+            }
+            self?.conversationLabeler = nil
+        }
+    }
+
+    private func nextConversationToLabel() -> (conversation: ConversationSummary, inBackground: Bool)? {
+        if palette == nil { conversationsWantingLabels.removeAll() }
+        if let wanted = conversationsWantingLabels.popLast() { return (wanted, false) }
+        guard settings.conversationsSummarizeAll, mayLabelConversations, Self.isPluggedIn, let all = conversationsLoaded, let labels = conversationLabelsLoaded() else { return nil }
+        let local = all.filter { $0.destination == nil }
+        conversationsSummarized = (local.filter { labels[$0.file] != nil }.count, local.count)
+        return local.first { labels[$0.file] == nil }.map { ($0, true) }
+    }
+
+    private func label(_ conversation: ConversationSummary) async {
+        guard let index = openConversationIndex() else { return }
+        let seconds = Int(conversation.date.timeIntervalSince1970)
+        let label = await Task.detached(priority: .utility) { () -> String in
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: conversation.file), options: .mappedIfSafe),
+                  let digest = Conversations.labelDigest(Conversations.turns(of: data, agent: conversation.agent)) else { return "" }
+            return await ConversationAssistant.label(digest: digest) ?? ""
+        }.value
+        // Couldn't is remembered too, so that it isn't tried again until the conversation changes.
+        let kept = label.isEmpty ? (conversationLabels?[conversation.file]?.label ?? "") : label
+        index.storeLabel(file: conversation.file, seconds: seconds, label: kept)
+        conversationLabels?[conversation.file] = (kept, seconds)
+        if !kept.isEmpty { palette?.retitle(conversation.id, kept, below: Conversations.readableTitle(conversation.title)) }
+    }
+
+    /// Low Power Mode doesn't come into it: some people leave it on all the time, and this was asked for.
+    static var isPluggedIn: Bool {
+        (IOPSGetProvidingPowerSourceType(nil).takeUnretainedValue() as String) == "AC Power"
+    }
+
+    /// Summarizing everything is something you ask for in Settings. While it's on, it looks again now and
+    /// then for new conversations, and for having been plugged back in.
+    func updateSummarizingAll() {
+        conversationSummarizing?.cancel()
+        conversationSummarizing = nil
+        guard settings.conversationsSummarizeAll else {
+            conversationsSummarized = nil
+            return
+        }
+        conversationSummarizing = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                if Self.isPluggedIn, self.active.remote == nil {
+                    self.conversationsLoaded = await self.loadConversations()
+                    self.runConversationLabeler()
+                }
+                try? await Task.sleep(for: .seconds(300))
             }
         }
     }
@@ -190,13 +290,13 @@ extension AppModel {
             self.conversationsLoading = false
             self.palette?.refresh()
         }
-        openPalette(.dynamic(title: "Past conversations. Describe what you remember. ↩ reads, ⌘↩ reopens.", provider: { [weak self] query, deliver in
+        openPalette(.dynamic(title: "Past conversations. Describe what you remember.", provider: { [weak self] query, deliver in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
                 let all = self.conversationsLoaded ?? []
                 let inTitle = words.isEmpty ? all : all.filter { conversation in
-                    let text = (conversation.title + " " + (conversation.cwd ?? "") + " " + (AgentCatalog.profile(id: conversation.agent)?.title ?? "")).lowercased()
+                    let text = (conversation.title + " " + self.conversationTitle(conversation) + " " + (conversation.cwd ?? "") + " " + (AgentCatalog.profile(id: conversation.agent)?.title ?? "")).lowercased()
                     return words.allSatisfy(text.contains)
                 }
                 let agent = self.settings.activePresets.first { AgentCatalog.profile(executable: $0.command.split(separator: " ").first.map(String.init) ?? "") != nil }
@@ -221,7 +321,7 @@ extension AppModel {
                     let merged = { (found: [ConversationSummary]) in inTitle + found.filter { !inTitle.contains($0) } }
                     let first = await self.conversationMatches(query, among: all)
                     // Exact words are enough, and typing shouldn't set the model off at every key.
-                    let assists = self.settings.conversationsAssistedSearch && ConversationAssistant.isAvailable && first.conversations.count < 10
+                    let assists = self.settings.conversationsUseMacModel && ConversationAssistant.isAvailable && first.conversations.count < 10
                     deliver(finish(merged(first.conversations), first.excerpts, assists ? "Trying other words…" : nothing))
                     guard assists else { return }
                     try? await Task.sleep(for: .milliseconds(400))
@@ -281,8 +381,11 @@ extension AppModel {
             showToast(title: "Couldn't read that conversation", detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
             return nil
         }
-        let text = await Task.detached(priority: .userInitiated) { Conversations.markdown(data, summary: conversation) }.value
-        let safe = (AgentHookEvent.promptLine(conversation.title) ?? "Conversation").prefix(48).map { $0 == "/" || $0 == ":" ? "-" : String($0) }.joined()
+        var titled = conversation
+        titled.title = conversationTitle(conversation)
+        let shown = titled
+        let text = await Task.detached(priority: .userInitiated) { Conversations.markdown(data, summary: shown) }.value
+        let safe = titled.title.prefix(48).map { $0 == "/" || $0 == ":" ? "-" : String($0) }.joined()
         let folder = conversationRoot + "/" + (conversation.agent + "-" + conversation.session).replacingOccurrences(of: "/", with: "-")
         let path = folder + "/" + safe + ".md"
         do {
@@ -307,7 +410,22 @@ extension AppModel {
 
     /// Back in a terminal, in the folder it was in, in the workspace that has that folder if one does.
     func reopen(_ conversation: ConversationSummary) {
-        guard let command = conversation.resumeCommand else { return }
+        // Already open: a second copy of a running conversation would only get in its way.
+        for workspace in workspaces where workspace.remote == conversation.destination {
+            let running = workspace.items.first { item in
+                guard case .terminal(let spec) = item.content else { return false }
+                return spec.sessionID == conversation.session
+            }
+            if let running {
+                focusItem(running.id)
+                return
+            }
+        }
+        // What can't be carried on can still be read.
+        guard let command = conversation.resumeCommand else {
+            Task { await showConversation(conversation) }
+            return
+        }
         var directory = conversation.cwd
         if let destination = conversation.destination, let cwd = conversation.cwd, let connection = remote.existingConnection(destination) {
             directory = connection.map.local(cwd)
@@ -316,11 +434,23 @@ extension AppModel {
             workspaces.first { $0.folders.contains { place == $0 || place.hasPrefix($0 + "/") } }
         }
         if let directory, !FileManager.default.fileExists(atPath: directory) {
-            showToast(title: "That folder isn't there any more", detail: directory, symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: "That folder isn't there any more, so here's what was said", detail: directory, symbol: "exclamationmark.triangle", tint: .orange)
+            Task { await showConversation(conversation) }
             return
         }
         // Not bringing the app forward: an agent can ask for this while you're elsewhere.
-        focusItem(newTerminal(command: command, cwd: directory, in: target?.id))
+        let opened = newTerminal(command: command, cwd: directory, in: target?.id)
+        // Known from the start, so that asking again before its first report comes back here.
+        if let index = workspaces.firstIndex(where: { $0.item(opened) != nil }) {
+            workspaces[index].updateItem(opened) { item in
+                if case .terminal(var spec) = item.content {
+                    spec.sessionID = conversation.session
+                    item.content = .terminal(spec)
+                }
+            }
+            scheduleSave()
+        }
+        focusItem(opened)
     }
 
     /// Another agent picks it up by reading it, which works whichever agents they are.
