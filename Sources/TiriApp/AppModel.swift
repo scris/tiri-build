@@ -16,6 +16,10 @@ struct TerminalRuntime: Equatable {
     var unseen = false
     var title: String?
     var exitCode: Int32?
+    /// What it was last asked, what it just did, and what it's changed this turn.
+    var prompt: String?
+    var activity: String?
+    var touched: [String] = []
 }
 
 struct AppBanner: Identifiable, Equatable {
@@ -94,7 +98,9 @@ final class AppModel {
     var activeID: WorkspaceID = ""
     var settings = TiriSettings()
     var keybindings: [Keybinding] = Keymap.build(user: [])
-    var runtimes: [ItemID: TerminalRuntime] = [:]
+    var agentRows: [AgentOverviewRow] = []
+    @ObservationIgnored private var agentRowsPending = false
+    var runtimes: [ItemID: TerminalRuntime] = [:] { didSet { scheduleAgentRows() } }
     var banner: AppBanner?
     var toasts: [AppToast] = []
     var find: FindState?
@@ -214,6 +220,7 @@ final class AppModel {
     }
 
     func finishLaunching() {
+        startWatchingAgents()
         guard !didFinishLaunching else { return }
         didFinishLaunching = true
         // Another Tiri has these workspaces. Attaching to a terminal takes it from whoever has it, so
@@ -1062,6 +1069,25 @@ final class AppModel {
         scheduleSave()
     }
 
+    /// Not worked out while drawing: it looks at processes, and can start a terminal coming back.
+    private func scheduleAgentRows() {
+        guard !agentRowsPending else { return }
+        agentRowsPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.agentRowsPending = false
+            let rows = self.agentOverview
+            if rows != self.agentRows { self.agentRows = rows }
+        }
+    }
+
+    /// An agent can start or end with no report at all, like one typed at a shell without hooks.
+    func startWatchingAgents() {
+        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scheduleAgentRows() }
+        }
+    }
+
     func updateRuntime(_ id: ItemID, _ change: (inout TerminalRuntime) -> Void) {
         var runtime = runtimes[id] ?? TerminalRuntime()
         change(&runtime)
@@ -1153,8 +1179,20 @@ final class AppModel {
     }
 
     func handleHookReport(item id: ItemID, tool: String?, state: String?, message: String?, session: String?,
-                          turn: String? = nil, prompt: String? = nil) {
+                          turn: String? = nil, prompt: String? = nil, activity: String? = nil, file: String? = nil) {
         if let tool, case .terminal(let spec)? = anyItem(id)?.content, !spec.acceptsHook(from: tool) { return }
+        if turn != nil || activity != nil || file != nil {
+            updateRuntime(id) { runtime in
+                if turn == AgentHookEvent.Turn.start.rawValue {
+                    runtime.prompt = AgentHookEvent.promptLine(prompt)
+                    runtime.touched = []
+                    runtime.activity = nil
+                }
+                if turn == AgentHookEvent.Turn.end.rawValue { runtime.activity = nil }
+                if let activity { runtime.activity = activity }
+                if let file, !runtime.touched.contains(file) { runtime.touched.append(file) }
+            }
+        }
         if turn == AgentHookEvent.Turn.start.rawValue { turnStarted(item: id, prompt: prompt) }
         if turn == AgentHookEvent.Turn.end.rawValue { turnEnded(item: id) }
         if let session, !session.isEmpty {
@@ -2136,12 +2174,30 @@ final class AppModel {
                 case .success:
                     succeeded(updated)
                 case .failure(let problem):
-                    // A remote that wants a password can get one in a terminal, which this can't do.
-                    self.showToast(title: failure, detail: problem.message, symbol: "exclamationmark.triangle", tint: .orange,
-                                   actionTitle: "Open Terminal") { [weak self] in self?.newTerminal(cwd: root) }
+                    self.gitButtonFailed(failure, problem: problem.message, command: arguments, root: root)
                 }
             }
         }
+    }
+
+    /// The buttons only do the simple thing. Anything further is for an agent, except a remote that
+    /// wants a password, which needs a person at a terminal.
+    private func gitButtonFailed(_ failure: String, problem: String, command: [String], root: String) {
+        let lower = problem.lowercased()
+        let wantsPerson = ["password", "passphrase", "could not read username", "terminal prompts disabled", "authentication failed"].contains(where: lower.contains)
+        guard !wantsPerson, let preset = firstAgentPreset else {
+            showToast(title: failure, detail: problem, symbol: "exclamationmark.triangle", tint: .orange,
+                      actionTitle: "Open Terminal") { [weak self] in self?.newTerminal(cwd: root) }
+            return
+        }
+        let prompt = "`git \(command.joined(separator: " "))` failed in \(root):\n\(problem)\nPlease sort this out, and tell me if there's anything you need me to decide."
+        showToast(title: failure, detail: problem, symbol: "exclamationmark.triangle", tint: .orange,
+                  actionTitle: "Ask \(preset.name)") { [weak self] in self?.askAgent(preset: preset, prompt: prompt) }
+    }
+
+    /// The first agent in the New Terminal menu.
+    var firstAgentPreset: TerminalPreset? {
+        settings.activePresets.first { AgentCatalog.profile(executable: $0.command.split(separator: " ").first.map(String.init) ?? "") != nil }
     }
 
     func openDiff(_ spec: DiffSpec, preview: Bool) {

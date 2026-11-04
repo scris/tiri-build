@@ -16,6 +16,27 @@ import Testing
         #expect(AgentCatalog.identify(commandLine: commandLine, command: nil) == agent)
     }
 
+    @Test func toolCallsInWords() {
+        #expect(AgentHookEvent.describe(tool: "Edit", input: ["file_path": "/a/auth.ts"]).activity == "Edited auth.ts")
+        #expect(AgentHookEvent.describe(tool: "Edit", input: ["file_path": "/a/auth.ts"]).file == "/a/auth.ts")
+        #expect(AgentHookEvent.describe(tool: "Write", input: ["file_path": "/a/b.md"]).activity == "Wrote b.md")
+        #expect(AgentHookEvent.describe(tool: "Read", input: ["file_path": "/a/b.md"]).file == nil)
+        #expect(AgentHookEvent.describe(tool: "Bash", input: ["command": "npm test\nnpm run x"]).activity == "Ran npm test")
+        #expect(AgentHookEvent.describe(tool: "Grep", input: nil).activity == "Searched the project")
+        #expect(AgentHookEvent.describe(tool: "mcp__x__y", input: nil).activity == "Used mcp__x__y")
+        #expect(AgentHookEvent.describe(tool: nil, input: nil).activity == nil)
+        let long = String(repeating: "x", count: 200)
+        #expect(AgentHookEvent.describe(tool: "Bash", input: ["command": long]).activity?.count == 64)
+    }
+
+    @Test func hooksCarryWhatTheAgentDid() throws {
+        let payload = #"{"hook_event_name":"PostToolUse","session_id":"s","tool_name":"Edit","tool_input":{"file_path":"/a/auth.ts"}}"#
+        let event = try #require(AgentHookEvent.parseClaude(Data(payload.utf8)))
+        #expect(event.state == "working")
+        #expect(event.activity == "Edited auth.ts")
+        #expect(event.file == "/a/auth.ts")
+    }
+
     @Test func oneShotRunsDontSpeakForTheSession() {
         let session = ["/Users/r/.local/bin/grok", "--resume", "abc"]
         #expect(!AgentCatalog.isOneShotRun(ancestors: [["/bin/sh", "-c", "tiri hook grok"], session, ["/bin/zsh", "-l", "-i", "-c", "grok --resume abc"]]))

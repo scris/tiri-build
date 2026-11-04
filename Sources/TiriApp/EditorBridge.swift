@@ -350,6 +350,35 @@ extension AppModel {
         return sessions.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
     }
 
+    struct AgentOverviewRow: Identifiable, Equatable {
+        var item: ItemID
+        var agent: String
+        var symbol: String
+        var title: String
+        var workspace: String
+        var workspaceID: WorkspaceID
+        var isInActiveWorkspace: Bool
+        var status: TerminalStatus
+        var prompt: String?
+        var doing: String?
+        var message: String?
+        var files: [String]
+        var id: ItemID { item }
+    }
+
+    /// In workspace order, so rows don't move about as you use them.
+    var agentOverview: [AgentOverviewRow] {
+        let sessions = activeAgentSessions()
+        let order = Dictionary(workspaces.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        return sessions.sorted { (order[$0.workspace.id] ?? 0, $0.item.id) < (order[$1.workspace.id] ?? 0, $1.item.id) }.map { session in
+            let runtime = runtimes[session.item.id]
+            return AgentOverviewRow(item: session.item.id, agent: session.agent.title, symbol: session.agent.profile?.symbol ?? "terminal",
+                                    title: title(for: session.item), workspace: session.workspace.name, workspaceID: session.workspace.id,
+                                    isInActiveWorkspace: session.workspace.id == activeID, status: runtime?.status ?? .idle,
+                                    prompt: runtime?.prompt ?? AgentHookEvent.promptLine(turns.last { $0.item == session.item.id }?.prompt), doing: runtime?.activity, message: runtime?.message, files: runtime?.touched ?? [])
+        }
+    }
+
     /// Whatever else is in the New Terminal menu counts as an agent you can hand things to.
     var customAgentNames: Set<String> {
         Set(settings.terminalPresets.compactMap { preset -> String? in

@@ -120,6 +120,10 @@ public enum CLIParser {
             }
             return request("notebook." + action, payload)
 
+        case "activity":
+            guard args.isEmpty else { throw UsageError("usage: tiri activity   (what every running agent is doing)") }
+            return request("activity")
+
         case "worktree":
             guard args.count == 1 else { throw UsageError("usage: tiri worktree <branch>   (a second checkout, as a workspace, for another agent)") }
             var payload: [String: JSONValue] = ["branch": .string(args[0])]
@@ -386,6 +390,8 @@ public enum CLIParser {
             if let session = event.sessionID { body["session"] = .string(session) }
             if let turn = event.turn { body["turn"] = .string(turn.rawValue) }
             if let prompt = event.prompt { body["prompt"] = .string(prompt) }
+            if let activity = event.activity { body["activity"] = .string(activity) }
+            if let file = event.file { body["file"] = .string(file) }
             body["hook"] = true
             return request("notify", body)
 

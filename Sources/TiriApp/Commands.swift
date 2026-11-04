@@ -541,6 +541,15 @@ enum ControlHandler {
             NSApp.activate(ignoringOtherApps: true)
             return .object([:])
 
+        case "activity":
+            return .array(model.agentOverview.map { row in
+                var entry: [String: JSONValue] = ["item": .string(row.item), "agent": .string(row.agent), "status": .string(row.status.rawValue),
+                                                  "workspace": .string(row.workspace), "files": .array(row.files.map(JSONValue.string))]
+                if let prompt = row.prompt { entry["prompt"] = .string(prompt) }
+                if let doing = row.doing { entry["doing"] = .string(doing) }
+                return .object(entry)
+            })
+
         case "dev.page":
             guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", let script = request.args["script"]?.stringValue,
                   let viewer = model.frontNotebook else { throw ControlFailure("Only for a test copy.") }
@@ -687,7 +696,9 @@ enum ControlHandler {
                                    message: request.args["message"]?.stringValue,
                                    session: request.args["session"]?.stringValue,
                                    turn: request.args["turn"]?.stringValue,
-                                   prompt: request.args["prompt"]?.stringValue)
+                                   prompt: request.args["prompt"]?.stringValue,
+                                   activity: request.args["activity"]?.stringValue,
+                                   file: request.args["file"]?.stringValue)
             return .object(["item": .string(id), "status": .string(model.runtimes[id]?.status.rawValue ?? "idle")])
 
         case "settings.list", "settings.explain":

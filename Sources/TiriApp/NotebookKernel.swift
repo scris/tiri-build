@@ -500,7 +500,7 @@ final class NotebookKernels {
 
     func offerInstall(for path: String, found without: [String]) {
         let name = (path as NSString).lastPathComponent
-        let preset = model.settings.activePresets.first { AgentCatalog.profile(executable: $0.command.split(separator: " ").first.map(String.init) ?? "") != nil }
+        let preset = model.firstAgentPreset
         let prompt = "Install ipykernel so that Tiri can run \(name). Use this project's virtual environment if it has one, and create one if it doesn't."
         _ = model.showToast(title: "No Python here can run this notebook", detail: "It needs a Python with ipykernel installed.",
                             symbol: "exclamationmark.triangle", tint: .orange,

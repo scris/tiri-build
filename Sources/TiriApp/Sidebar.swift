@@ -12,6 +12,7 @@ struct SidebarView: View {
     @AppStorage(SidebarSection.explorer.rawValue) private var explorerOpen = true
     @AppStorage(SidebarSection.changes.rawValue) private var changesOpen = true
     @AppStorage(SidebarSection.items.rawValue) private var itemsOpen = true
+    @AppStorage(SidebarSection.agents.rawValue) private var agentsOpen = true
     @AppStorage(SidebarSection.review.rawValue) private var reviewOpen = true
 
     var body: some View {
@@ -88,6 +89,18 @@ struct SidebarView: View {
             } else {
                 Divider()
             }
+            let agents = model.agentRows
+            if !agents.isEmpty {
+                sectionHeader("Agents", isOpen: $agentsOpen) {
+                    Text("\(agents.count)")
+                        .foregroundStyle(.tertiary)
+                        .font(.caption)
+                }
+                if agentsOpen {
+                    AgentOverviewList(rows: agents)
+                }
+                Divider()
+            }
             sectionHeader("Open Items", isOpen: $itemsOpen) {
                 Text("\(model.active.items.count)")
                     .foregroundStyle(.tertiary)
@@ -161,6 +174,7 @@ struct SidebarView: View {
 }
 
 enum SidebarSection: String {
+    case agents = "sidebar.agents"
     case explorer = "sidebar.explorerOpen"
     case changes = "sidebar.changesOpen"
     case items = "sidebar.itemsOpen"
@@ -389,5 +403,77 @@ struct OpenItemRow: View {
         .modifier(ClickOrDrag(item: item.id, title: model.title(for: item)) { _ in
             model.focusItem(item.id)
         })
+    }
+}
+
+/// Every agent, in every workspace, and what it's up to, so that's one glance rather than a walk
+/// through the tabs. Only what the agents report: nothing here is guessed from their screens.
+struct AgentOverviewList: View {
+    let rows: [AppModel.AgentOverviewRow]
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 1) {
+                ForEach(rows) { row in
+                    AgentOverviewRowView(row: row)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
+        }
+        .frame(maxHeight: min(CGFloat(rows.count) * 46 + 8, 200))
+    }
+}
+
+struct AgentOverviewRowView: View {
+    let row: AppModel.AgentOverviewRow
+    @Environment(AppModel.self) private var model
+    @State private var hovering = false
+
+    /// What it just did, or what it said when it stopped, and where.
+    private var detail: String {
+        var parts: [String] = []
+        if !row.isInActiveWorkspace { parts.append(row.workspace) }
+        if let doing = row.doing, row.status == .working || row.message == nil { parts.append(doing) } else if let message = row.message { parts.append(message) }
+        if !row.files.isEmpty { parts.append(row.files.count == 1 ? "1 file" : "\(row.files.count) files") }
+        return parts.isEmpty ? row.agent : parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder private var statusIcon: some View {
+        switch row.status {
+        case .working: ProgressView().controlSize(.mini)
+        case .needsInput: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
+        case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .exited: Image(systemName: "xmark.circle").foregroundStyle(.secondary)
+        case .idle: Image(systemName: row.symbol).foregroundStyle(.secondary)
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 7) {
+            statusIcon
+                .font(.system(size: 11))
+                .frame(width: 16, height: 16)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(row.prompt ?? row.title)
+                    .font(.system(size: 12.5))
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(hovering ? Color.primary.opacity(0.05) : .clear)
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { model.focusFromNotification(workspace: row.workspaceID, item: row.item) }
+        .help(row.agent + (row.files.isEmpty ? "" : ": " + row.files.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")))
     }
 }

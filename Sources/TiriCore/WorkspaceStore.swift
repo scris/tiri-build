@@ -368,16 +368,59 @@ public struct AgentHookEvent: Equatable, Sendable {
     public var turn: Turn?
     /// What you asked for, to tell turns apart.
     public var prompt: String?
+    /// What it just did, in words: "Edited auth.ts".
+    public var activity: String?
+    /// A file it just changed.
+    public var file: String?
 
     public enum Turn: String, Sendable { case start, end }
 
-    public init(state: String? = nil, message: String? = nil, sessionID: String? = nil, turn: Turn? = nil, prompt: String? = nil) {
+    public init(state: String? = nil, message: String? = nil, sessionID: String? = nil, turn: Turn? = nil, prompt: String? = nil,
+                activity: String? = nil, file: String? = nil) {
+        self.activity = activity
+        self.file = file
         self.state = state
         self.message = message
         self.sessionID = sessionID
         self.turn = turn
         self.prompt = prompt
     }
+
+    /// What a tool call amounts to. Agents name their tools differently, so this goes by what they
+    /// have in common, and a tool it doesn't know is still named.
+    public static func describe(tool: String?, input: [String: Any]?) -> (activity: String?, file: String?) {
+        guard let tool, !tool.isEmpty else { return (nil, nil) }
+        let path = (input?["file_path"] ?? input?["notebook_path"] ?? input?["path"]) as? String
+        let name = path.map { ($0 as NSString).lastPathComponent }
+        switch tool.lowercased() {
+        case "edit", "multiedit", "notebookedit", "edit_file", "search_replace", "apply_patch":
+            return (name.map { "Edited \($0)" } ?? "Edited a file", path)
+        case "write", "write_file", "create_file":
+            return (name.map { "Wrote \($0)" } ?? "Wrote a file", path)
+        case "read", "read_file", "view":
+            return (name.map { "Read \($0)" } ?? "Read a file", nil)
+        case "bash", "shell", "run_terminal_cmd", "run_command", "exec", "execute":
+            let command = (input?["command"] ?? input?["cmd"]) as? String
+            let first = command?.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmingCharacters(in: .whitespaces)
+            guard let first, !first.isEmpty else { return ("Ran a command", nil) }
+            return ("Ran " + (first.count > 60 ? String(first.prefix(59)) + "…" : first), nil)
+        case "grep", "glob", "search", "ls", "list_dir", "grep_search", "file_search":
+            return ("Searched the project", nil)
+        case "webfetch", "websearch", "web_search", "web_fetch":
+            return ("Looked something up online", nil)
+        case "task", "agent":
+            return ("Started a helper", nil)
+        default:
+            return ("Used \(tool)", nil)
+        }
+    }
+
+    private static func toolEvent(_ object: [String: Any], session: String?) -> AgentHookEvent {
+        let what = describe(tool: object["tool_name"] as? String, input: object["tool_input"] as? [String: Any])
+        return AgentHookEvent(state: "working", sessionID: session, activity: what.activity, file: what.file)
+    }
+
+    public static func promptLine(_ text: String?) -> String? { snippet(text) }
 
     private static func snippet(_ text: String?) -> String? {
         guard let text else { return nil }
@@ -405,7 +448,9 @@ public struct AgentHookEvent: Equatable, Sendable {
             return AgentHookEvent(state: "idle", sessionID: session)
         case "UserPromptSubmit":
             return AgentHookEvent(state: "working", sessionID: session, turn: .start, prompt: object["prompt"] as? String)
-        case "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart":
+        case "PostToolUse":
+            return toolEvent(object, session: session)
+        case "PreToolUse", "PostToolUseFailure", "SubagentStart":
             return AgentHookEvent(state: "working", sessionID: session)
         case "PermissionRequest":
             let tool = object["tool_name"] as? String
@@ -443,7 +488,9 @@ public struct AgentHookEvent: Equatable, Sendable {
             return AgentHookEvent(state: "idle", sessionID: session)
         case "UserPromptSubmit":
             return AgentHookEvent(state: "working", sessionID: session, turn: .start, prompt: object["prompt"] as? String)
-        case "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart":
+        case "PostToolUse":
+            return toolEvent(object, session: session)
+        case "PreToolUse", "PostToolUseFailure", "SubagentStart":
             return AgentHookEvent(state: "working", sessionID: session)
         case "Notification":
             let type = text("notification_type", "notificationType", "type")
