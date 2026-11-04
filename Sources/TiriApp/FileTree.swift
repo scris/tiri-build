@@ -2,6 +2,61 @@ import AppKit
 import SwiftUI
 import TiriCore
 
+/// A row of the explorer, which can say the file has changed.
+final class FileTreeCell: NSTableCellView {
+    let badge = NSTextField(labelWithString: "")
+    /// What the name is tinted, unless the row is selected.
+    var tint: NSColor? { didSet { applyColors() } }
+    var plainColor: NSColor = .labelColor { didSet { applyColors() } }
+
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { applyColors() }
+    }
+
+    private func applyColors() {
+        // On a selection's color, a tint is hard to read.
+        let selected = backgroundStyle == .emphasized
+        textField?.textColor = selected ? .alternateSelectedControlTextColor : (tint ?? plainColor)
+        badge.textColor = selected ? .alternateSelectedControlTextColor : (tint ?? plainColor)
+    }
+
+    /// `letter` for a file, and a dot for a folder with something changed under it.
+    func showMark(_ text: String, tint: NSColor?) {
+        badge.stringValue = text
+        badge.font = text == "●" ? .systemFont(ofSize: 7) : .monospacedSystemFont(ofSize: 10.5, weight: .semibold)
+        self.tint = tint
+    }
+}
+
+enum ChangeTint {
+    /// Cursor's colors. Text in them needs to stay readable in light and dark.
+    static func color(_ status: ChangeStatus) -> NSColor {
+        switch status {
+        case .modified: dynamic(dark: (0.89, 0.75, 0.55), light: (0.54, 0.33, 0.01))
+        case .added, .untracked, .renamed: dynamic(dark: (0.45, 0.79, 0.57), light: (0.30, 0.50, 0.05))
+        case .deleted: dynamic(dark: (0.85, 0.42, 0.34), light: (0.68, 0.20, 0.12))
+        case .conflicted: dynamic(dark: (0.89, 0.40, 0.42), light: (0.68, 0.10, 0.20))
+        }
+    }
+
+    private static func dynamic(dark: (CGFloat, CGFloat, CGFloat), light: (CGFloat, CGFloat, CGFloat)) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let value = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: value.0, green: value.1, blue: value.2, alpha: 1)
+        }
+    }
+
+    /// Which color a folder takes, with several kinds of change under it.
+    static func rank(_ status: ChangeStatus) -> Int {
+        switch status {
+        case .conflicted: 3
+        case .modified: 2
+        case .deleted: 1
+        case .added, .untracked, .renamed: 0
+        }
+    }
+}
+
 final class FileNode: NSObject {
     let path: String
     var name: String
@@ -70,6 +125,10 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     private var editingNode: FileNode?
     private var cancelEdit = false
     private var restoringExpansion = false
+    /// What's changed, from the list the Changes section already has: no git for any row.
+    private var fileChanges: [String: ChangeStatus] = [:]
+    /// Each folder with something changed under it, and what to tint it.
+    private var folderChanges: [String: ChangeStatus] = [:]
 
     override init() {
         super.init()
@@ -162,6 +221,34 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         let children = entries.map { FileNode(path: $0.path, name: $0.name, isDirectory: $0.isDirectory, parent: node) }
         node.children = children
         return children
+    }
+
+    // MARK: What's changed
+
+    func changesUpdated(_ changes: [ChangedFile]) {
+        var files: [String: ChangeStatus] = [:]
+        var folders: [String: ChangeStatus] = [:]
+        for change in changes {
+            if change.status != .deleted { files[change.path] = change.status }
+            var folder = (change.path as NSString).deletingLastPathComponent
+            while folder.count > 1 {
+                if let known = folders[folder], ChangeTint.rank(known) >= ChangeTint.rank(change.status) { break }
+                folders[folder] = change.status
+                folder = (folder as NSString).deletingLastPathComponent
+            }
+        }
+        guard files != fileChanges || folders != folderChanges else { return }
+        let (oldFiles, oldFolders) = (fileChanges, folderChanges)
+        fileChanges = files
+        folderChanges = folders
+        // Rows out of sight pick theirs up as they come into view.
+        let visible = outline.rows(in: outline.visibleRect)
+        var rows = IndexSet()
+        for row in visible.lowerBound..<NSMaxRange(visible) {
+            guard let node = outline.item(atRow: row) as? FileNode, node !== editingNode else { continue }
+            if node.isDirectory ? oldFolders[node.path] != folders[node.path] : oldFiles[node.path] != files[node.path] { rows.insert(row) }
+        }
+        if !rows.isEmpty { outline.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0)) }
     }
 
     // MARK: Live updates
@@ -591,7 +678,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? FileNode else { return nil }
         let identifier = NSUserInterfaceItemIdentifier(node.isRoot ? "root" : "row")
-        let cell = (outlineView.makeView(withIdentifier: identifier, owner: nil) as? NSTableCellView) ?? makeCell(identifier: identifier, isRoot: node.isRoot)
+        let cell = (outlineView.makeView(withIdentifier: identifier, owner: nil) as? FileTreeCell) ?? makeCell(identifier: identifier, isRoot: node.isRoot)
         let field = cell.textField
         field?.stringValue = node.isRoot ? node.name.uppercased() : node.name
         if node.isRoot {
@@ -600,25 +687,42 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             cell.imageView?.image = FileIcons.image(forName: node.name, isDirectory: node.isDirectory)
             cell.imageView?.contentTintColor = node.isDirectory ? .controlAccentColor : .secondaryLabelColor
         }
+        if node.isDirectory {
+            let status = folderChanges[node.path]
+            // A root row keeps its heading's color.
+            cell.showMark(status == nil ? "" : "●", tint: node.isRoot ? nil : status.map(ChangeTint.color))
+        } else {
+            let status = fileChanges[node.path]
+            cell.showMark(status?.letter ?? "", tint: status.map(ChangeTint.color))
+            cell.badge.toolTip = status?.rawValue.capitalized
+        }
         return cell
     }
 
-    private func makeCell(identifier: NSUserInterfaceItemIdentifier, isRoot: Bool) -> NSTableCellView {
-        let cell = NSTableCellView()
+    private func makeCell(identifier: NSUserInterfaceItemIdentifier, isRoot: Bool) -> FileTreeCell {
+        let cell = FileTreeCell()
         cell.identifier = identifier
         let field = NSTextField(labelWithString: "")
         field.lineBreakMode = .byTruncatingMiddle
         field.translatesAutoresizingMaskIntoConstraints = false
         field.font = isRoot ? .systemFont(ofSize: 11, weight: .semibold) : .systemFont(ofSize: 13)
-        field.textColor = isRoot ? .secondaryLabelColor : .labelColor
+        cell.plainColor = isRoot ? .secondaryLabelColor : .labelColor
         field.cell?.isScrollable = true
         cell.addSubview(field)
         cell.textField = field
+        let badge = cell.badge
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.alignment = .right
+        badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        badge.setContentHuggingPriority(.required, for: .horizontal)
+        cell.addSubview(badge)
         if isRoot {
             NSLayoutConstraint.activate([
                 field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
-                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+                field.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -4),
                 field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
+                badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             ])
         } else {
             let image = NSImageView()
@@ -631,8 +735,10 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                 image.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 image.widthAnchor.constraint(equalToConstant: 18),
                 field.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 4),
-                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                field.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -4),
                 field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
+                badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             ])
         }
         return cell

@@ -128,7 +128,9 @@ final class AppModel {
     @ObservationIgnored var hoverWork: DispatchWorkItem?
     @ObservationIgnored var reviewPopover: NSPopover?
     @ObservationIgnored var reviewPopoverCloser: NSObjectProtocol?
-    var changes: [ChangedFile] = []
+    var changes: [ChangedFile] = [] {
+        didSet { fileTree.changesUpdated(changes) }
+    }
     /// Each repository the active workspace's folders are in, for the status bar.
     var repositories: [RepositoryStatus] = []
     /// Fetches and pushes under way, by repository.
