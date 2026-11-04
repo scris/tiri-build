@@ -21,6 +21,7 @@ public struct WorkspaceStore: Sendable {
         var closed: [Item]
         var expandedFolders: [String]?
         var groupMRU: [GroupID]?
+        var review: [ReviewComment]?
     }
 
     public struct Snapshot: Equatable, Sendable {
@@ -80,6 +81,7 @@ public struct WorkspaceStore: Sendable {
                 workspace.closed = layout.closed
                 workspace.expandedFolders = layout.expandedFolders ?? []
                 workspace.groupMRU = layout.groupMRU ?? []
+                workspace.review = layout.review ?? []
             }
             workspaces.append(workspace)
         }
@@ -98,7 +100,8 @@ public struct WorkspaceStore: Sendable {
         for workspace in snapshot.workspaces {
             let layout = LayoutFile(items: workspace.items, layout: workspace.layout,
                                     focusedGroup: workspace.focusedGroup, closed: workspace.closed,
-                                    expandedFolders: workspace.expandedFolders, groupMRU: workspace.groupMRU)
+                                    expandedFolders: workspace.expandedFolders, groupMRU: workspace.groupMRU,
+                                    review: workspace.review.isEmpty ? nil : workspace.review)
             try encoder.encode(layout).write(to: layoutURL(workspace.id), options: .atomic)
         }
         // Drop layouts for workspaces that no longer exist.

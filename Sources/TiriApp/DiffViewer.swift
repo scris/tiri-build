@@ -93,6 +93,7 @@ final class DiffController: NSObject, ItemController, NSTextViewDelegate {
                 scrollView.reflectScrolledClipView(scrollView.contentView)
             }
         }
+        reviewChanged()
         gutter.needsDisplay = true
         textView.needsDisplay = true
         firstLoad = false
@@ -150,6 +151,40 @@ final class DiffController: NSObject, ItemController, NSTextViewDelegate {
         return AgentSelection(path: path, quote: DiffQuote.text(path: path, rows: rows))
     }
 
+    /// With nothing selected, a comment is on the row the cursor is in.
+    var reviewAnchor: ReviewAnchor? {
+        var rows = selectedRows
+        if rows.isEmpty {
+            let string = textView.string as NSString
+            let before = string.substring(to: min(textView.selectedRange().location, string.length))
+            let index = before.utf16.filter { $0 == 10 }.count
+            guard index < diff.lines.count else { return ReviewAnchor(path: path) }
+            rows = diff.lines[index...index]
+        }
+        let body = rows.filter { $0.kind != .hunk }
+        guard !body.isEmpty else { return ReviewAnchor(path: path) }
+        let numbers = body.compactMap(\.newLine)
+        let kept = body.filter { $0.kind != .removed }.map(\.text)
+        return ReviewAnchor(path: path, firstLine: numbers.first, lastLine: numbers.last,
+                            excerpt: kept.isEmpty ? nil : kept.joined(separator: "\n"),
+                            quote: DiffQuote.rows(body), quoteIsDiff: true)
+    }
+
+    var reviewPopoverPosition: (view: NSView, rect: NSRect)? {
+        guard let layout = textView.layoutManager, let container = textView.textContainer else { return nil }
+        let range = textView.selectedRange()
+        let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: range.location, length: min(range.length, 1)), actualCharacterRange: nil)
+        var rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        rect.origin.x += textView.textContainerInset.width
+        rect.origin.y += textView.textContainerInset.height
+        if rect.height < 1 { rect.size.height = 16 }
+        return rect.intersects(textView.visibleRect) ? (textView, rect) : nil
+    }
+
+    func reviewChanged() {
+        gutter.commentMarkers = model.reviewMarkers(for: path, rows: diff.lines)
+    }
+
     private var selectedRows: ArraySlice<DiffLine> {
         let string = textView.string as NSString
         let range = textView.selectedRange()
@@ -183,16 +218,21 @@ final class DiffController: NSObject, ItemController, NSTextViewDelegate {
     }
 
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
-        if view.selectedRange().length > 0 {
-            let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteSelection), keyEquivalent: "")
+        var index = 0
+        func add(_ title: String, _ action: Selector) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
-            menu.insertItem(item, at: 0)
-            menu.insertItem(.separator(), at: 1)
+            menu.insertItem(item, at: index)
+            index += 1
         }
+        if view.selectedRange().length > 0 { add("Quote in Agent", #selector(quoteSelection)) }
+        add("Add Comment", #selector(addComment))
+        menu.insertItem(.separator(), at: index)
         return menu
     }
 
     @objc private func quoteSelection() { model.addFrontToAgent() }
+    @objc private func addComment() { model.beginReviewComment() }
 
     var supportsFind: Bool { true }
 
@@ -254,6 +294,9 @@ final class DiffTextView: NSTextView {
 final class DiffGutter: NSView {
     var font: NSFont = .monospacedDigitSystemFont(ofSize: 11, weight: .regular) { didSet { needsDisplay = true } }
     var lines: [DiffLine] = [] { didSet { needsDisplay = true } }
+    /// Row, counting from 0, to the comments on it.
+    var commentMarkers: [Int: [ReviewComment]] = [:] { didSet { needsDisplay = true } }
+    private var markerHits: [(rect: NSRect, comments: [ReviewComment])] = []
     private weak var textView: NSTextView?
     private var observers: [NSObjectProtocol] = []
     private let columnWidth: CGFloat = 40
@@ -281,6 +324,7 @@ final class DiffGutter: NSView {
         let string = text.string as NSString
         var index: Int?
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]
+        markerHits = []
         layout.enumerateLineFragments(forGlyphRange: glyphs) { fragment, _, _, range, _ in
             if index == nil {
                 var count = 0
@@ -301,8 +345,20 @@ final class DiffGutter: NSView {
                 let size = label.size(withAttributes: attributes)
                 label.draw(at: NSPoint(x: column + self.columnWidth - size.width - 2, y: y + (fragment.height - size.height) / 2), withAttributes: attributes)
             }
+            if let comments = self.commentMarkers[current] {
+                self.markerHits.append((ReviewMarker.draw(atY: y, lineHeight: fragment.height), comments))
+            }
             index = current + 1
         }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let hit = markerHits.first(where: { $0.rect.insetBy(dx: -3, dy: -2).contains(point) }) {
+            AppModel.shared.editReviewComment(hit.comments[0], from: self, rect: hit.rect)
+            return
+        }
+        super.mouseDown(with: event)
     }
 }
 

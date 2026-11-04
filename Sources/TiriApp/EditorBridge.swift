@@ -226,7 +226,7 @@ extension AppModel {
     }
 
     /// With one agent running there's nothing to ask. With several, you choose.
-    private func withAgent(asking question: String, _ deliver: @escaping (TerminalController, AgentReference.Agent) -> Void) {
+    func withAgent(asking question: String, _ deliver: @escaping (TerminalController, AgentReference.Agent) -> Void) {
         let sessions = activeAgentSessions()
         guard let first = sessions.first else {
             showToast(title: "No agent is running", detail: "Start Claude Code or Codex from the + button, then try again.",
@@ -308,7 +308,7 @@ extension AppModel {
         }
     }
 
-    private func focusAgent(_ terminal: TerminalController) {
+    func focusAgent(_ terminal: TerminalController) {
         lastAgentTerminal = terminal.itemID
         if active.peek != nil { dismissPeek(restoreFocus: false) }
         focusItem(terminal.itemID)
@@ -389,7 +389,18 @@ final class QuoteButton: NSButton {
     private weak var textView: NSTextView?
     private weak var host: NSView?
     private var observers: [NSObjectProtocol] = []
+    /// Beside it, for keeping a remark for later rather than sending this now.
+    private let commentButton = NSButton(title: "", target: nil, action: nil)
     var onQuote: (() -> Void)?
+
+    override var isHidden: Bool {
+        didSet { commentButton.isHidden = isHidden }
+    }
+
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        commentButton.setFrameOrigin(NSPoint(x: newOrigin.x - commentButton.frame.width - 6, y: newOrigin.y))
+    }
 
     convenience init(textView: NSTextView, scrollView: NSScrollView, host: NSView) {
         self.init(host: host)
@@ -422,6 +433,32 @@ final class QuoteButton: NSButton {
         setFrameSize(NSSize(width: frame.width + 18, height: 22))
         toolTip = "Add this selection to your agent's input"
         host.addSubview(self)
+        commentButton.isBordered = false
+        commentButton.wantsLayer = true
+        commentButton.layer?.cornerRadius = 6
+        commentButton.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        commentButton.layer?.borderWidth = 1
+        commentButton.layer?.borderColor = NSColor.separatorColor.cgColor
+        commentButton.attributedTitle = NSAttributedString(string: "Comment  ⌥⌘L", attributes: [
+            .font: NSFont.systemFont(ofSize: 11.5, weight: .medium), .foregroundColor: NSColor.labelColor,
+        ])
+        commentButton.sizeToFit()
+        commentButton.setFrameSize(NSSize(width: commentButton.frame.width + 18, height: 22))
+        commentButton.toolTip = "Keep a comment on this for your next batch to the agent"
+        commentButton.target = self
+        commentButton.action = #selector(commentPressed)
+        commentButton.isHidden = true
+        host.addSubview(commentButton)
+    }
+
+    @objc private func commentPressed() { AppModel.shared.beginReviewComment() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            commentButton.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            commentButton.layer?.borderColor = NSColor.separatorColor.cgColor
+        }
     }
 
     /// A distance from the top of the host, in a view whose own coordinates are ignored.

@@ -12,6 +12,7 @@ struct SidebarView: View {
     @AppStorage(SidebarSection.explorer.rawValue) private var explorerOpen = true
     @AppStorage(SidebarSection.changes.rawValue) private var changesOpen = true
     @AppStorage(SidebarSection.items.rawValue) private var itemsOpen = true
+    @AppStorage(SidebarSection.review.rawValue) private var reviewOpen = true
 
     var body: some View {
         GeometryReader { geometry in
@@ -56,6 +57,16 @@ struct SidebarView: View {
                         ChangesList()
                             .frame(height: min(CGFloat(model.changes.count) * 25 + 6, max(geometry.size.height * 0.28, 60)))
                     }
+                }
+            }
+            if !model.active.review.isEmpty {
+                Divider()
+                sectionHeader("Review", isOpen: $reviewOpen) {
+                    ReviewHeaderActions()
+                }
+                if reviewOpen {
+                    ReviewList()
+                        .frame(height: min(CGFloat(model.active.review.count) * 41 + 6, max(geometry.size.height * 0.28, 60)))
                 }
             }
             if explorerOpen, itemsOpen {
@@ -139,6 +150,7 @@ enum SidebarSection: String {
     case explorer = "sidebar.explorerOpen"
     case changes = "sidebar.changesOpen"
     case items = "sidebar.itemsOpen"
+    case review = "sidebar.reviewOpen"
 
     private var isOpen: Bool { UserDefaults.standard.object(forKey: rawValue) as? Bool ?? true }
     func open() { UserDefaults.standard.set(true, forKey: rawValue) }

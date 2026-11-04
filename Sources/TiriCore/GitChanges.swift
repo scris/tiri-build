@@ -405,7 +405,7 @@ public enum Git {
     }
 
     /// The real path, even for a file that's gone: it's the deleted ones git has most to say about.
-    static func real(_ path: String) -> String {
+    public static func real(_ path: String) -> String {
         var existing = path
         var missing: [String] = []
         while !FileManager.default.fileExists(atPath: existing), existing != "/" {
@@ -439,7 +439,12 @@ public enum Git {
 public enum DiffQuote {
     public static func text<Rows: Sequence>(path: String, rows: Rows) -> String where Rows.Element == DiffLine {
         let name = (path as NSString).lastPathComponent
-        let body = rows.compactMap { row -> String? in
+        return "From the changes in \(name):\n```diff\n\(self.rows(rows))\n```\n"
+    }
+
+    /// The rows themselves, with their marks.
+    public static func rows<Rows: Sequence>(_ rows: Rows) -> String where Rows.Element == DiffLine {
+        rows.compactMap { row -> String? in
             switch row.kind {
             case .added: "+" + row.text
             case .removed: "-" + row.text
@@ -447,6 +452,5 @@ public enum DiffQuote {
             case .hunk: nil
             }
         }.joined(separator: "\n")
-        return "From the changes in \(name):\n```diff\n\(body)\n```\n"
     }
 }

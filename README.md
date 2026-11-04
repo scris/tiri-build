@@ -43,6 +43,18 @@ To add files and images, use whichever is closest:
 
 In a plain shell, these insert quoted paths instead.
 
+## Review an agent's work
+
+Reading a change usually raises several remarks, and sending each one as you go interrupts you and the agent. So keep them, then send them together.
+
+Select lines in a file or a diff and press **Comment** beside the selection, or ⌥⌘L, or right-click. With nothing selected, it's the line the cursor is in. Rendered markdown, web pages and PDFs work too. Write your remark: Return adds it, and ⇧Return makes a new line.
+
+A mark appears beside the line, and clicking it lets you change or delete the comment. They wait in the **Review** section of the sidebar, go across as many files as you like, and survive a relaunch. If an agent moves the lines, the comment follows them. If it rewrites them, the comment says so when it's sent.
+
+Press the paper plane, or ⌥⇧⌘L, and all of them go into one agent's input as one message, each beside the code it's about. Nothing is sent until you press Return in that session, so you can add to it first. With several agents running, Tiri asks which one. **Quote in Agent** (⌘L) still sends a single selection straight away.
+
+Agents can use the same list with `tiri review`.
+
 ## Another window
 
 Right-click a tab and choose **Move to New Window** to put a terminal, file or page on your other display. Its tab stays and says where it went, and closing the window brings it back. Each window shows one item: there's still one set of workspaces, in the main window.
@@ -103,6 +115,7 @@ Shortcuts follow Cursor. All of them can be changed in Settings, or by asking yo
 | Focus group 1…9 | ⌘1…⌘9 |
 | Switch workspace 1…9 | ⌃1…⌃9 |
 | Go to the next terminal needing attention | ⌘⇧U |
+| Add a review comment / send them all to an agent | ⌥⌘L / ⌥⇧⌘L |
 | Find in the current item | ⌘F |
 | Settings | ⌘, |
 
@@ -123,6 +136,8 @@ tiri workspace new api --folder ~/api --folder ~/shared
 tiri workspace import team.code-workspace
 tiri items
 tiri notify needs-input --message "Which database?"
+tiri review add src/app.ts:12-20 "This doesn't handle an empty list"
+tiri review send --to <item-id>
 tiri theme dark
 ```
 

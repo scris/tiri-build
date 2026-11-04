@@ -306,6 +306,8 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     /// The floating Peek: an item that isn't in any tab group until it's promoted.
     /// Deliberately not persisted, since a Peek is a glance, not part of the session.
     public var peek: Item?
+    /// Review comments waiting to be sent, oldest first.
+    public var review: [ReviewComment] = []
 
     public init(id: WorkspaceID = TiriID.make("w"), name: String, folders: [String] = []) {
         self.id = id

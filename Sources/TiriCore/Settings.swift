@@ -356,6 +356,8 @@ public enum Keymap {
             ("cmd+s", "saveFile"),
             ("cmd+l", "addToAgent"),
             ("cmd+shift+l", "attachToAgent"),
+            ("cmd+alt+l", "addReviewComment"),
+            ("cmd+alt+shift+l", "sendReview"),
             ("cmd+shift+f", "searchInFiles"),
             ("cmd+r", "webReload"),
             ("cmd+,", "openSettings"),

@@ -25,6 +25,11 @@ protocol ItemController: AnyObject {
     var selectedTextForFind: String? { get }
     /// What ⌘L adds to an agent, if this item has something more specific than its whole file.
     var agentReference: AgentSelection? { get }
+    /// What a review comment made here would be on, and where to show the box for writing it.
+    var reviewAnchor: ReviewAnchor? { get }
+    var reviewPopoverPosition: (view: NSView, rect: NSRect)? { get }
+    /// Review comments on this file were added, changed or removed.
+    func reviewChanged()
     /// Selects text, as someone could with the mouse. For agents pointing at something.
     func select(text: String, to end: String?) -> Bool
     var isDirty: Bool { get }
@@ -42,6 +47,18 @@ extension ItemController {
     var supportsFind: Bool { false }
     var selectedTextForFind: String? { nil }
     var agentReference: AgentSelection? { nil }
+    /// Whatever ⌘L would take, as a comment's subject. Viewers with lines of their own say more.
+    var reviewAnchor: ReviewAnchor? {
+        guard let reference = agentReference else { return nil }
+        guard let first = reference.firstLine else {
+            return ReviewAnchor(path: reference.path, quote: reference.quote.map(ReviewQuote.body))
+        }
+        let last = reference.lastLine ?? first
+        return ReviewAnchor(path: reference.path, firstLine: first + 1, lastLine: last + 1,
+                            excerpt: ReviewQuote.lines(first + 1, last + 1, of: reference.path))
+    }
+    var reviewPopoverPosition: (view: NSView, rect: NSRect)? { nil }
+    func reviewChanged() {}
     func select(text: String, to end: String?) -> Bool { false }
     var isDirty: Bool { false }
     func save(overwriting: Bool) -> SaveResult { .saved }

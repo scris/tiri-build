@@ -106,6 +106,8 @@ final class AppModel {
     @ObservationIgnored let terminalFolderIndex = FileIndexStore()
     @ObservationIgnored lazy var editorBridge = EditorBridge(model: self)
     @ObservationIgnored var lastAgentTerminal: ItemID?
+    @ObservationIgnored var reviewPopover: NSPopover?
+    @ObservationIgnored var reviewPopoverCloser: NSObjectProtocol?
     var changes: [ChangedFile] = []
     /// Each repository the active workspace's folders are in, for the status bar.
     var repositories: [RepositoryStatus] = []
@@ -1679,6 +1681,7 @@ final class AppModel {
             await MainActor.run {
                 guard let self else { return }
                 self.changesInFlight = false
+                self.refreshReviewLines()
                 if self.activeID == workspace, self.changes != found { self.changes = found }
                 if self.activeID == workspace, self.repositories != repositories {
                     self.repositories = repositories

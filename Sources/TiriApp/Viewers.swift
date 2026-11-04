@@ -444,6 +444,33 @@ final class TextController: NSObject, ItemController, NSTextViewDelegate {
         return AgentSelection(path: path, firstLine: selection.startLine, lastLine: selection.lastLine)
     }
 
+    /// With nothing selected, a comment is on the line the cursor is in.
+    var reviewAnchor: ReviewAnchor? {
+        let selection = editorSelection
+        let first = selection.startLine + 1
+        let last = max(selection.lastLine + 1, first)
+        let string = textView.string as NSString
+        let lines = string.lineRange(for: textView.selectedRange())
+        let excerpt = string.substring(with: lines)
+        return ReviewAnchor(path: path, firstLine: first, lastLine: last, excerpt: excerpt)
+    }
+
+    var reviewPopoverPosition: (view: NSView, rect: NSRect)? {
+        guard let layout = textView.layoutManager, let container = textView.textContainer else { return nil }
+        let range = textView.selectedRange()
+        let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: range.location, length: min(range.length, 1)), actualCharacterRange: nil)
+        var rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        rect.origin.x += textView.textContainerInset.width
+        rect.origin.y += textView.textContainerInset.height
+        if rect.height < 1 { rect.size.height = 16 }
+        // A long line's selection can start out of sight. The box stays with what's on screen.
+        return rect.intersects(textView.visibleRect) ? (textView, rect) : nil
+    }
+
+    func reviewChanged() {
+        ruler.commentMarkers = model.reviewMarkers(for: path, text: textView.string)
+    }
+
     func select(text: String, to end: String?) -> Bool {
         let string = textView.string as NSString
         let start = string.range(of: text)
@@ -565,6 +592,7 @@ final class TextController: NSObject, ItemController, NSTextViewDelegate {
         let selection = textView.selectedRange()
         textView.string = text
         ruler.invalidateLineStarts()
+        reviewChanged()
         if loadedOnce {
             // A reload shouldn't lose your place.
             textView.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
@@ -580,21 +608,27 @@ final class TextController: NSObject, ItemController, NSTextViewDelegate {
 
     /// Right-click on a selection offers the same thing as the button beside it.
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
-        if view.selectedRange().length > 0 {
-            let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteSelection), keyEquivalent: "")
+        var index = 0
+        func add(_ title: String, _ action: Selector) {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
-            menu.insertItem(item, at: 0)
-            menu.insertItem(.separator(), at: 1)
+            menu.insertItem(item, at: index)
+            index += 1
         }
+        if view.selectedRange().length > 0 { add("Quote in Agent", #selector(quoteSelection)) }
+        add("Add Comment", #selector(addComment))
+        menu.insertItem(.separator(), at: index)
         return menu
     }
 
     @objc private func quoteSelection() { model.addFrontToAgent() }
+    @objc private func addComment() { model.beginReviewComment() }
 
     func textDidChange(_ notification: Notification) {
         isDirty = textView.string != savedText
         if isDirty { model.fileWasEdited(itemID) }
         ruler.invalidateLineStarts()
+        reviewChanged()
         ruler.needsDisplay = true
         highlightWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.scheduleHighlight() }
@@ -727,6 +761,11 @@ final class LineGutter: NSView {
         didSet { needsDisplay = true }
     }
     weak var textView: NSTextView?
+    /// Line, counting from 1, to the comments on it.
+    var commentMarkers: [Int: [ReviewComment]] = [:] {
+        didSet { needsDisplay = true }
+    }
+    private var markerHits: [(rect: NSRect, comments: [ReviewComment])] = []
     private var lineStarts: [Int] = [0]
     private var observers: [NSObjectProtocol] = []
     private(set) var thickness: CGFloat = 44
@@ -793,6 +832,7 @@ final class LineGutter: NSView {
         let glyphs = layout.glyphRange(forBoundingRect: text.visibleRect, in: container)
         let characters = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
         let selectedLine = lineNumber(forCharacter: text.selectedRange().location)
+        markerHits = []
         var index = lineNumber(forCharacter: characters.location) - 1
         while index < lineStarts.count {
             let start = lineStarts[index]
@@ -810,8 +850,20 @@ final class LineGutter: NSView {
             let label = "\(index + 1)" as NSString
             let size = label.size(withAttributes: attributes)
             label.draw(at: NSPoint(x: thickness - size.width - 8, y: y + (line.height - size.height) / 2), withAttributes: attributes)
+            if let comments = commentMarkers[index + 1] {
+                markerHits.append((ReviewMarker.draw(atY: y, lineHeight: line.height), comments))
+            }
             index += 1
         }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let hit = markerHits.first(where: { $0.rect.insetBy(dx: -3, dy: -2).contains(point) }) {
+            AppModel.shared.editReviewComment(hit.comments[0], from: self, rect: hit.rect)
+            return
+        }
+        super.mouseDown(with: event)
     }
 }
 

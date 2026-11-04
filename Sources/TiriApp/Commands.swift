@@ -86,6 +86,9 @@ extension AppModel {
             AppCommand(id: "saveFile", title: "Save", category: "File") { $0.saveFront() },
             AppCommand(id: "addToAgent", title: "Add to Agent", category: "Agent") { $0.addFrontToAgent() },
             AppCommand(id: "attachToAgent", title: "Add Files or Images to Agent…", category: "Agent") { $0.chooseFilesForAgent() },
+            AppCommand(id: "addReviewComment", title: "Review: Add Comment", category: "Agent") { $0.beginReviewComment() },
+            AppCommand(id: "sendReview", title: "Review: Send Comments to Agent", category: "Agent") { $0.sendReview() },
+            AppCommand(id: "foldReview", title: "Fold or Unfold Review", category: "View") { _ in SidebarSection.review.toggle() },
             AppCommand(id: "foldExplorer", title: "Fold or Unfold Explorer", category: "View") { _ in SidebarSection.explorer.toggle() },
             AppCommand(id: "foldChanges", title: "Fold or Unfold Changes", category: "View") { _ in SidebarSection.changes.toggle() },
             AppCommand(id: "foldOpenItems", title: "Fold or Unfold Open Items", category: "View") { _ in SidebarSection.items.toggle() },
@@ -571,6 +574,43 @@ enum ControlHandler {
             } else {
                 model.peekDiff(path: path, takeFocus: false)
             }
+            return .object([:])
+
+        case "review.list":
+            return .array(model.active.review.map { comment in
+                var object: [String: JSONValue] = ["id": .string(comment.id), "path": .string(comment.path), "text": .string(comment.text)]
+                if let first = comment.firstLine { object["line"] = .int(first) }
+                if let last = comment.lastLine { object["lastLine"] = .int(last) }
+                return .object(object)
+            })
+
+        case "review.add":
+            let path = try string(request, "path")
+            guard FileManager.default.fileExists(atPath: path) else { throw ControlFailure("No such file: \(path)") }
+            let first = request.args["line"]?.intValue
+            let last = request.args["lastLine"]?.intValue ?? first
+            let excerpt = first.flatMap { ReviewQuote.lines($0, last ?? $0, of: path) }
+            let comment = ReviewComment(path: path, firstLine: first, lastLine: last, excerpt: excerpt, text: try string(request, "text"))
+            model.addReviewComment(comment, in: sourceWorkspace)
+            return .object(["id": .string(comment.id)])
+
+        case "review.remove":
+            let id = try string(request, "id")
+            guard model.active.review.contains(where: { $0.id == id }) else { throw ControlFailure("No comment with id \(id). Run tiri review.") }
+            model.removeReviewComment(id)
+            return .object([:])
+
+        case "review.clear":
+            model.discardReview()
+            return .object([:])
+
+        case "review.send":
+            guard !model.active.review.isEmpty else { throw ControlFailure("There are no review comments to send") }
+            if let target = request.args["item"]?.stringValue {
+                guard model.sendReview(to: target) else { throw ControlFailure("\(target) isn't a running agent. Run tiri items.") }
+                return .object(["sent": true])
+            }
+            model.sendReview()
             return .object([:])
 
         case "select":

@@ -121,6 +121,41 @@ public enum CLIParser {
             if tab { payload["mode"] = "tab" }
             return request("diff", payload)
 
+        case "review":
+            let usage = "usage: tiri review [add <path>[:line[-line]] <text> | remove <id> | clear | send [--to <item-id>]]"
+            switch args.first {
+            case nil:
+                return request("review.list")
+            case "add":
+                guard args.count >= 3 else { throw UsageError(usage) }
+                var payload: [String: JSONValue] = ["text": .string(args[2...].joined(separator: " "))]
+                let target = args[1]
+                if let match = target.wholeMatch(of: /(.+):(\d+)-(\d+)/), !environment.fileExists(absolute(target, cwd: environment.cwd)) {
+                    payload["path"] = .string(absolute(String(match.1), cwd: environment.cwd))
+                    payload["line"] = .int(Int(match.2) ?? 1)
+                    payload["lastLine"] = .int(Int(match.3) ?? 1)
+                } else {
+                    let location = parseLocation(target, environment: environment)
+                    payload["path"] = .string(location.path)
+                    if let line = location.line { payload["line"] = .int(line) }
+                }
+                if let item = environment.itemID { payload["source"] = .string(item) }
+                return request("review.add", payload)
+            case "remove":
+                guard args.count == 2 else { throw UsageError(usage) }
+                return request("review.remove", ["id": .string(args[1])])
+            case "clear":
+                guard args.count == 1 else { throw UsageError(usage) }
+                return request("review.clear")
+            case "send":
+                var options = Options(Array(args.dropFirst()))
+                let target = try options.value("--to")
+                try options.finish()
+                return request("review.send", target.map { ["item": .string($0)] } ?? [:])
+            default:
+                throw UsageError(usage)
+            }
+
         case "reveal":
             var options = Options(args)
             guard let raw = options.positional() else { throw UsageError("usage: tiri reveal <path>") }
@@ -359,6 +394,8 @@ public enum CLIParser {
       tiri changes                 (files changed since the last commit)
       tiri git                     (each repository's branch, and commits to pull and push)
       tiri diff <path> [--tab]     (what changed in one file; floats as a Peek)
+      tiri review [add <path>[:line[-line]] <text> | remove <id> | clear | send [--to <item-id>]]
+                                   (comments waiting to go to an agent, all at once)
       tiri follow <item-id> <row> <col>
       tiri quit                    (terminals keep running, and Tiri comes back to them)
       tiri keys [set <command> <key> | unset <command> | reset <command>]
@@ -561,6 +598,17 @@ public enum AgentGuide {
     tiri git                              # each repository's branch, and commits to pull and push
     tiri diff src/app.ts                  # floats what changed over your terminal
     tiri diff src/app.ts --tab            # or keeps it as a tab
+    ```
+
+    ## Review comments
+
+    The user can comment on lines of files and diffs, then send them all to an agent at once.
+    They arrive in your input as one message. You can read the ones still waiting too.
+
+    ```sh
+    tiri review                           # comments waiting to be sent
+    tiri review add src/app.ts:12-20 "This doesn't handle an empty list"
+    tiri review send --to <item-id>       # put them in that session's input, unsent
     ```
 
     ## Appearance and settings
