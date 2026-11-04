@@ -258,7 +258,7 @@ public enum FileClassifier {
         "js", "jsx", "mjs", "cjs", "ts", "tsx", "css", "scss", "less", "vue", "svelte", "sh", "bash", "zsh", "fish",
         "sql", "graphql", "proto", "r", "jl", "dart", "scala", "ex", "exs", "erl", "hs", "ml", "clj", "tex", "bib", "rst",
         "adoc", "gradle", "lock", "gitignore", "gitattributes", "editorconfig", "dockerfile", "makefile", "cmake", "tf",
-        "code-workspace", "patch", "diff", "strings", "pbxproj", "entitlements", "xcconfig", "tsv",
+        "code-workspace", "patch", "diff", "strings", "pbxproj", "entitlements", "xcconfig",
     ]
     private static let knownTextNames: Set<String> = [
         "makefile", "dockerfile", "license", "licence", "readme", "changelog", "authors", "copying", "gemfile", "rakefile",
@@ -277,7 +277,7 @@ public enum FileClassifier {
         if media.contains(ext) { return .media }
         if ext == "html" || ext == "htm" || ext == "xhtml" { return .html }
         if ext == "ipynb" { return .notebook }
-        if ext == "csv" { return .csv }
+        if ext == "csv" || ext == "tsv" { return .csv }
         if office.contains(ext) { return .office }
         if knownText.contains(ext) || knownTextNames.contains(name) { return .text }
         // Unknown extension: look at the bytes.
@@ -328,73 +328,6 @@ public enum CompiledPDF {
             (try? manager.attributesOfItem(atPath: candidate))?[.modificationDate] as? Date ?? .distantPast
         }
         return candidates.filter { manager.fileExists(atPath: $0) }.max { modified($0) < modified($1) }
-    }
-}
-
-// MARK: - CSV
-
-public enum CSVParser {
-    public struct Table: Equatable, Sendable {
-        public var header: [String]
-        public var rows: [[String]]
-        public var truncated: Bool
-    }
-
-    /// RFC 4180: quoted fields, doubled quotes, newlines inside quotes.
-    public static func parse(_ text: String, delimiter: Character? = nil, maxRows: Int = 100_000) -> Table {
-        let separator = delimiter ?? detectDelimiter(text)
-        var rows: [[String]] = []
-        var row: [String] = []
-        var field = ""
-        var inQuotes = false
-        var truncated = false
-        var iterator = text.makeIterator()
-        var pending = iterator.next()
-        while let character = pending {
-            pending = iterator.next()
-            if inQuotes {
-                if character == "\"" {
-                    if pending == "\"" {
-                        field.append("\"")
-                        pending = iterator.next()
-                    } else {
-                        inQuotes = false
-                    }
-                } else {
-                    field.append(character)
-                }
-            } else if character == "\"", field.isEmpty {
-                inQuotes = true
-            } else if character == separator {
-                row.append(field)
-                field = ""
-            } else if character == "\n" || character == "\r\n" || character == "\r" {
-                row.append(field)
-                field = ""
-                rows.append(row)
-                row = []
-                if rows.count > maxRows {
-                    truncated = true
-                    break
-                }
-            } else {
-                field.append(character)
-            }
-        }
-        if !truncated, !field.isEmpty || !row.isEmpty {
-            row.append(field)
-            rows.append(row)
-        }
-        let header = rows.first ?? []
-        return Table(header: header, rows: Array(rows.dropFirst()), truncated: truncated)
-    }
-
-    private static func detectDelimiter(_ text: String) -> Character {
-        let firstLine = text.prefix { !$0.isNewline }
-        let candidates: [Character] = [",", "\t", ";", "|"]
-        return candidates.max { lhs, rhs in
-            firstLine.filter { $0 == lhs }.count < firstLine.filter { $0 == rhs }.count
-        } ?? ","
     }
 }
 

@@ -544,7 +544,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate {
     }
 }
 
-/// A line of explanation above the source, when the source is showing because it has to be.
+/// A line of explanation above what it's about.
 final class SourceNoticeView: NSView {
     private let label = NSTextField(wrappingLabelWithString: "")
     private let line = NSBox()
@@ -2047,13 +2047,19 @@ final class AudioPlayerView: NSView {
 final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTableViewDelegate {
     let itemID: ItemID
     let path: String
+    private let container = HostContainer()
     private let scrollView = NSScrollView()
     private let table = NSTableView()
-    private var rows: [[String]] = []
+    private lazy var noticeView = SourceNoticeView()
+    private var file: CSVFile?
+    private var numericColumns: Set<Int> = []
+    /// A table asks for a row one cell at a time.
+    private var cachedRow: (index: Int, cells: [String])?
     private var token: FileWatchHub.Token?
     private var generation = 0
+    private var findTask: Task<Void, Never>?
 
-    var view: NSView { scrollView }
+    var view: NSView { container }
 
     init(itemID: ItemID, path: String) {
         self.itemID = itemID
@@ -2070,6 +2076,7 @@ final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTa
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
+        container.show(scrollView)
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
         load()
     }
@@ -2079,39 +2086,79 @@ final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTa
         let current = generation
         let path = path
         Task.detached(priority: .userInitiated) { [weak self] in
-            let data = FileManager.default.contents(atPath: path) ?? Data()
-            let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-            let parsed = CSVParser.parse(text)
+            // A file being replaced can be gone for a moment. What's showing stays until it's back.
+            guard let file = CSVFile(path: path) else { return }
+            let numeric = file.numericColumns()
             await MainActor.run {
                 guard let self, self.generation == current else { return }
-                self.display(parsed)
+                self.display(file, numeric: numeric)
             }
         }
     }
 
-    private func display(_ parsed: CSVParser.Table) {
-        rows = parsed.rows
+    private func display(_ new: CSVFile, numeric: Set<Int>) {
+        let sameColumns = file?.header == new.header && file?.columnCount == new.columnCount
+        file = new
+        numericColumns = numeric
+        cachedRow = nil
+        // An agent adding rows shouldn't reset your column widths or your place.
+        if !sameColumns { rebuildColumns() }
+        table.reloadData()
+        showNotice()
+    }
+
+    private func rebuildColumns() {
         table.tableColumns.forEach { table.removeTableColumn($0) }
-        let width = max(parsed.header.count, parsed.rows.map(\.count).max() ?? 0)
-        for index in 0..<width {
+        guard let file else { return }
+        for index in 0..<max(file.header.count, file.columnCount) {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("\(index)"))
-            column.title = index < parsed.header.count ? parsed.header[index] : ""
-            column.width = columnWidth(index: index, header: column.title)
+            column.title = index < file.header.count ? file.header[index] : ""
+            column.headerCell.alignment = numericColumns.contains(index) ? .right : .left
+            column.width = columnWidth(index: index, header: column.title, file: file)
             column.minWidth = 40
             table.addTableColumn(column)
         }
-        table.reloadData()
     }
 
-    private func columnWidth(index: Int, header: String) -> CGFloat {
-        var longest = header.count
-        for row in rows.prefix(200) where index < row.count {
-            longest = max(longest, row[index].count)
+    private static let cellFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+
+    private func columnWidth(index: Int, header: String, file: CSVFile) -> CGFloat {
+        let attributes: [NSAttributedString.Key: Any] = [.font: Self.cellFont]
+        var widest = (header as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium)]).width
+        // Both ends: the last rows of a long file have the longest ids.
+        let sample = Array(0..<min(file.rowCount, 100)) + Array(max(file.rowCount - 50, 100)..<max(file.rowCount, 100))
+        for row in sample {
+            let cells = file.row(row)
+            if index < cells.count { widest = max(widest, (cells[index] as NSString).size(withAttributes: attributes).width) }
         }
-        return min(max(CGFloat(longest) * 7.5 + 18, 60), 420)
+        return min(max(ceil(widest) + 18, 50), 420)
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+    private func showNotice() {
+        var notice: String?
+        if let file {
+            if file.header.isEmpty {
+                notice = "This file is empty."
+            } else if file.isTruncated {
+                notice = "Showing the first \(file.rowCount.formatted()) rows."
+            }
+        }
+        if let notice {
+            noticeView.show(notice, above: scrollView)
+            container.show(noticeView)
+        } else {
+            container.show(scrollView)
+        }
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int { file?.rowCount ?? 0 }
+
+    private func cells(_ row: Int) -> [String] {
+        if let cachedRow, cachedRow.index == row { return cachedRow.cells }
+        let cells = file?.row(row) ?? []
+        cachedRow = (row, cells)
+        return cells
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let column = tableColumn, let index = Int(column.identifier.rawValue) else { return nil }
@@ -2120,36 +2167,54 @@ final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTa
             let field = NSTextField(labelWithString: "")
             field.identifier = identifier
             field.lineBreakMode = .byTruncatingTail
-            field.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            field.font = Self.cellFont
             field.isSelectable = true
             return field
         }()
-        let cells = rows[row]
-        field.stringValue = index < cells.count ? cells[index] : ""
+        let cells = cells(row)
+        let cell = index < cells.count ? cells[index] : ""
+        // One line to a row. A line break shows as a mark, and the whole cell is a hover away.
+        let hasBreak = cell.utf8.contains(10) || cell.utf8.contains(13)
+        field.stringValue = hasBreak ? cell.replacingOccurrences(of: "\r\n", with: " ⏎ ").replacingOccurrences(of: "\n", with: " ⏎ ") : cell
+        field.alignment = numericColumns.contains(index) ? .right : .left
+        field.toolTip = hasBreak || cell.count > 50 ? cell : nil
         return field
     }
 
     func focus() { table.window?.makeFirstResponder(table) }
-    func teardown() { token = nil }
+
+    func teardown() {
+        token = nil
+        findTask?.cancel()
+    }
 
     var supportsFind: Bool { true }
 
+    /// Off the main thread, because a file can have millions of rows. The bar's "not found" state
+    /// updates when the answer arrives, as it does for web pages.
     func find(_ query: String, backwards: Bool) -> Bool {
-        guard !rows.isEmpty else { return false }
-        let start = table.selectedRow >= 0 ? table.selectedRow : (backwards ? rows.count : -1)
-        let count = rows.count
-        for step in 1...count {
-            let row = ((start + (backwards ? -step : step)) % count + count) % count
-            if rows[row].contains(where: { $0.range(of: query, options: .caseInsensitive) != nil }) {
-                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-                table.scrollRowToVisible(row)
-                return true
+        guard let file else { return false }
+        findTask?.cancel()
+        let start = table.selectedRow >= 0 ? table.selectedRow : nil
+        findTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let row = file.find(query, from: start, backwards: backwards) { Task.isCancelled }
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, !Task.isCancelled else { return }
+                if let row {
+                    self.table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                    self.table.scrollRowToVisible(row)
+                }
+                AppModel.shared.find?.notFound = row == nil
             }
         }
-        return false
+        return true
     }
 
-    func clearFind() { table.deselectAll(nil) }
+    func clearFind() {
+        findTask?.cancel()
+        table.deselectAll(nil)
+    }
 }
 
 // MARK: - Office, iWork and everything else
