@@ -522,6 +522,109 @@ final class TiriTerminalView: LocalProcessTerminalView {
         }
     }
 
+    // MARK: Find marks
+
+    private var findMarks: [CALayer] = []
+    private var findTimer: Timer?
+    private var findSeen = ""
+    private(set) var findQuery: String?
+
+    /// Marks every match on screen. The terminal itself selects the current one. Output and
+    /// scrolling move things, so this looks again while find is open.
+    func markFindMatches(of query: String?) {
+        findQuery = query?.isEmpty == true ? nil : query
+        findSeen = ""
+        guard findQuery != nil else {
+            findTimer?.invalidate()
+            findTimer = nil
+            findMarks.forEach { $0.removeFromSuperlayer() }
+            findMarks = []
+            return
+        }
+        redrawFindMarks()
+        if findTimer == nil {
+            let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.redrawFindMarks() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            findTimer = timer
+        }
+    }
+
+    private func redrawFindMarks() {
+        guard let query = findQuery, let layer, window != nil else { return }
+        let snapshot = terminalStateSnapshot()
+        let rows = snapshot.visibleRows
+        let seen = query + "\u{0}" + rows.map(\.text).joined(separator: "\n")
+        guard seen != findSeen else { return }
+        findSeen = seen
+        findMarks.forEach { $0.removeFromSuperlayer() }
+        findMarks = []
+        let size = cellSize
+        let needle = Array(query.lowercased())
+        guard !needle.isEmpty else { return }
+        var index = 0
+        while index < rows.count {
+            var last = index
+            while last + 1 < rows.count, rows[last + 1].isWrapped { last += 1 }
+            var characters: [Character] = []
+            var cells: [(row: Int, col: Int, width: Int)] = []
+            for rowIndex in index...last {
+                var cursor = 0
+                for character in rows[rowIndex].text {
+                    let width = cursor < rows[rowIndex].cellWidths.count ? max(rows[rowIndex].cellWidths[cursor], 1) : 1
+                    characters.append(character)
+                    cells.append((rowIndex, cursor, width))
+                    cursor += width
+                }
+            }
+            let folded = characters.map { $0.lowercased().first ?? $0 }
+            var start = 0
+            while start + needle.count <= folded.count {
+                guard folded[start] == needle[0], Array(folded[start..<(start + needle.count)]) == needle else {
+                    start += 1
+                    continue
+                }
+                for run in Self.runs(of: cells[start..<(start + needle.count)]) {
+                    let mark = CALayer()
+                    mark.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.35).cgColor
+                    mark.frame = CGRect(x: CGFloat(run.first) * size.width, y: bounds.height - CGFloat(run.row + 1) * size.height,
+                                        width: CGFloat(run.last - run.first) * size.width, height: size.height)
+                    mark.zPosition = 90
+                    mark.actions = ["position": NSNull(), "bounds": NSNull(), "contents": NSNull(), "opacity": NSNull()]
+                    layer.addSublayer(mark)
+                    findMarks.append(mark)
+                }
+                start += needle.count
+            }
+            index = last + 1
+        }
+    }
+
+    private static func runs(of cells: ArraySlice<(row: Int, col: Int, width: Int)>) -> [(row: Int, first: Int, last: Int)] {
+        var runs: [(row: Int, first: Int, last: Int)] = []
+        for cell in cells {
+            if let last = runs.last, last.row == cell.row {
+                runs[runs.count - 1].last = max(last.last, cell.col + cell.width)
+            } else {
+                runs.append((cell.row, cell.col, cell.col + cell.width))
+            }
+        }
+        return runs
+    }
+
+    // MARK: Clearing
+
+    /// Scrolls the cursor's line to the top and forgets what was above it. False in a full-screen program.
+    func clearKeepingCursorLine() -> Bool {
+        guard let state = terminalContentSnapshot(region: .history(maximumScrollbackRows: 0)), !state.inputState.isAlternateBuffer else { return false }
+        let row = state.cursorRow - state.liveTopRow
+        // Scroll Up moves the screen without moving the cursor, then the cursor follows its line.
+        if row > 0 { feed(text: "\u{1B}[\(row)S\u{1B}[\(row)A") }
+        clearScrollback()
+        return true
+    }
+
     // MARK: Drop a file from the tree or Finder
 
     func registerDrops() {
@@ -947,7 +1050,9 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     }
 
     func find(_ query: String, backwards: Bool) -> Bool {
-        backwards ? terminalView.findPrevious(query) : terminalView.findNext(query)
+        let found = backwards ? terminalView.findPrevious(query) : terminalView.findNext(query)
+        terminalView.markFindMatches(of: query)
+        return found
     }
 
     /// From the newest output, as in Cursor. Each letter starts again from there.

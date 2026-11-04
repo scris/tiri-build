@@ -9,6 +9,7 @@ final class EventRouter {
     private var chordTimeout: DispatchWorkItem?
     private var lastCommand: (id: String, time: Double)?
     private var lastHandledKeyTimestamp: TimeInterval = -1
+    private var waitingToRun: String?
 
     func ranRecently(_ id: String) -> Bool {
         guard let lastCommand, lastCommand.id == id else { return false }
@@ -80,6 +81,8 @@ final class EventRouter {
             if let terminal = window.firstResponder as? TiriTerminalView {
                 terminal.owner?.noteKeyPress(isReturn: stroke.key == "enter")
             }
+            // The keys that mean something to what has the keyboard work the same over there.
+            if model.runOnFocusedItem(stroke: stroke, in: window) { return nil }
             return event
         }
         guard let model, event.window === model.window, NSApp.modalWindow == nil, event.window?.attachedSheet == nil,
@@ -119,13 +122,26 @@ final class EventRouter {
             }
             return event
         case .pending:
-            scheduleChordTimeout()
+            // ⌘K in a terminal does something by itself, if no second press comes along.
+            if let alone = model.keyResolver.commandsSoFar.first(where: model.isCommandEnabledForKey) {
+                waitingToRun = alone
+                scheduleChordTimeout(after: 0.3, thenRun: alone)
+            } else {
+                scheduleChordTimeout()
+            }
             return nil
         case .cancelledChord:
-            return nil
-        case .command(let command):
             chordTimeout?.cancel()
-            if !model.isCommandEnabledForKey(command) { return event }
+            if let alone = waitingToRun {
+                waitingToRun = nil
+                model.run(alone)
+                return event
+            }
+            return nil
+        case .command(let first, let otherwise):
+            chordTimeout?.cancel()
+            waitingToRun = nil
+            guard let command = ([first] + otherwise).first(where: model.isCommandEnabledForKey) else { return event }
             lastCommand = (command, ProcessClock.now())
             lastHandledKeyTimestamp = event.timestamp
             model.run(command)
@@ -133,11 +149,15 @@ final class EventRouter {
         }
     }
 
-    private func scheduleChordTimeout() {
+    private func scheduleChordTimeout(after delay: TimeInterval = 2.5, thenRun command: String? = nil) {
         chordTimeout?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.model?.keyResolver.reset() }
+        let work = DispatchWorkItem { [weak self] in
+            self?.model?.keyResolver.reset()
+            self?.waitingToRun = nil
+            if let command { self?.model?.run(command) }
+        }
         chordTimeout = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {

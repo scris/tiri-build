@@ -538,7 +538,9 @@ extension Keymap {
         if first.modifiers.subtracting(.shift).isEmpty, !isFunctionKey {
             return "A shortcut needs ⌘, ⌃ or ⌥, or typing that key would stop working."
         }
-        for binding in bindings where binding.command != command {
+        for binding in bindings where binding.command != command && command != "clearTerminal" {
+            // ⌘K can be both: it waits a moment to see whether a second press follows.
+            if binding.command == "clearTerminal" { continue }
             if binding.strokes.count > strokes.count, Array(binding.strokes.prefix(strokes.count)) == strokes {
                 return "\(strokes.map(\.symbol).joined(separator: " ")) already starts \(binding.symbol) (\(binding.command))."
             }

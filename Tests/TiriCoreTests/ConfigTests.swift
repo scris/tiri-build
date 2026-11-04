@@ -524,6 +524,13 @@ import Testing
         #expect(resolver.handle(stroke("cmd+k")) == .pending)
         #expect(resolver.isPending)
         #expect(resolver.handle(stroke("cmd+\\")) == .command("splitDown"))
+        // While waiting for the second press, ⌘K alone has something to do too.
+        _ = resolver.handle(stroke("cmd+k"))
+        #expect(resolver.commandsSoFar == ["clearTerminal"])
+        resolver.reset()
+        #expect(resolver.commandsSoFar.isEmpty)
+        // One key, two commands: whichever can take it, in order.
+        #expect(resolver.handle(stroke("cmd+enter")) == .command("promotePeek", otherwise: ["insertLineBelow"]))
         #expect(!resolver.isPending)
     }
 
