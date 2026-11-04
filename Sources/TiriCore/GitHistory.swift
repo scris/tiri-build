@@ -459,3 +459,35 @@ extension Git {
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }
+
+/// The stretch of added and removed lines a line belongs to.
+public enum DiffHunks {
+    public static func change(around index: Int, in lines: [DiffLine]) -> ClosedRange<Int>? {
+        func isChange(_ position: Int) -> Bool { lines[position].kind == .added || lines[position].kind == .removed }
+        guard lines.indices.contains(index), isChange(index) else { return nil }
+        var first = index
+        var last = index
+        while first > 0, isChange(first - 1) { first -= 1 }
+        while last + 1 < lines.count, isChange(last + 1) { last += 1 }
+        return first...last
+    }
+}
+
+/// What to say to an agent about a change. The agent does the work, including any Git it takes.
+public enum ChangeRequest {
+    public enum Kind: Sendable { case undo, ask }
+
+    public static func prompt(_ kind: Kind, path: String, commit: String? = nil, lines: [DiffLine]?) -> String {
+        let name = "`\(path)`"
+        let source = commit.map { " from commit \(String($0.prefix(10)))" } ?? ""
+        guard let lines, !lines.isEmpty else {
+            return kind == .undo ? "Please undo your changes\(source) to \(name)." : "What did you change\(source) in \(name), and why?"
+        }
+        let quote = "```diff\n" + DiffQuote.rows(lines) + "\n```"
+        switch kind {
+        case .undo: return "Please undo this change\(source) in \(name), and leave everything else as it is:\n\(quote)"
+        case .ask: return "What does this change\(source) in \(name) do, and why did you make it?\n\(quote)"
+        }
+    }
+}
+

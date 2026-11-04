@@ -37,6 +37,9 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var pendingLine: Int?
     private var syncingScroll = false
     private var scrollObservers: [NSObjectProtocol] = []
+    /// Over the change the mouse is on.
+    private let changeActions = ChangeActionsView()
+    private var hoveredChange: ClosedRange<Int>?
 
     var view: NSView { container }
 
@@ -51,6 +54,10 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
         message.textColor = .secondaryLabelColor
         container.install(main: main, message: message)
         container.onWidthChange = { [weak self] in self?.layoutModeMayHaveChanged() }
+        changeActions.isHidden = true
+        changeActions.onUndo = { [weak self] in self?.requestHoveredChange(.undo) }
+        changeActions.onAsk = { [weak self] in self?.requestHoveredChange(.ask) }
+        container.addSubview(changeActions)
         applySettings()
         // A commit stays what it was, whatever happens to the file.
         if spec.commit == nil {
@@ -67,6 +74,10 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
             self.activePane = pane
         }
         pane.wordRanges = { [weak self] line in self?.changedRanges(ofLine: line) ?? [] }
+        pane.textView.onHoverRow = { [weak self, weak pane] row in
+            guard let self, let pane else { return }
+            self.hover(row: row, in: pane)
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(selectionDidChange(_:)),
                                                name: NSTextView.didChangeSelectionNotification, object: pane.textView)
         let button = QuoteButton(textView: pane.textView, scrollView: pane.scrollView, host: container)
@@ -77,6 +88,7 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
             MainActor.assumeIsolated {
                 guard let pane else { return }
                 self?.scrollOtherSide(from: pane)
+                self?.hideChangeActions()
             }
         })
     }
@@ -447,6 +459,51 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
         return (line - 1, index - pane.range(ofRow: row).location)
     }
 
+    // MARK: Telling the agent about a change
+
+    /// Hovering over a change offers what you'd want to say about it. Doing it is the agent's job.
+    func hover(row: Int?, in pane: DiffPane) {
+        guard let row, row < pane.rows.count, let line = pane.rows[row] ?? (row < pane.counterpart.count ? pane.counterpart[row] : nil),
+              let change = DiffHunks.change(around: line, in: diff.lines) else {
+            // On its way to the buttons, the mouse is still over the change.
+            if !changeActions.isHidden, changeActions.frame.contains(container.convert(NSEvent.mouseLocationInWindow(of: container), from: nil)) { return }
+            hideChangeActions()
+            return
+        }
+        hoveredChange = change
+        let firstRow = pane.rows.firstIndex { $0.map(change.contains) == true } ?? row
+        let point = pane.textView.convert(NSPoint(x: 0, y: pane.y(ofRow: firstRow)), to: container)
+        let size = changeActions.fittingSize
+        let right = pane.scrollView.convert(NSPoint(x: pane.scrollView.bounds.maxX, y: 0), to: container).x
+        changeActions.frame = NSRect(x: right - size.width - 18, y: point.y - size.height - 1, width: size.width, height: size.height)
+        changeActions.isHidden = false
+    }
+
+    func hideChangeActions() {
+        changeActions.isHidden = true
+        hoveredChange = nil
+    }
+
+    private func requestHoveredChange(_ kind: ChangeRequest.Kind) {
+        guard let change = hoveredChange else { return }
+        hideChangeActions()
+        request(kind, lines: Array(diff.lines[change]))
+    }
+
+    private func request(_ kind: ChangeRequest.Kind, lines: [DiffLine]?) {
+        model.tellAgentAboutChange(path: path, prompt: ChangeRequest.prompt(kind, path: path, commit: spec.commit, lines: lines))
+    }
+
+    /// For a test copy, where nothing can hover: what the mouse being on this row would do.
+    func hoverForTest(row: Int) { hover(row: row, in: activePane) }
+    func requestForTest(_ kind: ChangeRequest.Kind) { requestHoveredChange(kind) }
+
+    private var menuChange: [DiffLine]?
+
+    @objc private func undoFromMenu() { request(.undo, lines: menuChange) }
+    @objc private func askFromMenu() { request(.ask, lines: menuChange) }
+    @objc private func undoFileFromMenu() { request(.undo, lines: nil) }
+
     /// With nothing selected, a comment is on the row the cursor is in.
     var reviewAnchor: ReviewAnchor? {
         var rows = selectedRows
@@ -553,6 +610,14 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
         }
         if view.selectedRange().length > 0 { add("Quote in Agent", #selector(quoteSelection)) }
         add("Add Comment", #selector(addComment))
+        let clicked = (activePane.rows.indices.contains(activePane.row(atCharacter: charIndex)) ? activePane.rows[activePane.row(atCharacter: charIndex)] : nil)
+        let chosen = selectedRows.filter { $0.kind != .hunk }
+        menuChange = !chosen.isEmpty ? chosen : clicked.flatMap { DiffHunks.change(around: $0, in: diff.lines) }.map { Array(diff.lines[$0]) }
+        if menuChange != nil {
+            add("Undo This Change", #selector(undoFromMenu))
+            add("Ask About This Change", #selector(askFromMenu))
+        }
+        add("Undo All Changes in This File", #selector(undoFileFromMenu))
         if SymbolText.word(in: view.string as NSString, at: charIndex) != nil {
             // A right-click doesn't move the cursor, and it's what was clicked that's being asked about.
             view.setSelectedRange(NSRange(location: charIndex, length: 0))
@@ -773,9 +838,77 @@ final class DiffPane {
 }
 
 /// A row's color runs the full width of the pane, past the end of the text.
+/// A word to the agent about the change under the mouse.
+final class ChangeActionsView: NSView {
+    var onUndo: (() -> Void)?
+    var onAsk: (() -> Void)?
+    private let stack = NSStackView()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        stack.spacing = 2
+        stack.edgeInsets = NSEdgeInsets(top: 2, left: 3, bottom: 2, right: 3)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        for (title, action, help) in [("Undo", #selector(undo), "Ask the agent that made this change to undo it"),
+                                      ("Ask", #selector(ask), "Ask the agent that made this change about it")] {
+            let button = NSButton(title: title, target: self, action: action)
+            button.isBordered = false
+            button.font = .systemFont(ofSize: 11)
+            button.contentTintColor = .secondaryLabelColor
+            button.toolTip = help
+            stack.addArrangedSubview(button)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    @objc private func undo() { onUndo?() }
+    @objc private func ask() { onAsk?() }
+}
+
+extension NSEvent {
+    /// Where the mouse is, in a window's coordinates, without an event to read it from.
+    static func mouseLocationInWindow(of view: NSView) -> NSPoint {
+        view.window?.mouseLocationOutsideOfEventStream ?? .zero
+    }
+}
+
 final class DiffTextView: NSTextView {
     weak var pane: DiffPane?
     var onFocus: (() -> Void)?
+    var onHoverRow: ((Int?) -> Void)?
+    private var hoverArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        guard let pane else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let row = Int((point.y - textContainerInset.height) / pane.lineHeight)
+        onHoverRow?(row >= 0 ? row : nil)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onHoverRow?(nil)
+    }
 
     /// Always in the same place. Working it out asks how much text has been laid out, each
     /// time some more is, which takes minutes on a long diff.
@@ -1342,6 +1475,7 @@ struct ChangeRow: View {
                 Button("Open File") { model.open(path: change.path, intent: .pinned); model.requestFocus() }
             }
             Button("Add to Agent") { model.addFilesToAgent([change.path]) }
+            Button("Ask Agent to Undo") { model.tellAgentAboutChange(path: change.path, prompt: ChangeRequest.prompt(.undo, path: change.path, lines: nil)) }
             Divider()
             Button("Copy Path") { Clipboard.copy(change.path) }
         }

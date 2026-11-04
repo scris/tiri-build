@@ -101,6 +101,12 @@ public enum CLIParser {
             return request("askpass", ["prompt": .string(args.joined(separator: " ")),
                                        "host": .string(ProcessInfo.processInfo.environment["TIRI_ASKPASS_HOST"] ?? "")])
 
+        case "dev-change":
+            guard args.count >= 1, let row = Int(args[0]) else { throw UsageError("usage: tiri dev-change <row> [undo|ask]   (test copies only)") }
+            var payload: [String: JSONValue] = ["row": .int(row)]
+            if args.count > 1 { payload["action"] = .string(args[1]) }
+            return request("dev.change", payload)
+
         case "dev-page":
             guard args.count == 1 else { throw UsageError("usage: tiri dev-page <script>   (test copies only)") }
             return request("dev.page", ["script": .string(args[0])])

@@ -550,6 +550,19 @@ enum ControlHandler {
                 return .object(entry)
             })
 
+        case "dev.change":
+            guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", let row = request.args["row"]?.intValue,
+                  let id = model.active.peek?.id ?? model.active.focused.active, let viewer = model.existingController(for: id) as? DiffController else {
+                throw ControlFailure("Only for a test copy, with a diff in front.")
+            }
+            viewer.hoverForTest(row: row)
+            switch request.args["action"]?.stringValue {
+            case "undo": viewer.requestForTest(.undo)
+            case "ask": viewer.requestForTest(.ask)
+            default: break
+            }
+            return .object([:])
+
         case "dev.page":
             guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", let script = request.args["script"]?.stringValue,
                   let viewer = model.frontNotebook else { throw ControlFailure("Only for a test copy.") }

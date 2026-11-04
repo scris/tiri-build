@@ -98,3 +98,30 @@ import Testing
         #expect(parts("a one two b c d e f", ranges.old) == ["one two"])
     }
 }
+
+@Suite struct ChangeRequestTests {
+    private let lines = [DiffLine(kind: .context, oldLine: 1, newLine: 1, text: "a"),
+                         DiffLine(kind: .removed, oldLine: 2, text: "b"),
+                         DiffLine(kind: .added, newLine: 2, text: "c"),
+                         DiffLine(kind: .context, oldLine: 3, newLine: 3, text: "d"),
+                         DiffLine(kind: .added, newLine: 4, text: "e")]
+
+    @Test func aChangeIsTheRunOfLinesAroundIt() {
+        #expect(DiffHunks.change(around: 1, in: lines) == 1...2)
+        #expect(DiffHunks.change(around: 2, in: lines) == 1...2)
+        #expect(DiffHunks.change(around: 4, in: lines) == 4...4)
+        #expect(DiffHunks.change(around: 0, in: lines) == nil)
+        #expect(DiffHunks.change(around: 99, in: lines) == nil)
+    }
+
+    @Test func whatTheAgentIsTold() {
+        let undo = ChangeRequest.prompt(.undo, path: "/x/a.ts", lines: Array(lines[1...2]))
+        #expect(undo.contains("undo this change in `/x/a.ts`"))
+        #expect(undo.contains("-b"))
+        #expect(undo.contains("+c"))
+        #expect(ChangeRequest.prompt(.ask, path: "/x/a.ts", lines: Array(lines[1...2])).hasPrefix("What does this change"))
+        #expect(ChangeRequest.prompt(.undo, path: "/x/a.ts", lines: nil) == "Please undo your changes to `/x/a.ts`.")
+        #expect(ChangeRequest.prompt(.undo, path: "/x/a.ts", commit: "0123456789abcdef", lines: nil).contains("from commit 0123456789"))
+    }
+}
+

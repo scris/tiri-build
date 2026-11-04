@@ -289,7 +289,7 @@ final class EditorBridge {
         return true
     }
 
-    static func realPath(_ path: String) -> String {
+    nonisolated static func realPath(_ path: String) -> String {
         // A path on a server is the one that means something to an agent there.
         if let connection = RemoteRegistry.shared.connection(forLocal: path), let remote = connection.map.remote(path) { return remote }
         guard let resolved = realpath(path, nil) else { return path }
@@ -411,6 +411,48 @@ extension AppModel {
             }
         }
         openPalette(.choices(title: question, rows: rows))
+    }
+
+    /// A word about a change goes to whichever agent made it, typed in and not yet sent. What it touched
+    /// this session says so straight away, and its turns say so after a relaunch. Failing both, you choose.
+    func tellAgentAboutChange(path: String, prompt: String) {
+        let sessions = activeAgentSessions()
+        let deliver = { [weak self] (terminal: TerminalController) in
+            self?.focusAgent(terminal)
+            terminal.send(text: AgentReference.bracketedPaste(prompt))
+        }
+        // An agent may name a file by a different route to the same place, like /tmp on a Mac.
+        let real = EditorBridge.realPath(path)
+        if let maker = sessions.first(where: { runtimes[$0.item.id]?.touched.contains { EditorBridge.realPath($0) == real } == true }) {
+            deliver(maker.terminal)
+            return
+        }
+        guard !sessions.isEmpty else {
+            if let preset = firstAgentPreset {
+                askAgent(preset: preset, prompt: prompt)
+            } else {
+                showToast(title: "No agent is running", detail: "Start one from the + button, then try again.", symbol: "sparkles", tint: .secondary)
+            }
+            return
+        }
+        let candidates = turns.reversed().filter { turn in !turn.isOpen && sessions.contains { $0.item.id == turn.item } }.prefix(12)
+        let folders = Dictionary(uniqueKeysWithValues: sessions.map { ($0.item.id, $0.workspace.folders) })
+        let snapshots = self.snapshots
+        let recent = Array(candidates)
+        Task { [weak self] in
+            let owner = await Task.detached(priority: .userInitiated) { () -> ItemID? in
+                for turn in recent where snapshots.changes(in: turn, folders: folders[turn.item] ?? []).contains(where: { EditorBridge.realPath($0.path) == real }) {
+                    return turn.item
+                }
+                return nil
+            }.value
+            guard let self else { return }
+            if let owner, let maker = self.activeAgentSessions().first(where: { $0.item.id == owner }) {
+                deliver(maker.terminal)
+                return
+            }
+            self.withAgent(asking: "Which session made this change?") { terminal, _ in deliver(terminal) }
+        }
     }
 
     /// ⌘L: the lines you've selected, or the whole file in front.
