@@ -114,6 +114,12 @@ final class PaletteModel {
         case .workspaceSymbols: refreshWorkspaceSymbols()
         }
         if !previews { endPreview() }
+        // Nothing to show is still an answer.
+        if case .commands = effectiveMode, rows.isEmpty, !query.isEmpty { note = "No command matches." }
+    }
+
+    private func noFileNote(for what: String) -> String {
+        model.active.activeItem?.filePath == nil ? "Open a file first." : "This kind of file has no \(what) to go to."
     }
 
     // MARK: Showing what's selected
@@ -157,7 +163,7 @@ final class PaletteModel {
     private func refreshGoToLine() {
         guard let target = outlineTarget() else {
             rows = []
-            note = "Open a file first."
+            note = noFileNote(for: "lines")
             return
         }
         let parts = query.dropFirst().split(separator: ":").map { Int($0.trimmingCharacters(in: .whitespaces)) }
@@ -192,7 +198,7 @@ final class PaletteModel {
     private func refreshSymbols() {
         guard let target = outlineTarget() else {
             rows = []
-            note = "Open a file first."
+            note = noFileNote(for: "symbols")
             return
         }
         if symbolsPath != target.path {
@@ -499,6 +505,7 @@ final class PaletteModel {
                 }
                 self.selection = 0
                 self.isIndexing = false
+                self.note = top.isEmpty && !files.isEmpty ? "No file matches." : nil
             }
         }
     }
