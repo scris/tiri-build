@@ -999,7 +999,9 @@ struct ToastStack: View {
                     }
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
+                    // As wide as what it says, up to a limit, with no room left over after the X.
                     .frame(maxWidth: 380, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
                     .glassEffect(.regular, in: .rect(cornerRadius: 14))
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }

@@ -1483,7 +1483,7 @@ final class LineGutter: NSView {
         }
         observers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main, using: redraw))
         observers.append(center.addObserver(forName: NSTextView.didChangeSelectionNotification, object: textView, queue: .main, using: redraw))
-        // The text view has no height until its text is laid out. Numbers drawn before that stop at the first.
+        // A text view has no height until it's laid out, and nothing else would ask for its numbers again.
         textView.postsFrameChangedNotifications = true
         observers.append(center.addObserver(forName: NSView.frameDidChangeNotification, object: textView, queue: .main, using: redraw))
     }
@@ -1522,7 +1522,10 @@ final class LineGutter: NSView {
         dirtyRect.fill()
         guard let text = textView, let layout = text.layoutManager, let container = text.textContainer else { return }
         let length = (text.string as NSString).length
-        let glyphs = layout.glyphRange(forBoundingRect: text.visibleRect, in: container)
+        // What the scroll view shows, not `visibleRect`: while a Peek grows open that's only a sliver,
+        // and the first draw is the only one that covers the numbers.
+        let shown = text.enclosingScrollView?.documentVisibleRect ?? text.visibleRect
+        let glyphs = layout.glyphRange(forBoundingRect: shown, in: container)
         let characters = layout.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
         let selectedLine = lineNumber(forCharacter: text.selectedRange().location)
         markerHits = []

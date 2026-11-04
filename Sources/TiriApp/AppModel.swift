@@ -2051,6 +2051,12 @@ final class AppModel {
 
     /// Takes the Peek's place. With `takeFocus`, a person asked. Without it, an agent is showing something.
     func peekDiff(_ spec: DiffSpec, takeFocus: Bool) {
+        // Already in a tab, like a file would be: go there rather than float a second copy over it.
+        if takeFocus, let open = active.items.first(where: { if case .diff(let other) = $0.content { other == spec } else { false } }) {
+            dismissPeek(restoreFocus: false)
+            focusItem(open.id)
+            return
+        }
         updateActive { $0.peekDiff(spec) }
         peekHasKeyboard = takeFocus
         requestFocus()
