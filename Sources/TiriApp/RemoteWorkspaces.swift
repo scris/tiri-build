@@ -338,6 +338,12 @@ final class RemoteManager {
         }
         for (key, value) in environment { lines.append("export \(key)=\(ShellQuote.quote(value))") }
         if let bin = connection.binDirectory { lines.append("export PATH=\(ShellQuote.quote(bin)):\"$PATH\"") }
+        // A program outlives the connection that brought your SSH agent, so `git push` would find it
+        // gone. So it's given a link that never moves, pointed at the live one on each connection.
+        if let run = connection.runDirectory {
+            let link = ShellQuote.quote(run + "/" + machineTag + "-agent.sock")
+            lines.append("if [ -n \"$SSH_AUTH_SOCK\" ]; then ln -sf \"$SSH_AUTH_SOCK\" \(link) && export SSH_AUTH_SOCK=\(link); fi")
+        }
         var program: [String]
         var execName: String
         let trimmed = command?.trimmingCharacters(in: .whitespaces) ?? ""

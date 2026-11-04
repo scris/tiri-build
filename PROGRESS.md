@@ -1,6 +1,6 @@
 # Progress
 
-Status of the first build against the [spec](https://claude.ai/artifact/KiXf5aQEigev1vNJFeysbb) (v0.3).
+Status against the [spec](https://claude.ai/artifact/KiXf5aQEigev1vNJFeysbb).
 
 All of milestones M0 to M8 are built. The work is one commit, not one per milestone, because the milestones were built together and then hardened by testing; splitting it afterwards would have invented a history.
 
@@ -13,6 +13,8 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - Real folders, read-only, at their true paths: `~/ai-hotpoints-2026`, `~/nvcm-agent`, `~/mgx-dev`, `~/Documents/tiri`, and the real `seenot-web.code-workspace` in `~/Documents`, after you allowed access. No prompt appeared.
 - Dark mode on every viewer, on a virtual display, with real PDF, PowerPoint, Excel (51 MB) and Word files as temporary copies. Measured brightness in the content area confirms dark, light, and switching live both ways.
 - Real project contents, as copies with the same relative layout: `seenot-web.code-workspace` and its three folders, plus Office, PDF, HEIC, video and other files.
+
+- SSH workspaces, with `scripts/e2e-remote.sh` and by hand, against real servers: Ubuntu 24.04 on x86-64 on Google Cloud (also through a jump host), Alpine with busybox and no bash on ARM with forwarding forbidden, and Ubuntu on ARM with fish as the login shell and `MaxSessions 3`. Includes a real 45-second packet blackhole with `iptables`, killing the connection under a running program, quitting Tiri under one, the Linux kernel's 97,000 files, clangd running there, real Claude Code's first-run screens, and real clicks and keys through the unknown-host, passphrase, ⌘-click, save and paste flows.
 
 ### Not verified yet
 
@@ -36,11 +38,18 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 | A `codex exec` inside a Claude terminal | Covered by unit tests only, to avoid a real Codex run | Ask a Claude session to run one, then check `tiri items` |
 | Fetch, pull and push against a real remote | Tested with a local bare repository, so no real remote changed. SSH keys, the keychain and push hooks are unproven from the app | Fetch in a real repository, then push something you mean to |
 | Clicking the status bar's buttons | Clicks don't reach an unfocused window, so tested through the palette commands, which run the same code. The confirmation's buttons had real presses through accessibility | Click the arrows and the `↓` and `↑` counts |
+| A real agent's conversation on a server | Testing Claude Code on a server needs your account on it, and credentials weren't copied there. Its screens render, its editor-protocol socket was exercised by a stand-in client with the real token and lock file, and hooks with documented payloads | Connect to a server where you're logged in, run `claude`, and try `/ide`, a Quote in Agent and a turn |
+| A Mac as the server | The helper is built and its commands were run on this Mac, but no full session against Remote Login | Connect to a Mac |
+| A password rather than a key, and one-time codes | Passphrases and unknown hosts had real keystrokes. Passwords and codes go through the same prompt | Connect to a host that asks |
+| Waking from real sleep on a server workspace | Dropped connections are tested, and wake triggers the same retry, but the Mac was kept awake | Close the lid, open it |
+| Quote in Agent from a notebook with a real agent | Tested with a stand-in command | Select in a notebook, press ⌘L with Claude Code running |
+| Wheel scrolling in two columns, the pointer over a mark, ⌘-hover in the left column | Tested with real clicks and keys, but not a real scroll or hover | Scroll a side-by-side diff; hold ⌘ over a name on its left |
 | Reduce Transparency, Increase Contrast | Left to the system's glass, as the spec asks, but not exercised | Turn them on in Accessibility settings |
 | Terminal translucency setting | Implemented, not looked at | Set `terminal.translucent` |
 
 ## What works
 
+- **Servers:** Connect to Server, `tiri remote`, and importing Cursor's Remote-SSH `.code-workspace` files. A folder on a server is a workspace like any other: tree, quick open, ⌘-click, Peek, Changes, search, go to definition, language servers, comments and agents. Programs survive dropped connections and quitting, saves wait for the connection, ports forward on demand, pasted files are sent over, and `tiri` in a terminal there reaches only that server's workspaces. Works with forwarding forbidden, except for port forwarding and the editor protocol. Other systems get terminals and files without surviving a dropped connection.
 - **Workspaces:** create, rename, delete, switch (sidebar and ⌃1…⌃9), add and remove folders, persist and restore, import `.code-workspace`.
 - **File tree:** multi-root, lazy, live updates, preview and pinned opens, reveal, context menu, inline new and rename, Trash, Cursor's keys.
 - **Terminal:** login shell with your aliases, truecolor, full-screen TUIs, cwd tracking, presets, exit bar with Restart.
@@ -54,6 +63,9 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Go to definition:** ⌘-click or F12 in a file or diff floats the definition as a Peek, with Back. ⇧F12 finds uses. Found by searching the workspace when there's no language server.
 - **Language servers:** finds the servers on this Mac and starts them when a file has been looked at for a moment. Hover, definition, references and diagnostics. Diagnostics reach Claude through `getDiagnostics`, any agent through `tiri diagnostics`, and diffs for the lines they added.
 - **Changes:** a sidebar section and diff items in the main window, live, in tabs and Peeks, with `tiri changes` and `tiri diff`. Read-only: no staging or committing.
+- **Reviewing commits:** Changes also shows This Branch, which names its base, and Recent Commits, with `tiri changes --branch`, `--commit`, and `tiri log`. Handles root commits, merges, empty branches, detached HEAD, no commits, renames and binary files.
+- **Diff viewer:** inline or side by side (`diff.sideBySide`), changed words highlighted, images before and after, F7 and ⇧F7. Tens of thousands of changed lines stay responsive.
+- **Gutter marks and explorer decorations:** bars against HEAD beside the line numbers, click to float the change. M and U letters and tints in the tree, a dot on folders.
 - **Per-turn diffs:** snapshots at the start and end of each agent turn, kept outside the repository, so Changes can show what one turn did. `tiri turns` for agents.
 - **Fetch, pull and push:** a bar along the bottom of the window with each repository's branch, uncommitted marker and commits to pull and push, plus Fetch, Pull (fast-forward only), Push (asks first) and Publish, and `tiri git`. No merging, no force push, no automatic fetch.
 - **Path search:** a path that doesn't exist as written is searched for across the workspace's folders, its terminals' folders and its open files. One match opens, several offer a choice, none shows a toast. Never an alert.
@@ -62,7 +74,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 - **Agent attention:** status on the tab, item list and workspace switcher, toasts, dock badge, jump to next (⌘⇧U), hooks, fallback estimate when there are no hooks.
 - **Session restore:** layout, cwd and terminals. Agents resume. Other commands wait typed at the prompt, so nothing like `./deploy.sh` re-runs by itself.
 - **Dark mode:** every viewer. PDF, Office, iWork, RTF, font and web archive pages are inverted with their colors kept, with a moon button for true colors. Black artwork on transparency gets a light plate.
-- **Viewers:** markdown (rendered and source), code with light highlighting, images (HEIC, GIF), SVG, PDF, audio, video, HTML, CSV and TSV, Office and iWork through Quick Look, Quick Look for everything else. All reload when the file changes.
+- **Viewers:** markdown (rendered and source, with math and Mermaid), Jupyter notebooks (rendered and source), code with light highlighting, images (HEIC, GIF), SVG, PDF (keeps page and zoom on reload), audio, video, HTML, CSV and TSV of any size, Office and iWork through Quick Look, Quick Look for everything else. All reload when the file changes. A `.tex` file offers its PDF to the side.
 - **Web:** address bar, back, forward, reload, auto-reload for local files, forced dark.
 - **Control API and CLI:** everything in spec §5, plus `send`, `read`, `layout`, `tree`, `commands`, `run`, `perf`, `hook`, `hooks`.
 - **Navigation:** quick open, command palette, all §6 keybindings, chords, breadcrumbs, find, tab drag and drop.
@@ -72,7 +84,8 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 
 - Find doesn't cover images, video or Quick Look files. Web and markdown find has no match count.
 - One main window. Any tab can move to its own window, but a second window can't hold its own workspace. A second instance can't take the control socket and says so.
-- `TerminalBackend` and `FileSystemProviding` exist for SSH later, each with only a local implementation.
+- Notebook outputs that need scripts (Plotly, widgets) show a picture if they have one, or a note. The Source button on a very large notebook can stall for seconds.
+- A server: a workspace is on one server, not several, and not a mixture with local folders. Agents can't be told apart between two Macs on one server's Claude settings. If the connection comes back on another forwarded port, an agent already running there needs `/ide` to find the editor again.
 
 ## Performance (spec §9)
 
@@ -103,6 +116,9 @@ Open times run from the request until the content is showing, except for Office 
 - Multi-line link context isn't handled, such as a `16:5` under a path line from ripgrep.
 - Hard-wrap joining for paths is a heuristic, and hasn't been seen against a long real path from Claude.
 - Tiri shows `.env` files in the tree like any other file, as Cursor does.
+- macOS autocorrect can change words typed in the comment box.
+- The first jump to the end of a very long diff lays out everything before it: about a second at 46,000 rows, longer at 180,000.
+- A 4.9 MB markdown file with 46,000 headings takes about 3.7 s to build, off the main thread. A 2,000-formula document takes about 1.3 s.
 
 ## Decisions: deviations from Cursor
 
@@ -114,6 +130,8 @@ Open times run from the request until the content is showing, except for Office 
 | Split duplicates the editor | Files and web pages duplicate; a terminal starts a new terminal in the same folder | A process can't be in two places |
 | ⌘W with nothing open closes the window | Does nothing | Closing the window would stop every terminal in every workspace |
 | Bottom terminal panel | None; terminals are tabs | Spec principle 1 |
+| Remote-SSH downloads a full server to the host, which shuts down 5 minutes after you disconnect (`remote.SSH.serverShutdownTimeout`) | One static file of about 90 KB and OpenSSH. Programs keep running until their tab closes | An agent's work shouldn't depend on a laptop's lid |
+| Deleting moves to the Trash | On a server it deletes, after saying so | There's no Trash there to move it to |
 | Opens a terminal in your home folder if no folder is open | Asks for a folder first; first launch starts nothing | An agent started in the wrong folder does real work in the wrong place |
 | Root row only with several folders | Always a root row | Spec: one section per folder |
 | Compact folders on by default | Not implemented | Not in v0.1 scope; see next tasks |
