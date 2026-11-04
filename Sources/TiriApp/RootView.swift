@@ -63,7 +63,7 @@ struct MainToolbar: ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             // One button, one menu. Its size and shape match the buttons beside it.
             Menu {
-                ForEach(model.settings.terminalPresets) { preset in
+                ForEach(model.settings.activePresets) { preset in
                     if model.active.folders.count > 1 {
                         Menu(preset.name) {
                             ForEach(model.active.folders, id: \.self) { folder in
@@ -74,6 +74,8 @@ struct MainToolbar: ToolbarContent {
                         Button(preset.name) { model.startTerminal(command: preset.command) }
                     }
                 }
+                Divider()
+                Button("Manage Agents…") { model.openAgentSettings() }
             } label: {
                 Label("New Terminal", systemImage: "plus")
             }
@@ -456,23 +458,31 @@ struct EmptyGroupView: View {
     }
 
     private var start: some View {
+        let noneOn = model.agentPresets().isEmpty
         let noAgents = model.availableCommands != nil && model.runnableAgentPresets().isEmpty
         return VStack(spacing: 16) {
             VStack(spacing: 4) {
-                Text(noAgents ? "No agents found" : "Start an agent")
+                Text(noneOn ? "No agents are on" : (noAgents ? "No agents found" : "Start an agent"))
                     .font(.title3.weight(.semibold))
-                Text(noAgents
+                Text(noneOn
+                     ? "Turn on the ones you use, and they'll be here."
+                     : noAgents
                      ? "Tiri works with the CLI agents you already use, and your shell can't find one yet. Once you've installed one, it appears here."
                      : "Choose the folder it works in, and it starts there.")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 380)
             }
-            if noAgents {
+            if noneOn {
+                Button("Choose Agents…") { model.openAgentSettings() }
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.large)
+            } else if noAgents {
+                // Only the ones you've kept on are worth pointing you at.
                 HStack(spacing: 18) {
-                    ForEach(AgentCatalog.all) { agent in
-                        if let url = URL(string: agent.website) {
-                            Link("Get \(agent.title)", destination: url)
+                    ForEach(model.agentEntries.filter(\.isEnabled)) { entry in
+                        if let website = entry.profile?.website, let url = URL(string: website) {
+                            Link("Get \(entry.name)", destination: url)
                         }
                     }
                 }

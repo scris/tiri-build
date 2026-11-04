@@ -1923,9 +1923,7 @@ final class AppModel {
         let adopted = AgentCatalog.adopting(into: settings.terminalPresets, resume: settings.terminalResume, known: known)
         UserDefaults.standard.set(adopted.known.sorted(), forKey: key)
         if adopted.presets != settings.terminalPresets {
-            _ = setSetting("terminal.presets", to: .array(adopted.presets.map { preset in
-                .object(["name": .string(preset.name), "command": .string(preset.command)])
-            }))
+            _ = setSetting("terminal.presets", to: TerminalPreset.json(adopted.presets))
         }
         if adopted.resume != settings.terminalResume {
             _ = setSetting("terminal.resume", to: .object(adopted.resume.mapValues(JSONValue.string)))
@@ -1963,7 +1961,7 @@ final class AppModel {
     /// Once, the first time an agent runs without hooks. Dismissing it is an answer.
     func offerHooksIfNeeded(_ tool: AgentHooks.Tool) {
         let key = "offeredHooks.\(tool.rawValue)"
-        guard tool.profile?.hookInstall != nil, !UserDefaults.standard.bool(forKey: key), !hooksInstalled(tool), hooksCoverage(tool) == nil else { return }
+        guard tool.profile?.hookInstall != nil, isAgentEnabled(tool), !UserDefaults.standard.bool(forKey: key), !hooksInstalled(tool), hooksCoverage(tool) == nil else { return }
         UserDefaults.standard.set(true, forKey: key)
         showToast(title: "Get exact status from \(tool.title)?", detail: "Right now Tiri is estimating when it's working or done.",
                   symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up") { [weak self] in
@@ -1979,7 +1977,7 @@ final class AppModel {
     private var isLookingUpCommands = false
 
     func agentPresets() -> [TerminalPreset] {
-        settings.terminalPresets.filter { !$0.command.isEmpty }
+        settings.activePresets.filter { !$0.command.isEmpty }
     }
 
     static func tool(of preset: TerminalPreset) -> String {
@@ -1998,7 +1996,8 @@ final class AppModel {
     /// Called while the screen that needs it is up, including on coming back from installing one.
     func refreshAvailableCommands() {
         guard !isLookingUpCommands else { return }
-        let names = agentPresets().map(Self.tool(of:)) + ["tiri"]
+        // Those turned off too, so turning one on already knows whether it's there.
+        let names = agentEntries.map(\.id) + ["tiri"]
         if let availableCommands, availableCommands.isSuperset(of: names) { return }
         isLookingUpCommands = true
         let shell = settings.terminalShell.isEmpty

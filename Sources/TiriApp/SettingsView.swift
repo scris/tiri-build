@@ -24,10 +24,20 @@ struct SettingsView: View {
 
     private var visible: [SettingDefinition] {
         let text = query.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return SettingsSchema.all }
-        return SettingsSchema.all.filter {
+        // The agents table above shows these, each on its agent's own row.
+        let listed = SettingsSchema.all.filter { !["terminal.presets", "terminal.resume"].contains($0.key) }
+        guard !text.isEmpty else { return listed }
+        return listed.filter {
             [$0.title, $0.explanation, $0.section, $0.key].contains { $0.localizedCaseInsensitiveContains(text) }
         }
+    }
+
+    /// Searching for an agent's name, or for agents, should find them.
+    private var showsAgents: Bool {
+        let text = query.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return true }
+        let words = ["agents", "hooks", "status", "resume", "menu", "presets"] + model.agentEntries.flatMap { [$0.name, $0.command] }
+        return words.contains { $0.localizedCaseInsensitiveContains(text) }
     }
 
     static let shortcutsAnchor = "keyboard-shortcuts"
@@ -52,10 +62,11 @@ struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
                 let shown = visible
                 let commands = visibleCommands
-                if shown.isEmpty, commands.isEmpty {
+                if shown.isEmpty, commands.isEmpty, !showsAgents {
                     Text("No settings match \u{201C}\(query)\u{201D}.")
                         .foregroundStyle(.secondary)
                 }
+                if showsAgents { AgentsSection() }
                 ForEach(SettingsSchema.sections, id: \.self) { section in
                     let rows = shown.filter { $0.section == section }
                     if !rows.isEmpty {
@@ -73,7 +84,6 @@ struct SettingsView: View {
                     }
                 }
                 if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                    AgentHooksSection()
                     LanguageServersSection()
                     CommandLineSection()
                 }
@@ -136,7 +146,8 @@ struct AskAgentCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
             HStack(spacing: 8) {
-                ForEach(model.settings.terminalPresets.filter { !$0.command.isEmpty }) { preset in
+                // Only ones that can start: asking one that isn't there would just fail.
+                ForEach(model.runnableAgentPresets()) { preset in
                     Button("Ask \(preset.name)") {
                         model.askAgentAboutSettings(preset: preset)
                     }
@@ -235,40 +246,6 @@ struct SettingRow: View {
                         pairs: value.objectValue.sorted { $0.key < $1.key }.map { ($0.key, $0.value.stringValue ?? "") }) { pairs in
                 set(.object(Dictionary(pairs.map { ($0.0, JSONValue.string($0.1)) }, uniquingKeysWith: { _, last in last })))
             }
-        }
-    }
-}
-
-struct AgentHooksSection: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Agent Status").font(.headline)
-            VStack(spacing: 0) {
-                ForEach(Array(AgentHooks.Tool.allCases.enumerated()), id: \.element) { index, tool in
-                    if index > 0 { Divider() }
-                    let installed = model.hooksInstalled(tool)
-                    HStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(tool.title)
-                            Text(!installed && model.hooksCoverage(tool) != nil
-                                 ? "Reports through your \(model.hooksCoverage(tool)?.title ?? "") hooks, which it runs too. It asks you to trust a folder before they do."
-                                 : installed
-                                 ? "Reports exactly when it's working, waiting for you or done, and resumes the right conversation."
-                                 : "Tiri is estimating its status from terminal activity. A hook makes it exact.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        Button(installed ? "Remove" : "Install…") { model.confirmHooks(tool, install: !installed) }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                }
-            }
-            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
         }
     }
 }

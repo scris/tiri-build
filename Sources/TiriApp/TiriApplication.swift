@@ -95,9 +95,11 @@ struct TiriMenus: Commands {
         CommandGroup(replacing: .newItem) {
             item("newTerminal")
             Menu("New Terminal Preset") {
-                ForEach(model.settings.terminalPresets) { preset in
+                ForEach(model.settings.activePresets) { preset in
                     Button(preset.name) { model.startTerminal(command: preset.command) }
                 }
+                Divider()
+                Button("Manage Agents…") { model.openAgentSettings() }
             }
             Divider()
             item("newWorkspace")

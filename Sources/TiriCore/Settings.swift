@@ -12,10 +12,22 @@ public enum LinkOpenTarget: String, Codable, Sendable {
 public struct TerminalPreset: Codable, Equatable, Sendable, Identifiable {
     public var name: String
     public var command: String
+    /// Off keeps it in the list, and out of everything that offers agents.
+    public var isEnabled: Bool
     public var id: String { name }
-    public init(name: String, command: String) {
+    public init(name: String, command: String, isEnabled: Bool = true) {
         self.name = name
         self.command = command
+        self.isEnabled = isEnabled
+    }
+
+    /// As settings store it. Being on is the usual case, and isn't written down.
+    public static func json(_ presets: [TerminalPreset]) -> JSONValue {
+        .array(presets.map { preset in
+            var object: [String: JSONValue] = ["name": .string(preset.name), "command": .string(preset.command)]
+            if !preset.isEnabled { object["enabled"] = false }
+            return .object(object)
+        })
     }
 }
 
@@ -30,6 +42,8 @@ public struct TiriSettings: Equatable, Sendable {
     public var terminalShell = ""
     public var terminalPresets = AgentCatalog.defaultPresets
     public var terminalResume = AgentCatalog.defaultResume
+    /// What Tiri offers: everything else that asks about agents goes through this.
+    public var activePresets: [TerminalPreset] { terminalPresets.filter(\.isEnabled) }
     public var terminalRestoreWithResume = true
     public var terminalKeepRunning = true
     public var perTurnDiffs = true
@@ -173,7 +187,7 @@ public struct TiriSettings: Equatable, Sendable {
                 guard let name = entry["name"] as? String else {
                     throw ParseError.wrongType(key: "terminal.presets", expected: "a list of { name, command }")
                 }
-                return TerminalPreset(name: name, command: entry["command"] as? String ?? "")
+                return TerminalPreset(name: name, command: entry["command"] as? String ?? "", isEnabled: entry["enabled"] as? Bool ?? true)
             }
         }
         if let value = object["terminal.resume"] {

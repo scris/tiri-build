@@ -70,9 +70,9 @@ public enum SettingsSchema {
               value: { .string($0.terminalLinkOpens.rawValue) }),
 
         .init(key: "terminal.presets", section: "Agents", title: "New terminal menu",
-              explanation: "What the + button offers. Each entry is a name and the command it runs.",
+              explanation: "What the + button offers. Each entry is a name and the command it runs. Adding `\"enabled\": false` keeps an entry but hides it. `tiri agents` is the easy way to change this.",
               kind: .presets,
-              value: { .array($0.terminalPresets.map { .object(["name": .string($0.name), "command": .string($0.command)]) }) }),
+              value: { TerminalPreset.json($0.terminalPresets) }),
         .init(key: "changes.perTurn", section: "Agents", title: "Remember what each turn changed",
               explanation: "Take a snapshot when an agent starts and stops, so Changes can show one turn. They stay in Tiri's folder for a week, and nothing changes in your repository.",
               kind: .toggle, value: { .bool($0.perTurnDiffs) }),
@@ -211,7 +211,7 @@ public enum SettingsSchema {
     Help me with my Tiri settings and keyboard shortcuts using the tiri CLI. Run `tiri settings explain` to see every \
     setting, its current value and what it does, and `tiri keys` to see every command and its shortcut. Tell me in plain \
     words what's worth changing for how I work. When I ask for a change, make it with `tiri settings set <key> <value>` \
-    or `tiri keys set <command> <key>`. Don't edit any settings file.
+    or `tiri keys set <command> <key>`. Turn agents on and off with `tiri agents`. Don't edit any settings file.
     """
 
     public static func agentPrompt(about definition: SettingDefinition) -> String {

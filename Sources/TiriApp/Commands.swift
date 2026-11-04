@@ -84,6 +84,7 @@ extension AppModel {
                 if let id = model.active.focused.active { model.bringBack(id) }
             },
             AppCommand(id: "saveFile", title: "Save", category: "File") { $0.saveFront() },
+            AppCommand(id: "manageAgents", title: "Manage Agents…", category: "Agent") { $0.openAgentSettings() },
             AppCommand(id: "addToAgent", title: "Add to Agent", category: "Agent") { $0.addFrontToAgent() },
             AppCommand(id: "attachToAgent", title: "Add Files or Images to Agent…", category: "Agent") { $0.chooseFilesForAgent() },
             AppCommand(id: "addReviewComment", title: "Review: Add Comment", category: "Agent") { $0.beginReviewComment() },
@@ -132,9 +133,14 @@ extension AppModel {
     /// Static commands plus the ones that depend on what's in the app right now.
     var allCommands: [AppCommand] {
         var list = Self.staticCommands
-        for preset in settings.terminalPresets where !preset.command.isEmpty {
+        for preset in settings.activePresets where !preset.command.isEmpty {
             list.append(AppCommand(id: "newTerminal:\(preset.name)", title: "New Terminal: \(preset.name)", category: "Terminal") {
                 $0.startTerminal(command: preset.command)
+            })
+        }
+        for entry in agentEntries {
+            list.append(AppCommand(id: "agent:\(entry.id)", title: "Agents: Turn \(entry.isEnabled ? "Off" : "On") \(entry.name)", category: "Agent") {
+                $0.setAgent(entry.id, enabled: !entry.isEnabled)
             })
         }
         for workspace in workspaces where workspace.id != activeID {
@@ -620,6 +626,25 @@ enum ControlHandler {
                 if let upstream = repository.upstream { object["upstream"] = .string(upstream) }
                 return .object(object)
             })
+
+        case "agents.list":
+            return .array(model.agentEntries.map { entry in
+                .object(["id": .string(entry.id), "name": .string(entry.name), "command": .string(entry.command),
+                         "state": .string(entry.isEnabled ? "on" : "off"), "custom": .bool(entry.isCustom)])
+            })
+
+        case "agents.set":
+            guard let on = request.args["on"]?.boolValue else { throw ControlFailure("Missing argument \"on\"") }
+            if let problem = model.setAgent(try string(request, "agent"), enabled: on) { throw ControlFailure(problem) }
+            return .object([:])
+
+        case "agents.add":
+            if let problem = model.addAgent(name: try string(request, "name"), command: try string(request, "command")) { throw ControlFailure(problem) }
+            return .object([:])
+
+        case "agents.remove":
+            if let problem = model.removeAgent(try string(request, "agent")) { throw ControlFailure(problem) }
+            return .object([:])
 
         case "languages":
             let roots = model.active.folders.map(Git.real)

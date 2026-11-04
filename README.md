@@ -178,13 +178,17 @@ Without hooks, Tiri estimates status from terminal activity, which is less preci
 
 A `claude -p` run doesn't report, whether a session or a script started it, so it can't change the tab's status or which conversation comes back after a relaunch. Neither can one agent running inside another's terminal.
 
-**Turning them on:** Settings has an Agent Status section with an Install button for each agent, and Tiri offers the first time it sees one run. Your agent can start it too, with `tiri hooks install claude`. Either way Tiri shows what it will add and waits for your yes. It keeps your other hooks and settings, leaves a copy of the file next to it, and can remove its entries again.
+**Turning them on:** Each agent in Settings has an Install button, and Tiri offers the first time it sees one run. Your agent can start it too, with `tiri hooks install claude`. Either way Tiri shows what it will add and waits for your yes. It keeps your other hooks and settings, leaves a copy of the file next to it, and can remove its entries again.
 
 Outside Tiri these hooks do nothing and print nothing, so they're safe to leave on. Codex asks you to trust hooks once, in `/hooks`. Grok asks you to trust each folder before it runs any hooks. Grok also runs the hooks in your Claude Code settings by default, so if those are on, it already reports. Its Install button adds a file of Tiri's own at `~/.grok/hooks/tiri.json` and changes nothing of yours, for when you've turned that off.
 
-## Other agents
+## Your agents
 
-Tiri isn't tied to these three. Add any program to the New Terminal menu in Settings, under Agents, and you can hand it lines, files, review comments and problems from Tiri, as plain text it can read. What it can't do without more is report its status exactly or resume a conversation by its ID.
+There's one list of agents, at the top of Settings, or through **Manage Agents…** in the + menu. Switch off the ones you don't use. If you only use Claude Code, only Claude Code appears in the + menu, on a new workspace, in the Ask buttons and in the command palette. Turn Grok on and it appears in all of them straight away, because they all read the one list. Your agent can do the same with `tiri agents off codex`.
+
+Turning one off only stops Tiri offering it. Sessions already running carry on, and you can still hand them things.
+
+Tiri isn't tied to these three either. Press **Add an Agent** and give it any command, and you can hand it lines, files, review comments and problems from Tiri, as plain text it can read. One you added can be deleted. What it can't do without more is report its status exactly or resume a conversation by its ID, though you can give it a resume command.
 
 Supporting one fully takes one entry in `AgentCatalog` (`Sources/TiriCore/Agents.swift`), which says how to recognize it, write a mention, resume it, install hooks and read their payloads. Everything else reads from there.
 

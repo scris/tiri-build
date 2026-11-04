@@ -125,6 +125,24 @@ public enum CLIParser {
             guard args.isEmpty else { throw UsageError("usage: tiri languages") }
             return request("languages")
 
+        case "agents":
+            let usage = "usage: tiri agents [on <agent> | off <agent> | add <name> <command> | remove <agent>]"
+            switch args.first {
+            case nil:
+                return request("agents.list")
+            case "on", "off":
+                guard args.count == 2 else { throw UsageError(usage) }
+                return request("agents.set", ["agent": .string(args[1]), "on": .bool(args[0] == "on")])
+            case "add":
+                guard args.count >= 3 else { throw UsageError(usage) }
+                return request("agents.add", ["name": .string(args[1]), "command": .string(args[2...].joined(separator: " "))])
+            case "remove":
+                guard args.count == 2 else { throw UsageError(usage) }
+                return request("agents.remove", ["agent": .string(args[1])])
+            default:
+                throw UsageError(usage)
+            }
+
         case "git":
             guard args.isEmpty else { throw UsageError("usage: tiri git") }
             return request("git")
@@ -427,6 +445,8 @@ public enum CLIParser {
                                    (comments waiting to go to an agent, all at once)
       tiri diagnostics [<path> ...]   (errors and warnings; without paths, in files changed since the last commit)
       tiri languages               (which language servers Tiri can find)
+      tiri agents [on <agent> | off <agent> | add <name> <command> | remove <agent>]
+                                   (which agents Tiri offers, everywhere it offers them)
       tiri follow <item-id> <row> <col>   (what ⌘-click does, on a terminal's path or a file's name)
       tiri quit                    (terminals keep running, and Tiri comes back to them)
       tiri keys [set <command> <key> | unset <command> | reset <command>]
@@ -687,6 +707,16 @@ public enum AgentGuide {
     tiri settings set <key> <value>       # for example: tiri settings set code.wordWrap on
     tiri settings reset <key>
     tiri settings open                    # open the settings screen for the user
+    ```
+
+    Which agents Tiri offers is one list, used everywhere it offers them:
+
+    ```sh
+    tiri agents                           # each agent, and whether it's on
+    tiri agents off codex                 # stops offering it. Running sessions carry on
+    tiri agents on grok
+    tiri agents add Aider "aider --yes"   # anything can be an agent
+    tiri agents remove Aider              # one of Tiri's own is only turned off
     ```
 
     Keyboard shortcuts work the same way:

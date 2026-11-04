@@ -121,6 +121,12 @@ case "diagnostics":
     let count = response.result?["problems"]?.arrayValue?.count ?? 0
     print("\(count) \(count == 1 ? "problem" : "problems") in \(checked) \(checked == 1 ? "file" : "files").")
     if !uncovered.isEmpty { print("No language server answered for: \(uncovered.joined(separator: ", "))") }
+case "agents.list":
+    for entry in response.result?.arrayValue ?? [] {
+        print([cell(entry["state"]), cell(entry["name"]), cell(entry["command"])].joined(separator: "\t"))
+    }
+case "agents.set", "agents.add", "agents.remove":
+    break
 case "languages":
     for entry in response.result?.arrayValue ?? [] {
         print([cell(entry["language"]), cell(entry["state"]), cell(entry["path"])].joined(separator: "\t"))
