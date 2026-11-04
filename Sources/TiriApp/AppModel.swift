@@ -110,6 +110,10 @@ final class AppModel {
     var changesScope: ChangesScope = .sinceCommit
     var turnChanges: [ChangedFile] = []
     @ObservationIgnored var turnChangesInFlight = false
+    /// For the scopes that aren't a turn: what each repository is compared with, and the commit list.
+    var branchBases: [BranchBase] = []
+    var recentCommits: [CommitSummary] = []
+    var scopeIsLoading = false
     @ObservationIgnored let snapshots = TurnSnapshots()
     @ObservationIgnored let turnStore = TurnStore()
     var navigationStops: [NavigationStop] = []
@@ -1686,6 +1690,7 @@ final class AppModel {
             changesWorkspace = activeID
             changes = []
             turnChanges = []
+            recentCommits = []
             changesScope = .sinceCommit
             repositories = []
             repositoryTokens = [:]
@@ -1718,7 +1723,7 @@ final class AppModel {
                 guard let self else { return }
                 self.changesInFlight = false
                 self.refreshReviewLines()
-                self.refreshTurnChanges()
+                self.refreshScopedChanges()
                 if self.activeID == workspace { self.barHasRepositories = !repositories.isEmpty }
                 if self.activeID == workspace, self.changes != found { self.changes = found }
                 if self.activeID == workspace, self.repositories != repositories {

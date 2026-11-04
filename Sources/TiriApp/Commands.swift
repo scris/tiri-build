@@ -110,6 +110,8 @@ extension AppModel {
             AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
             AppCommand(id: "changesSinceCommit", title: "Changes: Since Last Commit", category: "View") { $0.setChangesScope(.sinceCommit) },
             AppCommand(id: "changesLatestTurn", title: "Changes: Latest Turn", category: "View") { $0.setChangesScope(.latestTurn) },
+            AppCommand(id: "changesBranch", title: "Changes: This Branch", category: "View") { $0.setChangesScope(.branch) },
+            AppCommand(id: "changesRecentCommits", title: "Changes: Recent Commits", category: "View") { $0.setChangesScope(.recentCommits) },
             AppCommand(id: "nextChange", title: "Go to Next Change", category: "Go") { $0.goToChange(forward: true) },
             AppCommand(id: "previousChange", title: "Go to Previous Change", category: "Go") { $0.goToChange(forward: false) },
             AppCommand(id: "toggleDiffSideBySide", title: "Diff: Side by Side", category: "View") { model in

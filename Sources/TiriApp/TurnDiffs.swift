@@ -92,33 +92,86 @@ extension AppModel {
         changesScope == .sinceCommit ? changes : turnChanges
     }
 
+    /// How many rows the Changes section is listing, whatever they are.
+    var visibleChangesCount: Int {
+        if case .recentCommits = changesScope { return recentCommits.count }
+        return visibleChanges.count
+    }
+
     /// What a diff opened from the list should show.
     func diffSpecForScope(path: String) -> DiffSpec {
-        DiffSpec(path: path, turn: scopedTurn?.id)
+        switch changesScope {
+        case .branch: DiffSpec(path: path, branch: true)
+        case .commit(let commit): DiffSpec(path: path, commit: commit.oid)
+        default: DiffSpec(path: path, turn: scopedTurn?.id)
+        }
+    }
+
+    var emptyChangesText: String {
+        switch changesScope {
+        case .sinceCommit: "No changes since the last commit."
+        case .latestTurn, .turn: "This turn didn't change any files."
+        case .branch: branchBases.count == 1 ? branchBases[0].emptyDescription : "Nothing changed."
+        case .recentCommits: "No commits yet."
+        case .commit: "This commit didn't change any files here."
+        }
     }
 
     func setChangesScope(_ scope: ChangesScope) {
         changesScope = scope
         turnChanges = []
-        refreshChanges()
+        branchBases = []
+        scopeIsLoading = true
+        refreshScopedChanges()
     }
 
-    /// Looked at along with everything else that compares against the files.
-    func refreshTurnChanges() {
-        guard let turn = scopedTurn else {
+    /// Looked at along with everything else that compares against the files. A commit doesn't
+    /// change, so once is enough. The list of commits can, and a branch's files can too.
+    func refreshScopedChanges() {
+        let scope = changesScope
+        if scope == .sinceCommit {
+            scopeIsLoading = false
             if !turnChanges.isEmpty { turnChanges = [] }
             return
+        }
+        if case .commit = scope, !scopeIsLoading { return }
+        let turn = scopedTurn
+        switch scope {
+        case .latestTurn, .turn:
+            guard turn == nil else { break }
+            scopeIsLoading = false
+            if !turnChanges.isEmpty { turnChanges = [] }
+            return
+        default:
+            break
         }
         guard !turnChangesInFlight else { return }
         turnChangesInFlight = true
         let snapshots = self.snapshots
         let folders = active.folders
         Task.detached(priority: .userInitiated) { [weak self] in
-            let found = snapshots.changes(in: turn, folders: folders)
+            var files: [ChangedFile] = []
+            var bases: [BranchBase] = []
+            var commits: [CommitSummary] = []
+            switch scope {
+            case .sinceCommit: break
+            case .latestTurn, .turn: if let turn { files = snapshots.changes(in: turn, folders: folders) }
+            case .branch: (bases, files) = Git.branchChanges(in: folders)
+            case .recentCommits: commits = Git.recentCommits(in: folders)
+            case .commit(let commit): files = Git.commitChanges(commit.oid, root: commit.root, in: folders)
+            }
             await MainActor.run {
                 guard let self else { return }
                 self.turnChangesInFlight = false
-                if self.scopedTurn?.id == turn.id, self.turnChanges != found { self.turnChanges = found }
+                // Someone chose something else while this was looking.
+                guard self.changesScope == scope else {
+                    self.refreshScopedChanges()
+                    return
+                }
+                self.scopeIsLoading = false
+                if self.turnChanges != files { self.turnChanges = files }
+                if self.branchBases != bases { self.branchBases = bases }
+                if self.recentCommits != commits, case .recentCommits = scope { self.recentCommits = commits }
             }
         }
     }
@@ -160,7 +213,7 @@ extension AppModel {
     }
 }
 
-/// Choose between everything since the last commit and one agent's turn.
+/// Choose what Changes shows: everything since the last commit, this branch, a commit or one agent's turn.
 struct ChangesScopeMenu: View {
     @Environment(AppModel.self) private var model
 
@@ -169,14 +222,21 @@ struct ChangesScopeMenu: View {
         case .sinceCommit: "Since commit"
         case .latestTurn: "Latest turn"
         case .turn: "One turn"
+        case .branch: "This branch"
+        case .recentCommits: "Recent commits"
+        case .commit(let commit): commit.shortOID
         }
     }
 
     var body: some View {
         Menu {
             scopeButton("Since Last Commit", .sinceCommit)
-            scopeButton("Latest Turn", .latestTurn)
+            scopeButton("This Branch", .branch)
+            scopeButton("Recent Commits", .recentCommits)
             let offered = model.offeredTurns
+            if !offered.isEmpty || model.changesScope == .latestTurn {
+                scopeButton("Latest Turn", .latestTurn)
+            }
             if !offered.isEmpty {
                 Divider()
                 ForEach(offered) { turn in
@@ -190,19 +250,66 @@ struct ChangesScopeMenu: View {
         .menuStyle(.button)
         .buttonStyle(.plain)
         .fixedSize()
-        .help("Show everything since the last commit, or what one agent's turn changed")
+        .help("Show everything since the last commit, this branch, one commit, or what one agent's turn changed")
     }
 
     private func scopeButton(_ title: String, _ scope: ChangesScope) -> some View {
-        Button {
-            model.setChangesScope(scope)
-        } label: {
-            if model.changesScope == scope {
-                Label(title, systemImage: "checkmark")
-            } else {
-                Text(title)
+        Toggle(title, isOn: Binding(get: { model.changesScope == scope }, set: { _ in model.setChangesScope(scope) }))
+    }
+}
+
+/// What the list is compared with, when it's a branch.
+struct BranchCaption: View {
+    let bases: [BranchBase]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(bases, id: \.root) { base in
+                Text(bases.count > 1 ? (base.root as NSString).lastPathComponent + ": " + base.description : base.description)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 3)
+    }
+}
+
+/// Which commit the list is showing, with a way back to the others.
+struct CommitCaption: View {
+    let commit: CommitSummary
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Button {
+                model.setChangesScope(.recentCommits)
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 10, weight: .semibold))
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Back to Recent Commits")
+            VStack(alignment: .leading, spacing: 1) {
+                Text(commit.subject)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(([commit.shortOID, RelativeTime.text(commit.date)] + (commit.isMerge ? ["compared with its first parent"] : [])).joined(separator: " · "))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 3)
     }
 }
 

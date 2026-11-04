@@ -17,7 +17,9 @@ struct SidebarView: View {
     var body: some View {
         GeometryReader { geometry in
         // With the explorer folded, what's still open takes the room it left.
-        let hasChangesSection = !model.changes.isEmpty || !model.offeredTurns.isEmpty || model.changesScope != .sinceCommit
+        // In a repository, always: with everything committed, a branch and its commits are still there to read.
+        let hasChangesSection = model.barHasRepositories || !model.changes.isEmpty || !model.offeredTurns.isEmpty
+        let rowHeight: CGFloat = { if case .recentCommits = model.changesScope { 37 } else { 25 } }()
         let changesFill = !explorerOpen && changesOpen && hasChangesSection
         let itemsFill = !explorerOpen && !changesFill && itemsOpen
         VStack(spacing: 0) {
@@ -46,23 +48,25 @@ struct SidebarView: View {
             if hasChangesSection {
                 Divider()
                 sectionHeader("Changes", isOpen: $changesOpen) {
-                    if !model.offeredTurns.isEmpty || model.changesScope != .sinceCommit {
-                        ChangesScopeMenu()
-                    }
-                    Text("\(model.visibleChanges.count)")
+                    ChangesScopeMenu()
+                    Text("\(model.visibleChangesCount)")
                         .foregroundStyle(.tertiary)
                         .font(.caption)
                 }
                 if changesOpen {
                     if let turn = model.scopedTurn {
                         TurnCaption(turn: turn)
+                    } else if case .branch = model.changesScope, !model.branchBases.isEmpty {
+                        BranchCaption(bases: model.branchBases)
+                    } else if case .commit(let commit) = model.changesScope {
+                        CommitCaption(commit: commit)
                     }
                     if changesFill {
                         ChangesList()
                             .frame(maxHeight: .infinity)
                     } else {
                         ChangesList()
-                            .frame(height: min(CGFloat(model.visibleChanges.count) * 25 + 6, max(geometry.size.height * 0.28, 60)))
+                            .frame(height: min(CGFloat(max(model.visibleChangesCount, 1)) * rowHeight + 6, max(geometry.size.height * 0.28, 60)))
                     }
                 }
             }

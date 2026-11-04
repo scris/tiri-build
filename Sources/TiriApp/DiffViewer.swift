@@ -1185,12 +1185,78 @@ struct ChangesList: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 1) {
-                ForEach(model.visibleChanges) { change in
-                    ChangeRow(change: change)
+                if case .recentCommits = model.changesScope {
+                    ForEach(model.recentCommits) { commit in
+                        CommitRow(commit: commit)
+                    }
+                    if model.recentCommits.isEmpty, !model.scopeIsLoading {
+                        EmptyChangesRow(text: "No commits yet.")
+                    }
+                } else {
+                    ForEach(model.visibleChanges) { change in
+                        ChangeRow(change: change)
+                    }
+                    if model.visibleChanges.isEmpty, !model.scopeIsLoading {
+                        EmptyChangesRow(text: model.emptyChangesText)
+                    }
                 }
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 4)
+        }
+    }
+}
+
+/// What the list would hold, in words, when it holds nothing.
+struct EmptyChangesRow: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11.5))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 7)
+            .frame(minHeight: 24)
+    }
+}
+
+/// A commit in the list. Choosing it shows its files.
+struct CommitRow: View {
+    let commit: CommitSummary
+    @Environment(AppModel.self) private var model
+    @State private var hovering = false
+
+    private var detail: String {
+        var parts = [commit.shortOID, RelativeTime.text(commit.date)]
+        if model.repositories.count > 1 { parts.insert((commit.root as NSString).lastPathComponent, at: 0) }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(commit.subject)
+                .font(.system(size: 12.5))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Text(detail)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 7)
+        .frame(height: 36)
+        .background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(hovering ? Color.primary.opacity(0.05) : .clear)
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { model.setChangesScope(.commit(commit)) }
+        .help(commit.subject + "\n" + commit.author)
+        .contextMenu {
+            Button("Copy Hash") { Clipboard.copy(commit.oid) }
         }
     }
 }
