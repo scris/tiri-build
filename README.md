@@ -81,6 +81,10 @@ Tiri uses the language servers already on your Mac, for TypeScript and JavaScrip
 
 A server starts once you've looked at one of its files for a moment, and stops after 10 minutes unused. They can use a lot of memory, and that's on top of Tiri's own. Some servers run a project's build scripts as they read it, the same as building it would. A server that's inside the project itself, like one in `node_modules/.bin`, is that project's code, so Tiri asks once before running it, and only when you've just asked for something it would answer. Turn all of this off in Settings, under Code.
 
+## The bar along the bottom
+
+It shows each repository's branch, with fetch, pull and push, and what a language server has to say about the file in front. With nothing to show, like in a folder that isn't in a repository, it goes away and gives the room to what you're looking at.
+
 ## The sidebar
 
 Explorer, Changes and Open Items each fold: click a section's name. What's still open takes the room, and Tiri remembers which are folded.

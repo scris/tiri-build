@@ -658,11 +658,9 @@ struct LanguageServersSection: View {
 
 // MARK: - The bar along the bottom
 
-struct LanguageStatusItem: View {
-    @Environment(AppModel.self) private var model
-
-    private var path: String? {
-        guard let item = model.active.peek ?? model.active.activeItem else { return nil }
+extension AppModel {
+    var frontCodePath: String? {
+        guard let item = active.peek ?? active.activeItem else { return nil }
         switch item.content {
         case .file(let spec): return spec.path
         case .diff(let spec): return spec.path
@@ -670,9 +668,21 @@ struct LanguageStatusItem: View {
         }
     }
 
+    /// A server at work, or something wrong. "No server" alone isn't worth a bar of its own.
+    var languageHasNews: Bool {
+        guard settings.languageServers, let path = frontCodePath, let definition = LanguageServerCatalog.definition(for: path) else { return false }
+        return languageServers.isRunning(definition) || languageServers.isStarting(definition) || !languageServers.knownDiagnostics(for: path).isEmpty
+    }
+
+    var statusBarHasContent: Bool { barHasRepositories || languageHasNews }
+}
+
+struct LanguageStatusItem: View {
+    @Environment(AppModel.self) private var model
+
     var body: some View {
         let _ = model.languageRevision
-        if model.settings.languageServers, let path, let definition = LanguageServerCatalog.definition(for: path) {
+        if model.settings.languageServers, let path = model.frontCodePath, let definition = LanguageServerCatalog.definition(for: path) {
             let found = model.languageServers.knownDiagnostics(for: path)
             let errors = found.filter { $0.severity == .error }.count
             let warnings = found.filter { $0.severity == .warning }.count

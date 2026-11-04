@@ -115,6 +115,9 @@ final class AppModel {
     var navigationStops: [NavigationStop] = []
     @ObservationIgnored var symbolHover: (view: NSTextView?, range: NSRange)?
     var languageRevision = 0
+    /// Whether this workspace has repositories, as of the last look. `repositories` empties for a
+    /// moment on every switch, and the bar shouldn't go and come back, resizing every terminal.
+    var barHasRepositories = false
     @ObservationIgnored lazy var languageServers = LanguageServerHub(model: self)
     @ObservationIgnored let languageTrust = LanguageServerTrust()
     @ObservationIgnored var hoverPopover: NSPopover?
@@ -1714,6 +1717,7 @@ final class AppModel {
                 self.refreshReviewLines()
                 self.refreshTurnChanges()
                 if self.activeID == workspace, self.changes != found { self.changes = found }
+                if self.activeID == workspace { self.barHasRepositories = !repositories.isEmpty }
                 if self.activeID == workspace, self.repositories != repositories {
                     self.repositories = repositories
                     self.watchGitDirectories(of: repositories, folders: folders)

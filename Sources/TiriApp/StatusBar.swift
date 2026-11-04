@@ -13,12 +13,18 @@ enum RepositoryTransfer {
     }
 }
 
-/// The bar along the bottom of the window. It's always there, even with nothing to show, so that
-/// switching workspaces doesn't resize every terminal in the one you land in.
+/// The bar along the bottom of the window, when it has something to say.
 struct StatusBar: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        let _ = model.languageRevision
+        if model.statusBarHasContent {
+            bar
+        }
+    }
+
+    private var bar: some View {
         VStack(spacing: 0) {
             Divider()
             HStack(spacing: 0) {
