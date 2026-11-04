@@ -520,10 +520,15 @@ final class QuoteButton: NSButton {
     @objc private func pressed() { onQuote?() }
 
     /// Just above the selection, inside the pane. Off screen with its selection, it hides.
+    /// While find is moving the selection around, it isn't something you're pointing at.
+    var isSuppressed = false {
+        didSet { update() }
+    }
+
     func update() {
         guard let textView, let host, let layout = textView.layoutManager, let container = textView.textContainer else { return }
         let range = textView.selectedRange()
-        guard range.length > 0 else {
+        guard range.length > 0, !isSuppressed else {
             isHidden = true
             return
         }

@@ -36,7 +36,15 @@ protocol ItemController: AnyObject {
     func save(overwriting: Bool) -> SaveResult
     /// Returns false when nothing matches.
     func find(_ query: String, backwards: Bool) -> Bool
+    /// While it's being typed, a match already found stays found.
+    func findIncrementally(_ query: String, caseSensitive: Bool) -> Bool
     func clearFind()
+    /// Which match this is and how many there are, where that's known.
+    var findCount: (current: Int, total: Int)? { get }
+    var findReturnGoesBackwards: Bool { get }
+    var supportsReplace: Bool { get }
+    func replaceCurrent(query: String, with replacement: String, caseSensitive: Bool) -> Bool
+    func replaceAll(query: String, with replacement: String, caseSensitive: Bool) -> Int
 }
 
 extension ItemController {
@@ -63,7 +71,13 @@ extension ItemController {
     var isDirty: Bool { false }
     func save(overwriting: Bool) -> SaveResult { .saved }
     func find(_ query: String, backwards: Bool) -> Bool { false }
+    func findIncrementally(_ query: String, caseSensitive: Bool) -> Bool { find(query, backwards: false) }
     func clearFind() {}
+    var findCount: (current: Int, total: Int)? { nil }
+    var findReturnGoesBackwards: Bool { false }
+    var supportsReplace: Bool { false }
+    func replaceCurrent(query: String, with replacement: String, caseSensitive: Bool) -> Bool { false }
+    func replaceAll(query: String, with replacement: String, caseSensitive: Bool) -> Int { 0 }
 }
 
 // MARK: - Spawning, behind a protocol so a remote (SSH) backend can be added
@@ -936,8 +950,40 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         backwards ? terminalView.findPrevious(query) : terminalView.findNext(query)
     }
 
+    /// From the newest output, as in Cursor. Each letter starts again from there.
+    func findIncrementally(_ query: String, caseSensitive: Bool) -> Bool {
+        terminalView.clearSearch()
+        let found = terminalView.findPrevious(query)
+        terminalView.markFindMatches(of: query)
+        return found
+    }
+
+    /// Output reads from the bottom up, so Return goes further back. ⇧Return comes forward.
+    var findReturnGoesBackwards: Bool { true }
+
     func clearFind() {
         terminalView.clearSearch()
+        terminalView.markFindMatches(of: nil)
+    }
+
+    var findCount: (current: Int, total: Int)? {
+        guard let query = terminalView.findQuery else { return nil }
+        let summary = terminalView.searchMatchSummary(query, limit: 10_000)
+        return (summary.index, summary.total)
+    }
+
+    // MARK: Keys a shell expects
+
+    /// ⌘← and ⌘→ go to the ends of the line, and ⌘⌫ deletes back to its start, as in Cursor.
+    func sendLineStart() { send(text: "\u{01}") }
+    func sendLineEnd() { send(text: "\u{05}") }
+    func sendDeleteToLineStart() { send(text: "\u{15}") }
+
+    /// ⌘K, as in Cursor: everything above the cursor's line goes. A full-screen program keeps its screen.
+    func clearScreen() {
+        guard terminalView.clearKeepingCursorLine() else { return }
+        // At a prompt, or in an agent's input, a redraw puts back whatever spans several lines.
+        if !isShellBusy || runningAgent != nil { terminalView.send(txt: "\u{0C}") }
     }
 
     // MARK: Control API

@@ -63,6 +63,13 @@ struct FindState: Equatable {
     var targetItem: ItemID
     var notFound = false
     var focusNonce = 0
+    var showReplace = false
+    var replacement = ""
+    var caseSensitive = false
+    var current = 0
+    var total: Int?
+    var replacedCount: Int?
+    var replaceFocusNonce = 0
 }
 
 enum OpenIntent: Equatable {
@@ -547,6 +554,10 @@ final class AppModel {
             closeFind()
             return true
         }
+        if let editor = focusedEditor, editor.codeView.hasMultipleCursors {
+            editor.codeView.dropExtraCursors()
+            return true
+        }
         if active.peek != nil, peekHasKeyboard, !firstResponderIsTerminal {
             dismissPeek()
             return true
@@ -563,8 +574,18 @@ final class AppModel {
 
     /// `promotePeek` on ⌘↩ should only eat the key when there's a Peek to promote.
     func isCommandEnabledForKey(_ command: String) -> Bool {
+        if EditorCommand(rawValue: command) != nil {
+            guard let editor = focusedEditor else { return false }
+            return editor.codeView.isEditable
+        }
         switch command {
-        case "promotePeek", "promotePeekToSide": return active.peek != nil
+        case "goToLine", "toggleWordWrap": return focusedEditor != nil
+        case "symbolsInFile": return frontOutlineTarget != nil
+        case "clearTerminal", "terminalLineStart", "terminalLineEnd", "terminalDeleteToLineStart":
+            return (NSApp.keyWindow ?? window)?.firstResponder is TiriTerminalView
+        // A Peek floating over a file you're typing in doesn't take that file's ⌘↩.
+        case "promotePeek": return active.peek != nil && (peekHasKeyboard || focusedEditor == nil)
+        case "promotePeekToSide": return active.peek != nil
         case "webReload": return frontWebController != nil
         case "goBack": return canGoBack
         case "goToDefinition", "findReferences", "showHover": return canAskAboutSymbols()
@@ -1453,16 +1474,22 @@ final class AppModel {
 
     // MARK: Find
 
-    func openFind() {
+    func openFind(replace: Bool = false) {
         guard let target = (peekHasKeyboard ? active.peek?.id : nil) ?? active.focused.active else { return }
         guard existingController(for: target)?.supportsFind == true else { return }
         var state = find ?? FindState(targetItem: target)
         state.targetItem = target
-        state.focusNonce += 1
-        if state.query.isEmpty, let selection = existingController(for: target)?.selectedTextForFind {
-            state.query = selection
+        let selection = controller.selectedTextForFind ?? ""
+        if !selection.isEmpty { state.query = selection }
+        if replace, controller.supportsReplace {
+            state.showReplace = true
+            // Started from a selection, what's left to say is what to replace it with.
+            if !selection.isEmpty { state.replaceFocusNonce += 1 } else { state.focusNonce += 1 }
+        } else {
+            state.focusNonce += 1
         }
         find = state
+        if !state.query.isEmpty { runFind(incremental: true) }
     }
 
     func closeFind() {
@@ -1471,7 +1498,7 @@ final class AppModel {
         requestFocus()
     }
 
-    func runFind(backwards: Bool = false) {
+    func runFind(backwards: Bool = false, incremental: Bool = false) {
         guard var state = find, let controller = existingController(for: state.targetItem) else { return }
         if state.query.isEmpty {
             controller.clearFind()
@@ -1480,6 +1507,33 @@ final class AppModel {
             state.notFound = !controller.find(state.query, backwards: backwards)
         }
         find = state
+    }
+
+    func replaceCurrentMatch() {
+        guard var state = find, let controller = existingController(for: state.targetItem), !state.query.isEmpty else { return }
+        state.replacedCount = nil
+        state.notFound = !controller.replaceCurrent(query: state.query, with: state.replacement, caseSensitive: state.caseSensitive)
+        Self.note(controller.findCount, in: &state)
+        find = state
+    }
+
+    func replaceAllMatches() {
+        guard var state = find, let controller = existingController(for: state.targetItem), !state.query.isEmpty else { return }
+        state.replacedCount = controller.replaceAll(query: state.query, with: state.replacement, caseSensitive: state.caseSensitive)
+        Self.note(controller.findCount, in: &state)
+        find = state
+    }
+
+    /// An edit moved the matches.
+    func findCountChanged() {
+        guard var state = find, let controller = existingController(for: state.targetItem) else { return }
+        Self.note(controller.findCount, in: &state)
+        if state != find { find = state }
+    }
+
+    private static func note(_ count: (current: Int, total: Int)?, in state: inout FindState) {
+        state.current = count?.current ?? 0
+        state.total = count?.total
     }
 
     // MARK: Settings

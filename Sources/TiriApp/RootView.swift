@@ -796,37 +796,113 @@ struct WebHeader: View {
 struct FindBar: View {
     @Environment(AppModel.self) private var model
     @FocusState private var focused: Bool
+    @FocusState private var replaceFocused: Bool
+
+    private var canReplace: Bool {
+        model.find.flatMap { model.existingController(for: $0.targetItem)?.supportsReplace } ?? false
+    }
+
+    /// `3 of 14`, where it's known, and `No results` when it's none.
+    private var status: String? {
+        guard let find = model.find else { return nil }
+        if let replaced = find.replacedCount { return replaced == 1 ? "Replaced 1" : "Replaced \(replaced)" }
+        if find.query.isEmpty { return nil }
+        if find.notFound || find.total == 0 { return "No results" }
+        guard let total = find.total else { return nil }
+        return find.current > 0 ? "\(find.current) of \(total)" : "\(total) found"
+    }
 
     var body: some View {
         @Bindable var model = model
-        let binding = Binding(
+        let query = Binding(
             get: { model.find?.query ?? "" },
             set: { value in
                 model.find?.query = value
-                model.runFind()
+                model.runFind(incremental: true)
             })
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Find", text: binding)
-                .textFieldStyle(.plain)
-                .frame(width: 190)
-                .focused($focused)
-                .onSubmit { model.runFind(backwards: NSEvent.modifierFlags.contains(.shift)) }
-            if model.find?.notFound == true {
-                Text("No results").font(.caption).foregroundStyle(.secondary)
+        let replacement = Binding(
+            get: { model.find?.replacement ?? "" },
+            set: { model.find?.replacement = $0 })
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                if canReplace {
+                    Button { model.find?.showReplace.toggle() } label: {
+                        Image(systemName: model.find?.showReplace == true ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .frame(width: 12)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Replace (\(model.shortcutSymbol(for: "findReplace") ?? "⌥⌘F"))")
+                } else {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                }
+                TextField("Find", text: query)
+                    .textFieldStyle(.plain)
+                    .frame(width: 190)
+                    .focused($focused)
+                    .onSubmit {
+                        let goesBack = model.find.flatMap { model.existingController(for: $0.targetItem)?.findReturnGoesBackwards } ?? false
+                        model.runFind(backwards: NSEvent.modifierFlags.contains(.shift) != goesBack)
+                        focused = true
+                    }
+                if let status {
+                    Text(status).font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                }
+                if canReplace {
+                    Button {
+                        model.find?.caseSensitive.toggle()
+                        model.runFind(incremental: true)
+                    } label: {
+                        Text("Aa").font(.system(size: 12, weight: model.find?.caseSensitive == true ? .bold : .regular))
+                            .foregroundStyle(model.find?.caseSensitive == true ? Color.accentColor : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Match Case")
+                    .accessibilityLabel("Match Case")
+                }
+                Button { model.runFind(backwards: true) } label: { Image(systemName: "chevron.up") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Previous Match")
+                Button { model.runFind() } label: { Image(systemName: "chevron.down") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Next Match")
+                Button { model.closeFind() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close")
             }
-            Button { model.runFind(backwards: true) } label: { Image(systemName: "chevron.up") }
-                .buttonStyle(.plain)
-            Button { model.runFind() } label: { Image(systemName: "chevron.down") }
-                .buttonStyle(.plain)
-            Button { model.closeFind() } label: { Image(systemName: "xmark") }
-                .buttonStyle(.plain)
+            if canReplace, model.find?.showReplace == true {
+                HStack(spacing: 6) {
+                    Color.clear.frame(width: 12, height: 1)
+                    TextField("Replace", text: replacement)
+                        .textFieldStyle(.plain)
+                        .frame(width: 190)
+                        .focused($replaceFocused)
+                        .onSubmit {
+                            model.replaceCurrentMatch()
+                            replaceFocused = true
+                        }
+                    Button("Replace") { model.replaceCurrentMatch() }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("All") { model.replaceAllMatches() }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .keyboardShortcut(.return, modifiers: [.command, .option])
+                        .help("Replace All (⌥⌘↩)")
+                }
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .glassEffect(.regular, in: .capsule)
-        .onAppear { focused = true }
+        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .onAppear {
+            if (model.find?.replaceFocusNonce ?? 0) > 0 { replaceFocused = true } else { focused = true }
+        }
         .onChange(of: model.find?.focusNonce) { focused = true }
+        .onChange(of: model.find?.replaceFocusNonce) { replaceFocused = true }
     }
 }
 
