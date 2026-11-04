@@ -554,6 +554,7 @@ class Server:
             self.set_state()
         elif operation == "interrupt":
             self.pending = []
+            self.waiting_for_input = None
             if self.kernel_alive():
                 self.manager.interrupt_kernel()
             self.set_state()
@@ -561,6 +562,7 @@ class Server:
             if self.waiting_for_input:
                 self.waiting_for_input = None
                 self.client.input(command.get("value", ""))
+                self.set_state()
         elif operation == "restart":
             self.restart()
         elif operation == "stop":

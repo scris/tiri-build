@@ -2777,6 +2777,8 @@ extension MarkdownController {
             endEditing(run: false, cell: cell)
         case "add":
             addCell(kind: body["kind"] as? String == "markdown" ? .markdown : .code)
+        case "answer":
+            kernel.answer(body["value"] as? String ?? "")
         default:
             break
         }
@@ -2909,6 +2911,11 @@ extension MarkdownController {
     func kernelStatusChanged(_ kernel: NotebookKernel) {
         guard hasRenderedPageForKernel else { return }
         callPage("tiriNB.status(running, queued)", ["running": kernel.running as Any? ?? NSNull(), "queued": kernel.queued])
+        if let question = kernel.question, let cell = kernel.running {
+            callPage("tiriNB.ask(cell, prompt, password)", ["cell": cell, "prompt": question.prompt, "password": question.password])
+        } else {
+            callPage("tiriNB.answered()", [:])
+        }
     }
 
     func kernelOutput(index: Int, count: Int?, running: Bool, outputs: [Notebook.Output]) {

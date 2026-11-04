@@ -633,7 +633,7 @@ enum ControlHandler {
             }
             return .object([:])
 
-        case "notebook.status", "notebook.run", "notebook.interrupt", "notebook.restart", "notebook.stop":
+        case "notebook.status", "notebook.run", "notebook.interrupt", "notebook.restart", "notebook.stop", "notebook.input":
             guard let path = request.args["path"]?.stringValue, path.hasSuffix(".ipynb"), FileManager.default.fileExists(atPath: path) else {
                 throw ControlFailure("That isn't a notebook.")
             }
@@ -644,12 +644,16 @@ enum ControlHandler {
             case "notebook.interrupt": kernel.interrupt()
             case "notebook.restart": kernel.restart()
             case "notebook.stop": kernel.stop()
+            case "notebook.input":
+                guard kernel.question != nil else { throw ControlFailure("That notebook isn't waiting for input.") }
+                kernel.answer(request.args["text"]?.stringValue ?? "")
             default: kernel.adoptIfRunning()
             }
             var result: [String: JSONValue] = ["state": .string(String(describing: kernel.state))]
             if let running = kernel.running { result["running"] = .int(running) }
             result["queued"] = .array(kernel.queued.map(JSONValue.int))
             if let title = kernel.title { result["python"] = .string(title) }
+            if let question = kernel.question { result["asking"] = .string(question.prompt.isEmpty ? "input" : question.prompt) }
             if let python = kernel.pythonPath { result["path"] = .string(python) }
             return .object(result)
 

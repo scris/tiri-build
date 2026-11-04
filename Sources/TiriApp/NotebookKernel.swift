@@ -40,6 +40,12 @@ final class NotebookKernel {
     private(set) var state: State = .off
     private(set) var running: Int?
     private(set) var queued: [Int] = []
+    struct Question: Equatable {
+        var prompt: String
+        var password: Bool
+    }
+    /// What the running cell is waiting to be told.
+    private(set) var question: Question?
     /// "Python 3.12.1", once one has been chosen.
     private(set) var title: String?
     private(set) var pythonPath: String?
@@ -50,7 +56,6 @@ final class NotebookKernel {
     @ObservationIgnored private var waiting: [JSONValue] = []
     @ObservationIgnored private var wantsAttachment = false
     @ObservationIgnored private var retries = 0
-    @ObservationIgnored private var askedForInput = false
     @ObservationIgnored private let lines = LineBuffer()
 
     init(path: String, kernels: NotebookKernels) {
@@ -126,7 +131,11 @@ final class NotebookKernel {
         }
     }
 
-    func answer(_ value: String) { sendIfAttached(["op": "input", "value": .string(value)]) }
+    func answer(_ value: String) {
+        question = nil
+        sendIfAttached(["op": "input", "value": .string(value)])
+        kernels.statusChanged(self)
+    }
 
     /// True if it went to the kernel, which then does the writing.
     func edit(_ fields: [String: JSONValue]) -> Bool {
@@ -350,16 +359,13 @@ final class NotebookKernel {
                 pythonPath = message["python"] as? String
             }
             kernels.statusChanged(self)
-            if let ask = message["input"] as? [String: Any], !askedForInput {
-                askForInput(prompt: ask["prompt"] as? String ?? "", password: ask["password"] as? Bool ?? false)
-            }
+            asked(message["input"] as? [String: Any])
         case "output":
             kernels.output(self, index: (message["index"] as? NSNumber)?.intValue ?? -1,
                            count: (message["count"] as? NSNumber)?.intValue, running: message["running"] as? Bool ?? false,
                            outputs: (message["outputs"] as? [[String: Any]] ?? []).compactMap(Notebook.output))
         case "input":
-            guard !askedForInput else { return }
-            askForInput(prompt: message["prompt"] as? String ?? "", password: message["password"] as? Bool ?? false)
+            asked(message)
         case "problem":
             kernels.tell(path: path, message["message"] as? String ?? "The kernel had a problem", detail: nil)
         default:
@@ -367,14 +373,13 @@ final class NotebookKernel {
         }
     }
 
-    private func askForInput(prompt: String, password: Bool) {
-        askedForInput = true
-        kernels.askForInput(prompt: prompt, password: password) { [weak self] value in
-            self?.askedForInput = false
-            self?.answer(value)
-        }
+    private func asked(_ fields: [String: Any]?) {
+        let new = fields.map { Question(prompt: $0["prompt"] as? String ?? "", password: $0["password"] as? Bool ?? false) }
+        guard new != question else { return }
+        question = new
+        kernels.statusChanged(self)
+        if new != nil { kernels.questionArrived(self) }
     }
-
 }
 
 /// Every notebook's kernel, whichever tab is showing it, or none.
@@ -600,20 +605,14 @@ final class NotebookKernels {
         _ = model.showToast(title: message, detail: detail, symbol: "exclamationmark.triangle", tint: .orange)
     }
 
-    func askForInput(prompt: String, password: Bool, answer: @escaping (String) -> Void) {
-        let alert = NSAlert()
-        alert.messageText = prompt.isEmpty ? "This cell is asking for input" : prompt
-        alert.addButton(withTitle: "Send")
-        let field = password ? NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-                             : NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard let window = model.window else {
-            answer("")
-            return
-        }
-        alert.beginSheetModal(for: window) { _ in
-            MainActor.assumeIsolated { answer(field.stringValue) }
+    /// A cell's waiting for an answer. Its own page asks. If that's not in front, this says so and
+    /// leaves you to it: nothing here should get in the way of what you're doing.
+    func questionArrived(_ kernel: NotebookKernel) {
+        guard model.frontNotebook?.path != kernel.path else { return }
+        let name = (kernel.path as NSString).lastPathComponent
+        _ = model.showToast(title: "\(name) is waiting for input", detail: kernel.question?.prompt, symbol: "keyboard", tint: .orange, actionTitle: "Show") { [weak model] in
+            model?.open(path: kernel.path, intent: .pinned)
+            model?.requestFocus()
         }
     }
 }
@@ -682,6 +681,10 @@ enum NotebookPage {
 
       document.addEventListener('click', (event) => {
         const target = event.target;
+        if (target.closest('.nb-ask')) {
+          if (target.closest('button')) sendAnswer();
+          return;
+        }
         if (target.closest('.nb-run')) { post({op: 'run', cell: indexOf(target)}); return; }
         if (target.closest('.nb-add-code')) { post({op: 'add', kind: 'code'}); return; }
         if (target.closest('.nb-add-markdown')) { post({op: 'add', kind: 'markdown'}); return; }
@@ -697,7 +700,20 @@ enum NotebookPage {
         if (index !== null && (target.closest('.nb-input') || target.closest('.nb-markdown'))) post({op: 'edit', cell: index});
       }, true);
 
+      const askBox = () => document.querySelector('.nb-ask');
+      const sendAnswer = () => {
+        const box = askBox();
+        if (!box) return;
+        const value = box.querySelector('input').value;
+        box.remove();
+        post({op: 'answer', value});
+      };
+
       document.addEventListener('keydown', (event) => {
+        if (event.target.closest && event.target.closest('.nb-ask')) {
+          if (event.key === 'Enter') { event.preventDefault(); sendAnswer(); }
+          return;
+        }
         if (editing) {
           if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); finish('run'); }
           else if (event.key === 'Escape') { event.preventDefault(); finish('cancel'); }
@@ -723,6 +739,30 @@ enum NotebookPage {
 
       window.tiriNB = {
         select,
+        ask(index, prompt, password) {
+          let box = askBox();
+          if (box && (box.dataset.cell !== String(index) || box.dataset.prompt !== prompt)) { box.remove(); box = null; }
+          if (box) return;
+          const cell = cellAt(index);
+          if (!cell) return;
+          box = document.createElement('div');
+          box.className = 'nb-ask';
+          box.dataset.cell = String(index);
+          box.dataset.prompt = prompt;
+          const label = document.createElement('label');
+          label.textContent = prompt || 'This cell is asking for input';
+          const field = document.createElement('input');
+          field.type = password ? 'password' : 'text';
+          field.autocomplete = 'off';
+          field.spellcheck = false;
+          const send = document.createElement('button');
+          send.textContent = 'Send';
+          box.append(label, field, send);
+          cell.querySelector('.nb-body').appendChild(box);
+          // Only if you're already reading this page. It's never worth taking the keyboard for.
+          if (document.hasFocus() && !editing) field.focus();
+        },
+        answered() { const box = askBox(); if (box) box.remove(); },
         beginEdit(index, source) {
           const cell = cellAt(index);
           if (!cell) return;

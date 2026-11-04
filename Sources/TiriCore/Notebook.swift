@@ -546,6 +546,10 @@ public enum NotebookRenderer {
     .nb-cell.nb-running .nb-run { display:none; }
     .nb-cell.nb-current .nb-body { box-shadow:-6px 0 0 -4px color-mix(in srgb, currentColor 22%, transparent); }
     .nb-edit { display:block; box-sizing:border-box; width:100%; margin:0; padding:11px 13px; border:1px solid color-mix(in srgb, currentColor 28%, transparent); border-radius:8px; outline:none; resize:none; overflow:hidden; background:var(--code); color:inherit; font:.86em/1.686 ui-monospace,"SF Mono",Menlo,monospace; tab-size:4; }
+    .nb-ask { display:flex; align-items:center; gap:8px; margin-top:6px; padding:6px 10px; border:1px solid color-mix(in srgb, currentColor 22%, transparent); border-radius:8px; font-size:.9em; }
+    .nb-ask label { color:var(--muted); white-space:pre-wrap; }
+    .nb-ask input { flex:1; min-width:120px; padding:4px 7px; border:1px solid color-mix(in srgb, currentColor 22%, transparent); border-radius:5px; background:var(--code); color:inherit; font:inherit; outline:none; }
+    .nb-ask button { padding:3px 10px; border:0; border-radius:5px; background:var(--code); color:inherit; font:inherit; cursor:default; }
     .nb-add { display:flex; gap:6px; margin:4px 0 0 52px; opacity:.55; }
     .nb-add:hover { opacity:1; }
     .nb-add button { padding:3px 9px; border:0; border-radius:6px; background:var(--code); color:inherit; font:12px -apple-system,sans-serif; cursor:default; }

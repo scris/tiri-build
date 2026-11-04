@@ -112,14 +112,18 @@ public enum CLIParser {
             return request("dev.page", ["script": .string(args[0])])
 
         case "notebook":
-            let usage = "usage: tiri notebook status|interrupt|restart|stop <path> | run <path> [--cell N]   (cells count from 0; results go in the file)"
+            let usage = "usage: tiri notebook status|interrupt|restart|stop <path> | run <path> [--cell N] | input <path> <text>   (cells count from 0; results go in the file)"
             var options = Options(args)
             let rawCell = try options.value("--cell")
-            guard let action = options.positional(), ["status", "run", "interrupt", "restart", "stop"].contains(action), let path = options.positional() else {
+            guard let action = options.positional(), ["status", "run", "interrupt", "restart", "stop", "input"].contains(action), let path = options.positional() else {
                 throw UsageError(usage)
             }
-            try options.finish()
             var payload: [String: JSONValue] = ["path": .string(absolute(path, environment))]
+            if action == "input" {
+                guard let text = options.positional() else { throw UsageError(usage) }
+                payload["text"] = .string(text)
+            }
+            try options.finish()
             if let rawCell {
                 guard action == "run", let cell = Int(rawCell), cell >= 0 else { throw UsageError(usage) }
                 payload["cell"] = .int(cell)

@@ -781,7 +781,7 @@ enum RemoteRelay {
         "ping", "items", "open", "reveal", "preview", "term", "focus", "close", "notify", "send", "read", "follow", "select",
         "layout", "tree", "changes", "changes.branch", "changes.commit", "log", "diff", "turns", "git", "search", "diagnostics", "languages",
         "review.list", "review.add", "review.remove", "review.clear", "review.send", "remote.forward", "remote.ports", "worktree.add",
-        "work", "conversations", "web.console", "web.network", "web.shot", "web.text", "web.click", "web.type", "web.eval", "notebook.status", "notebook.run", "notebook.interrupt", "notebook.restart", "notebook.stop",
+        "work", "conversations", "web.console", "web.network", "web.shot", "web.text", "web.click", "web.type", "web.eval", "notebook.status", "notebook.run", "notebook.interrupt", "notebook.restart", "notebook.stop", "notebook.input",
     ]
     /// These answer about the workspace in front, so that has to be this server's.
     private static let aboutFront: Set<String> = ["work", "conversations", "web.console", "web.network", "web.shot", "web.text", "web.click", "web.type", "web.eval", "layout", "tree", "changes", "changes.branch", "changes.commit", "log", "diff", "turns", "git", "search", "diagnostics", "languages",

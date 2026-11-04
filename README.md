@@ -138,6 +138,8 @@ Press **Run All** above a notebook, or hover over a cell and press ▶. Output a
 - **On a server it runs on the server,** with that server's Python, the same as an agent would.
 - **Agents can do all of this:** `tiri notebook run report.ipynb [--cell N]`, and `status`, `interrupt`, `restart` and `stop`. They can read the results from the file. If an agent changes a cell while you're typing in it, your edit isn't saved and Tiri says so.
 
+A cell asking for `input()` asks right there in the cell, with **Stop** still working. If you're elsewhere, a toast says so and nothing gets in your way. An agent can answer with `tiri notebook input report.ipynb "text"`, and `status` says what it's waiting for.
+
 Widgets that need scripts in the page, like `ipywidgets`, show a picture or text where they have one.
 
 ## Follow a name

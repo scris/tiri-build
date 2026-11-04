@@ -35,6 +35,8 @@ import Testing
         for action in ["status", "interrupt", "restart", "stop"] {
             #expect(try request("notebook", action, "a.ipynb").cmd == "notebook." + action)
         }
+        #expect(try request("notebook", "input", "a.ipynb", "hello").args["text"]?.stringValue == "hello")
+        #expect(throws: CLIParser.UsageError.self) { try request("notebook", "input", "a.ipynb") }
         #expect(throws: CLIParser.UsageError.self) { try request("notebook", "run") }
         #expect(throws: CLIParser.UsageError.self) { try request("notebook", "explode", "a.ipynb") }
         #expect(throws: CLIParser.UsageError.self) { try request("notebook", "status", "a.ipynb", "--cell", "1") }

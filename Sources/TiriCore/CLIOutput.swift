@@ -36,10 +36,11 @@ public enum CLIOutput {
             }
         case "askpass":
             say(cell(response.result?["answer"]))
-        case "notebook.status", "notebook.run", "notebook.interrupt", "notebook.restart", "notebook.stop":
+        case "notebook.status", "notebook.run", "notebook.interrupt", "notebook.restart", "notebook.stop", "notebook.input":
             var parts = [cell(response.result?["state"])]
             if let running = response.result?["running"]?.intValue { parts.append("running cell \(running)") }
             if let queued = response.result?["queued"]?.arrayValue, !queued.isEmpty { parts.append("\(queued.count) queued") }
+            if let asking = response.result?["asking"]?.stringValue { parts.append("waiting for: " + asking) }
             if let python = response.result?["python"]?.stringValue { parts.append(python) }
             say(parts.joined(separator: "\t"))
         case "web.console", "web.network":

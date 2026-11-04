@@ -1109,7 +1109,7 @@ private struct NotebookBar: View {
         case .starting: "Starting…"
         case .reconnecting: "Reconnecting…"
         case .stopped: "Stopped"
-        case .idle, .busy: kernel.title ?? "Kernel"
+        case .idle, .busy: kernel.question != nil ? "Waiting for input" : kernel.title ?? "Kernel"
         }
     }
 
