@@ -282,20 +282,6 @@ public enum FileClassifier {
     /// Quick Look draws these as pages on white, whatever the theme.
     private static let office: Set<String> = ["pptx", "ppt", "docx", "doc", "xlsx", "xls", "key", "pages", "numbers", "rtf", "rtfd",
                                               "ttf", "otf", "ttc", "woff", "woff2", "webarchive"]
-    private static let knownText: Set<String> = [
-        "txt", "text", "log", "json", "jsonc", "json5", "yaml", "yml", "toml", "ini", "cfg", "conf", "env", "xml", "plist",
-        "swift", "m", "mm", "h", "hpp", "c", "cc", "cpp", "cs", "java", "kt", "kts", "go", "rs", "py", "rb", "php", "lua",
-        "js", "jsx", "mjs", "cjs", "ts", "tsx", "css", "scss", "less", "vue", "svelte", "sh", "bash", "zsh", "fish",
-        "sql", "graphql", "proto", "r", "jl", "dart", "scala", "ex", "exs", "erl", "hs", "ml", "clj", "tex", "bib", "rst",
-        "adoc", "gradle", "lock", "gitignore", "gitattributes", "editorconfig", "dockerfile", "makefile", "cmake", "tf",
-        "code-workspace", "patch", "diff", "strings", "pbxproj", "entitlements", "xcconfig",
-    ]
-    private static let knownTextNames: Set<String> = [
-        "makefile", "dockerfile", "license", "licence", "readme", "changelog", "authors", "copying", "gemfile", "rakefile",
-        "podfile", "procfile", "brewfile", ".gitignore", ".gitattributes", ".env", ".npmrc", ".zshrc", ".bashrc", ".prettierrc",
-        ".eslintrc", ".editorconfig", ".dockerignore", "cname", "notice",
-    ]
-
     public static func classify(path: String, head: () -> Data? = { nil }) -> FileKind {
         let url = URL(fileURLWithPath: path)
         let ext = url.pathExtension.lowercased()
@@ -309,7 +295,7 @@ public enum FileClassifier {
         if ext == "ipynb" { return .notebook }
         if ext == "csv" || ext == "tsv" { return .csv }
         if office.contains(ext) { return .office }
-        if knownText.contains(ext) || knownTextNames.contains(name) { return .text }
+        if LanguageCatalog.isCertainlyText(path: name) { return .text }
         // Unknown extension: look at the bytes.
         if let data = head(), isLikelyText(data) { return .text }
         return .quickLook
@@ -328,12 +314,9 @@ public enum FileClassifier {
         return false
     }
 
-    /// Syntax family for the lightweight highlighter.
-    public static func language(path: String) -> String? {
-        let url = URL(fileURLWithPath: path)
-        let ext = url.pathExtension.lowercased()
-        if ["sty", "cls", "ltx", "dtx"].contains(ext) { return "latex" }
-        return ext.isEmpty ? nil : ext
+    /// Which language to color a file as, if any.
+    public static func language(path: String, firstLine: String? = nil) -> String? {
+        LanguageCatalog.language(forPath: path, firstLine: firstLine)?.id
     }
 }
 

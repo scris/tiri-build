@@ -6,7 +6,6 @@ import Foundation
 public struct LanguageServerDefinition: Sendable, Identifiable, Equatable {
     public var id: String
     public var language: String
-    public var extensions: Set<String>
     /// Tried in order. The first word is the program's name.
     public var commands: [[String]]
     /// Files that mark a project's root, nearest first.
@@ -17,55 +16,37 @@ public struct LanguageServerDefinition: Sendable, Identifiable, Equatable {
     public var installHint: String
 
     public func languageID(for path: String) -> String {
-        let ext = (path as NSString).pathExtension.lowercased()
-        switch ext {
-        case "ts", "mts", "cts": return "typescript"
-        case "tsx": return "typescriptreact"
-        case "js", "mjs", "cjs": return "javascript"
-        case "jsx": return "javascriptreact"
-        case "py": return "python"
-        case "rs": return "rust"
-        case "go": return "go"
-        case "swift": return "swift"
-        case "c": return "c"
-        case "h": return "c"
-        case "m": return "objective-c"
-        case "mm": return "objective-cpp"
-        case "cc", "cpp", "cxx", "hpp", "hh": return "cpp"
-        case "rb": return "ruby"
-        case "lua": return "lua"
-        default: return ext
-        }
+        LanguageCatalog.language(forPath: path)?.languageServerID ?? (path as NSString).pathExtension.lowercased()
     }
 }
 
 public enum LanguageServerCatalog {
     public static let all: [LanguageServerDefinition] = [
-        .init(id: "typescript", language: "TypeScript and JavaScript", extensions: ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"],
+        .init(id: "typescript", language: "TypeScript and JavaScript",
               commands: [["typescript-language-server", "--stdio"]], rootMarkers: ["tsconfig.json", "jsconfig.json", "package.json"],
               localBins: ["node_modules/.bin"], installHint: "npm install -g typescript typescript-language-server"),
-        .init(id: "python", language: "Python", extensions: ["py"],
+        .init(id: "python", language: "Python",
               commands: [["pyright-langserver", "--stdio"], ["basedpyright-langserver", "--stdio"], ["pylsp"]],
               rootMarkers: ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],
               localBins: [".venv/bin", "venv/bin", "node_modules/.bin"], installHint: "npm install -g pyright"),
-        .init(id: "rust", language: "Rust", extensions: ["rs"], commands: [["rust-analyzer"]], rootMarkers: ["Cargo.toml"],
+        .init(id: "rust", language: "Rust", commands: [["rust-analyzer"]], rootMarkers: ["Cargo.toml"],
               localBins: [], installHint: "rustup component add rust-analyzer"),
-        .init(id: "go", language: "Go", extensions: ["go"], commands: [["gopls"]], rootMarkers: ["go.mod"],
+        .init(id: "go", language: "Go", commands: [["gopls"]], rootMarkers: ["go.mod"],
               localBins: [], installHint: "go install golang.org/x/tools/gopls@latest"),
-        .init(id: "swift", language: "Swift", extensions: ["swift"], commands: [["sourcekit-lsp"]], rootMarkers: ["Package.swift"],
+        .init(id: "swift", language: "Swift", commands: [["sourcekit-lsp"]], rootMarkers: ["Package.swift"],
               localBins: [], installHint: "It comes with Xcode: xcode-select --install"),
-        .init(id: "c", language: "C, C++ and Objective-C", extensions: ["c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm"],
+        .init(id: "c", language: "C, C++ and Objective-C",
               commands: [["clangd"]], rootMarkers: ["compile_commands.json", "compile_flags.txt", "CMakeLists.txt", "Makefile"],
               localBins: [], installHint: "It comes with Xcode: xcode-select --install"),
-        .init(id: "ruby", language: "Ruby", extensions: ["rb"], commands: [["ruby-lsp"], ["solargraph", "stdio"]], rootMarkers: ["Gemfile"],
+        .init(id: "ruby", language: "Ruby", commands: [["ruby-lsp"], ["solargraph", "stdio"]], rootMarkers: ["Gemfile"],
               localBins: ["bin"], installHint: "gem install ruby-lsp"),
-        .init(id: "lua", language: "Lua", extensions: ["lua"], commands: [["lua-language-server"]], rootMarkers: [".luarc.json"],
+        .init(id: "lua", language: "Lua", commands: [["lua-language-server"]], rootMarkers: [".luarc.json"],
               localBins: [], installHint: "brew install lua-language-server"),
     ]
 
     public static func definition(for path: String) -> LanguageServerDefinition? {
-        let ext = (path as NSString).pathExtension.lowercased()
-        return all.first { $0.extensions.contains(ext) }
+        guard let server = LanguageCatalog.language(forPath: path)?.server else { return nil }
+        return all.first { $0.id == server }
     }
 
     /// The project a file belongs to: the nearest folder with a marker, inside the workspace

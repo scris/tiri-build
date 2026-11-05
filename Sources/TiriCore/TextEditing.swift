@@ -112,46 +112,14 @@ public struct CommentSyntax: Equatable, Sendable {
         a.line == b.line && a.block?.open == b.block?.open && a.block?.close == b.block?.close
     }
 
-    private static let slashes = CommentSyntax(line: "//", block: ("/*", "*/"))
-    private static let hash = CommentSyntax(line: "#")
-    private static let dashes = CommentSyntax(line: "--")
-    private static let markup = CommentSyntax(block: ("<!--", "-->"))
-    private static let cStyleBlock = CommentSyntax(block: ("/*", "*/"))
-    private static let semicolon = CommentSyntax(line: ";")
-    private static let percent = CommentSyntax(line: "%")
-
-    private static let byExtension: [String: CommentSyntax] = {
-        var table: [String: CommentSyntax] = [:]
-        func add(_ syntax: CommentSyntax, _ names: String) {
-            for name in names.split(separator: " ") { table[String(name)] = syntax }
-        }
-        add(slashes, "swift m mm h hpp hh hxx c cc cpp cxx cs java kt kts go rs js jsx mjs cjs ts tsx mts cts scss less php dart scala proto gradle groovy jsonc json5 code-workspace zig v sol glsl metal fs fsx")
-        add(hash, "py pyi rb sh bash zsh fish yaml yml toml r pl pm ex exs conf ini env tf tfvars gitignore dockerignore cfg properties mk cmake nim jl ps1 awk sed")
-        add(dashes, "sql lua hs elm ada")
-        add(markup, "html htm xml xhtml svg vue svelte md markdown mdx plist")
-        add(cStyleBlock, "css")
-        add(semicolon, "clj cljs edn lisp el scm asm s")
-        add(percent, "tex erl hrl")
-        return table
-    }()
-
-    private static let byName: [String: CommentSyntax] = [
-        "makefile": hash, "gnumakefile": hash, "dockerfile": hash, "gemfile": hash, "rakefile": hash, "podfile": hash, "brewfile": hash,
-        "cmakelists.txt": hash, ".zshrc": hash, ".zprofile": hash, ".zshenv": hash, ".bashrc": hash, ".bash_profile": hash, ".profile": hash,
-        ".gitignore": hash, ".dockerignore": hash, ".gitattributes": hash, ".env": hash, ".editorconfig": hash, ".npmrc": hash,
-    ]
-
     /// Nil when this kind of file has no comments, like JSON or plain text.
     public static func forFile(_ path: String) -> CommentSyntax? {
-        let name = (path as NSString).lastPathComponent.lowercased()
-        if let found = byName[name] { return found }
-        if name.hasPrefix(".env.") { return hash }
-        return byExtension[(name as NSString).pathExtension]
+        LanguageCatalog.language(forPath: path)?.comment
     }
 
     /// Whether a line ending in `:` opens a block in this kind of file.
     public static func colonOpensBlock(_ path: String) -> Bool {
-        ["py", "pyi", "yaml", "yml", "nim"].contains((path as NSString).pathExtension.lowercased())
+        LanguageCatalog.language(forPath: path)?.colonOpensBlock ?? false
     }
 }
 

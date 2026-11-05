@@ -54,6 +54,6 @@ import Testing
 
     @Test func latexFamilyUsesTheLatexGrammar() {
         #expect(FileClassifier.language(path: "a.sty") == "latex")
-        #expect(FileClassifier.language(path: "a.tex") == "tex")
+        #expect(FileClassifier.language(path: "a.tex") == "latex")
     }
 }

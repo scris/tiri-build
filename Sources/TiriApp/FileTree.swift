@@ -918,7 +918,6 @@ enum FileIcons {
     static func symbolName(forName name: String, isDirectory: Bool) -> String {
         if isDirectory { return "folder.fill" }
         switch (name as NSString).pathExtension.lowercased() {
-        case "md", "markdown", "mdx", "txt", "rst": return "doc.text"
         case "png", "jpg", "jpeg", "gif", "heic", "webp", "svg", "tiff", "bmp", "ico", "icns": return "photo"
         case "pdf": return "doc.richtext"
         case "mp4", "mov", "m4v", "webm", "mkv", "avi": return "film"
@@ -927,11 +926,14 @@ enum FileIcons {
         case "docx", "doc", "pages", "rtf": return "doc.richtext"
         case "xlsx", "xls", "numbers", "csv", "tsv": return "tablecells"
         case "html", "htm": return "globe"
-        case "json", "yaml", "yml", "toml", "plist", "xml", "ini", "conf", "env": return "curlybraces"
         case "zip", "tar", "gz", "tgz", "7z", "rar": return "doc.zipper"
-        case "swift", "js", "jsx", "ts", "tsx", "py", "rb", "go", "rs", "c", "cc", "cpp", "h", "m", "mm", "java", "kt", "cs", "php", "sh", "zsh", "bash", "css", "scss", "sql":
-            return "chevron.left.forwardslash.chevron.right"
-        default: return "doc"
+        default:
+            guard let language = LanguageCatalog.language(forPath: name) else { return "doc" }
+            switch language.icon {
+            case .prose: return "doc.text"
+            case .data: return "curlybraces"
+            case .code: return "chevron.left.forwardslash.chevron.right"
+            }
         }
     }
 

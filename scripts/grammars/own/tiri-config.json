@@ -1,0 +1,6 @@
+{"name":"tiri-config","scopeName":"source.tiri-config","patterns":[
+ {"name":"comment.line.number-sign","match":"(^|\\s)#.*$"},
+ {"name":"string.quoted.double","begin":"\"","end":"\"|$","patterns":[{"match":"\\\\.","name":"constant.character.escape"}]},
+ {"name":"string.quoted.single","begin":"(?<![\\w])'","end":"'|$"},
+ {"name":"constant.numeric","match":"\\b\\d+(\\.\\d+)?\\b"}
+]}

@@ -101,24 +101,18 @@ public enum SimpleSymbols {
     private static let css = Rule("^([.#@]?[A-Za-z_][^{;]*?)\\s*\\{\\s*$", .type)
 
     public static func scan(_ text: String, path: String, limit: Int = 5_000) -> [DocumentSymbol] {
-        let ext = (path as NSString).pathExtension.lowercased()
-        if ["md", "markdown", "mdx"].contains(ext) { return headings(text, limit: limit) }
         let rules: [Rule]
         var nameGroup = 1
-        switch ext {
-        case "sh", "bash", "zsh", "fish": rules = [shell]
-        case "mk": rules = [make]
-        case "yaml", "yml", "json", "jsonc":
+        switch LanguageCatalog.language(forPath: path)?.symbols ?? .code {
+        case .headings: return headings(text, limit: limit)
+        case .shell: rules = [shell]
+        case .make: rules = [make]
+        case .keys:
             rules = [keys]
             nameGroup = 2
-        case "toml", "ini", "cfg", "conf": rules = [section]
-        case "css", "scss", "less": rules = [css]
-        default:
-            if (path as NSString).lastPathComponent.lowercased() == "makefile" {
-                rules = [make]
-            } else {
-                rules = code
-            }
+        case .sections: rules = [section]
+        case .stylesheet: rules = [css]
+        case .code: rules = code
         }
         var found: [DocumentSymbol] = []
         var lineNumber = 0

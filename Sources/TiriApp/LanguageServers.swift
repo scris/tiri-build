@@ -371,7 +371,7 @@ final class LanguageServerHub {
     }
 
     private func belongs(_ path: String, to session: Session) -> Bool {
-        guard session.definition.extensions.contains((path as NSString).pathExtension.lowercased()) else { return false }
+        guard LanguageServerCatalog.definition(for: path)?.id == session.definition.id else { return false }
         return path.hasPrefix(session.key.root + "/")
     }
 

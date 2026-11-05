@@ -125,13 +125,7 @@ public enum DefinitionSearch {
 
     /// Languages that can call each other. A definition in another language is only a last resort.
     static func family(of path: String) -> String {
-        let ext = (path as NSString).pathExtension.lowercased()
-        switch ext {
-        case "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "vue", "svelte": return "js"
-        case "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "m", "mm": return "c"
-        case "kt", "kts", "java", "scala", "groovy": return "jvm"
-        default: return ext
-        }
+        LanguageCatalog.language(forPath: path)?.familyName ?? (path as NSString).pathExtension.lowercased()
     }
 
     /// The surest matches, nearest first.
