@@ -57,6 +57,7 @@ public final class HighlightEngine: @unchecked Sendable {
     private var api: JSValue?
     private var loadAttempted = false
     private var scopes: [String: String] = [:]
+    private var shippedInjections: [String: [String]] = [:]
     /// Kept for as long as the engine, since JavaScript's view of it doesn't copy.
     private var wasm: UnsafeMutableRawPointer?
     private var nextID = 1
@@ -90,6 +91,7 @@ public final class HighlightEngine: @unchecked Sendable {
               let indexData = try? Data(contentsOf: resources.appendingPathComponent("grammars/index.json")),
               let index = try? JSONSerialization.jsonObject(with: indexData) as? [String: Any] else { return false }
         scopes = index["scopes"] as? [String: String] ?? [:]
+        shippedInjections = index["injections"] as? [String: [String]] ?? [:]
         context.exceptionHandler = { _, exception in
             FileHandle.standardError.write(Data("highlight: \(exception?.toString() ?? "unknown")\n".utf8))
         }
@@ -103,7 +105,13 @@ public final class HighlightEngine: @unchecked Sendable {
         let reader: @convention(block) (String) -> Any? = { [weak self] scope in
             self?.grammarJSON(scope: scope) ?? NSNull()
         }
-        api.invokeMethod("start", withArguments: [index, buffer, reader])
+        var starting = index
+        var injections = shippedInjections
+        for entry in PluginGrammars.all {
+            for target in entry.injectTo { injections[target, default: []].append(entry.scope) }
+        }
+        starting["injections"] = injections
+        api.invokeMethod("start", withArguments: [starting, buffer, reader])
         self.context = context
         self.api = api
         // The promises above finish as this call returns to the top of JavaScript's stack.
@@ -125,10 +133,34 @@ public final class HighlightEngine: @unchecked Sendable {
     }
 
     private func grammarJSON(scope: String) -> String? {
+        if let plugin = PluginGrammars.json(scope: scope) { return plugin }
         guard let name = scopes[scope] else { return nil }
         let file = resources.appendingPathComponent("grammars/\(name).json.z")
         guard let packed = try? Data(contentsOf: file), let plain = try? (packed as NSData).decompressed(using: .zlib) else { return nil }
         return String(data: plain as Data, encoding: .utf8)
+    }
+
+    /// Plugins came or went. Grammars already compiled stay with the documents using them, and
+    /// new ones read what's there now. Those documents are told to start over by their owners.
+    public func pluginsChanged() {
+        queue.async {
+            guard let api = self.api else { return }
+            var injections = self.shippedInjections
+            for entry in PluginGrammars.all {
+                for target in entry.injectTo { injections[target, default: []].append(entry.scope) }
+            }
+            api.invokeMethod("restartRegistry", withArguments: [injections])
+            self.context?.evaluateScript("0")
+        }
+    }
+
+    /// Whether a grammar compiles, for `tiri plugin verify`. Waits, so never on the main thread.
+    public func canLoad(scope: String) -> Bool {
+        queue.sync {
+            let id = newID()
+            defer { close(id: id) }
+            return open(id: id, scope: scope)
+        }
     }
 
     // MARK: Calls into JavaScript. All on the queue.

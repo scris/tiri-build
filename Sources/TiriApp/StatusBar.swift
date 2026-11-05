@@ -39,9 +39,13 @@ struct StatusBar: View {
                     .frame(maxHeight: .infinity)
                 }
                 .scrollBounceBehavior(.basedOnSize)
-                LanguageStatusItem()
-                    .fixedSize()
-                    .padding(.trailing, 16)
+                HStack(spacing: 14) {
+                    PluginStatusItems()
+                    UnknownLanguageStatusItem()
+                    LanguageStatusItem()
+                }
+                .fixedSize()
+                .padding(.trailing, 16)
             }
             .frame(height: 25)
         }

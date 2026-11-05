@@ -160,6 +160,10 @@ final class LanguageServerHub {
     private func command(for definition: LanguageServerDefinition, root: String) -> (executable: String, arguments: [String], isLocal: Bool)? {
         let managed = managedCommand(for: definition)
         for command in definition.commands {
+            // In a plugin's own folder, which you approved.
+            if let name = command.first, name.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: name) {
+                return (name, Array(command.dropFirst()), false)
+            }
             if let name = command.first, let found = located[name] {
                 // One that's there but can't start, like a rustup shim, gives way to one that was added.
                 if wontStart.contains(found), let managed { return managed }
@@ -400,6 +404,26 @@ final class LanguageServerHub {
         if sessions.isEmpty {
             idleTimer?.invalidate()
             idleTimer = nil
+        }
+    }
+
+    /// A plugin brought or took away a server. One that's gone stops, including one whose plugin
+    /// is about to come back different, and whatever's open gets what it should have now.
+    func catalogChanged(stopping changed: Set<String>) {
+        let known = Set(LanguageServerCatalog.all.map(\.id))
+        for (key, session) in sessions where !known.contains(key.server) || changed.contains(key.server) {
+            session.client.stop()
+            sessions[key] = nil
+        }
+        model.languageRevision += 1
+        // Launch hasn't looked yet, and when it does it'll see these.
+        guard lookedUp || lookup != nil else { return }
+        lookedUp = false
+        located = [:]
+        remoteLocated = [:]
+        Task {
+            await locateServers()
+            startForOpenFiles()
         }
     }
 
@@ -1239,7 +1263,10 @@ extension AppModel {
         return languageServers.isRunning(definition) || languageServers.isStarting(definition) || !languageServers.knownDiagnostics(for: path).isEmpty
     }
 
-    var statusBarHasContent: Bool { barHasRepositories || languageHasNews || active.remote != nil }
+    var statusBarHasContent: Bool {
+        _ = controllerRevision
+        return barHasRepositories || languageHasNews || active.remote != nil || !plugins.statusItems.isEmpty || unknownLanguageExtension != nil
+    }
 }
 
 struct LanguageStatusItem: View {

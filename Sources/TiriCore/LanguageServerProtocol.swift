@@ -175,15 +175,28 @@ public enum LanguageServerCatalog {
               localBins: ["node_modules/.bin"], installHint: "npm install -g svelte-language-server"),
     ]
 
-    public static let all: [LanguageServerDefinition] = builtIn + ClaudeLanguagePlugins.servers(known: builtIn)
+    private static let shipped: [LanguageServerDefinition] = builtIn + ClaudeLanguagePlugins.servers(known: builtIn)
+    private static let storage = NSLock()
+    nonisolated(unsafe) private static var fromPlugins: [LanguageServerDefinition] = []
+
+    public static var all: [LanguageServerDefinition] {
+        // A plugin's own server comes first, so one you turned on is the one that's used.
+        storage.withLock { fromPlugins } + shipped
+    }
+
+    /// What plugins add, all of them at once.
+    public static func setPluginServers(_ servers: [LanguageServerDefinition]) {
+        storage.withLock { fromPlugins = servers }
+    }
 
     public static func definition(for path: String) -> LanguageServerDefinition? {
+        let everything = all
         if let server = LanguageCatalog.language(forPath: path)?.server {
-            return all.first { $0.id == server }
+            return everything.first { $0.id == server }
         }
         let ext = (path as NSString).pathExtension.lowercased()
         guard !ext.isEmpty else { return nil }
-        return all.first { $0.extraExtensions[ext] != nil }
+        return everything.first { $0.extraExtensions[ext] != nil }
     }
 
     /// The project a file belongs to: the nearest folder with a marker, inside the workspace

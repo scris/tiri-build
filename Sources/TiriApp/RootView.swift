@@ -580,8 +580,12 @@ struct ItemHeader: View {
         switch item.content {
         case .terminal, .settings:
             EmptyView()
+        case .plugin(let spec):
+            if let web = model.controller(for: item.id) as? WebController {
+                PluginPanelHeader(spec: spec, controller: web)
+            }
         case .file(let spec):
-            if model.accessReady, let web = model.controller(for: item.id) as? WebController {
+            if model.accessReady, let web = model.controller(for: item.id) as? WebController, web.panel == nil {
                 WebHeader(controller: web, filePath: spec.path)
             } else {
                 FileHeader(item: item, path: spec.path)
@@ -694,6 +698,7 @@ struct FileActions: View {
         if model.accessReady, let conversation = model.conversation(shownAt: path) {
             ConversationBar(conversation: conversation, path: path)
         }
+        PluginFileButtons(item: item, path: path)
         if model.accessReady, let notebook = model.controller(for: item.id) as? MarkdownController, notebook.isNotebook, !notebook.showingSource, notebook.canToggleSource {
             NotebookBar(viewer: notebook, kernel: model.notebookKernels.kernel(for: notebook.path))
         }

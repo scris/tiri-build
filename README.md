@@ -312,6 +312,40 @@ Tiri isn't tied to these three either. Press **Add an Agent** and give it any co
 
 Supporting one fully takes one entry in `AgentCatalog` (`Sources/TiriCore/Agents.swift`), which says how to recognize it, write a mention, resume it, install hooks and read their payloads. Everything else reads from there.
 
+## Plugins
+
+A plugin adds what a terminal can't draw: panels, file viewers, sidebar sections, status bar items, buttons above files, settings, commands and languages. Skills, hooks and MCP stay with your agent, so a plugin doesn't rebuild them, though it can carry a part for Claude Code that loads only in Tiri's terminals.
+
+You don't write them by hand. Say what you want, your agent writes and tests it, and you see what it adds and runs before turning it on. Type it into **New plugin**, under Plugins in Settings, or run **New Plugin…** from the palette or the Plugins menu: "show my pull requests in the sidebar", "open .csv files as a chart", "add a Run button above test files". A file in a language nobody here knows has a button in the bottom bar that asks your agent to add it.
+
+Your agent can also do it from the command line:
+
+```sh
+tiri plugin new my-thing        # a working start
+tiri plugin validate my-thing   # what it adds and runs, without running it
+tiri plugin test my-thing       # its own tests
+tiri plugin enable my-thing     # asks you, on screen
+tiri plugin reload              # reads the folder again, with no restart
+tiri plugin verify [--tests]    # every plugin against this build
+tiri plugin import some.vsix    # a VS Code extension's languages and grammars
+tiri run my-thing.hello a=b     # a plugin's commands work like any other
+```
+
+Its commands reach the palette, the Plugins menu, shortcuts and `tiri run` with no more work. Importing a `.vsix` runs none of its code and writes down everything that didn't come across. VS Code extensions with more to them get rewritten by an agent, which reports what it dropped: Tiri doesn't run them as they are.
+
+**What it can do:**
+
+- **Only you can turn one on.** An agent can ask, and the question names everything it adds and runs. Return doesn't press Turn On, since a question can appear while you're typing to an agent.
+- **Any change turns it off,** until you approve it again, with what changed listed. Tiri records a hash of its files, and looks again right before anything runs. What npm rebuilds from an exact lockfile, in `node_modules`, isn't part of that hash, and install scripts never run.
+- **Panels are sandboxed.** Each plugin has separate storage. A panel only gets files from its own folder, only runs scripts from those files, reaches only the addresses it declared, and can't navigate away. It reaches the rest of Tiri through a bridge that only allows what it declared.
+- **A panel can't make your agent do anything.** Right after you click or type in it, it can leave words in the agent's input, and you're the one who presses Return. It's refused if the agent is waiting for an answer, where your Return would answer it, and if what's running doesn't hold pastes as pastes, where they could run by themselves. Otherwise a page with no access could borrow an agent's.
+- **Programs run with your full access.** Anything a plugin runs can do what you can, including reading your files, and Tiri says so before you turn it on. The control socket has no per-client login, so nothing short of an OS sandbox would change that, and there isn't one yet. A command that's finished or past its time is stopped, with whatever it left running.
+- **Nothing loads by itself.** Plugins in a cloned repository aren't looked at. A terminal on a server can't manage plugins, run their commands or drive their panels. On a server's workspace, programs run on the server, from a copy of the plugin's folder in `~/.tiri/plugins`, unless they say `"where": "mac"`.
+- **It can't slow you down.** There's nothing for a plugin to hook while you type, scroll or read a terminal. One you aren't using costs a directory walk at launch: panels open on demand, sections load when you unfold them, and background processes stop after 10 idle minutes.
+- **Turning one off takes all of it away:** commands, keys, languages, sections, items, panels, processes and servers. Its settings stay until you remove it.
+
+**What this doesn't stop:** the approval record is a file in Tiri's own folder, and anything running as you could edit it. It stops an agent that's been tricked into asking, not a program already running with your access, which could as easily edit your shell's startup files. A panel's page can probably still leak a little through DNS lookups, which a content policy doesn't cover. And a plugin's process on a server is as trustworthy as that server.
+
 ## Dark mode
 
 Choose Dark in Settings, or leave it on System while your Mac is dark, and everything follows, live: the app, terminals, code, markdown, web pages and media.
@@ -337,6 +371,10 @@ tiri settings open terminal.fontSize
 Keyboard shortcuts work the same way. Under Keyboard, commands are grouped by what they're for, and the list beside them jumps to any group. Click a shortcut and press the keys, or point at a command that has none and click **Add Shortcut**. If another command has that key, Tiri asks before taking it. **Find by Key** tells you what a key does, or that it's free. **Changed** shows only the ones you've changed. Your agent can change them with `tiri keys`.
 
 ## Development
+
+Test copies from `scripts/dev-app.sh` hide themselves as apps, take no clicks, and are stopped if a window reaches the screen, because Stage Manager brings back any window put off-screen. `TIRI_DEV_MAY_TAKE_FOCUS=yes` makes one visible, for when nobody's using this Mac.
+
+`scripts/e2e-plugins.sh` drives a test copy through the whole plugin system, including trying to break out of a panel, and `TIRI_BUDGETS=1` checks the speed budgets with 50 plugins. `scripts/e2e-plugins-remote.sh` does the same for a workspace on a server.
 
 ```sh
 swift test          # unit tests and an in-process control server test

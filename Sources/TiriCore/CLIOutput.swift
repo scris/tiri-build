@@ -169,7 +169,24 @@ public enum CLIOutput {
             say(key.isEmpty ? "no shortcut" : key)
         case "open", "preview", "term":
             if let item = response.result?["item"]?.stringValue { say(item) }
-        case "focus", "close", "notify", "theme", "web-dark", "reveal", "run", "send", "workspace.switch",
+        case "plugin.list":
+            if response.result?.arrayValue?.isEmpty != false {
+                say("No plugins yet. Ask your agent for one, or start with tiri plugin new <name>. tiri plugin api explains them.")
+            }
+            for entry in response.result?.arrayValue ?? [] {
+                say([cell(entry["name"]), cell(entry["state"]), cell(entry["version"]), cell(entry["title"]), cell(entry["why"])].joined(separator: "\t"))
+            }
+        case "plugin.logs":
+            say(cell(response.result?["text"]))
+        case "plugin.enable", "plugin.remove":
+            say("Tiri is asking for a yes on screen. Nothing changes until the person using it presses the button.")
+        case "plugin.reload", "plugin.disable", "plugin.update":
+            break
+        case "plugin.post":
+            say("Reached \(response.result?["reached"]?.intValue ?? 0) open panels.")
+        case "run":
+            if let output = response.result?["output"]?.stringValue, !output.isEmpty { say(output.hasSuffix("\n") ? String(output.dropLast()) : output) }
+        case "focus", "close", "notify", "theme", "web-dark", "reveal", "send", "workspace.switch",
              "workspace.new", "workspace.add-folder", "workspace.remove-folder", "workspace.import",
              "workspace.rename", "workspace.delete", "quit", "settings.open", "follow", "diff", "select":
             break

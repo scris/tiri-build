@@ -100,6 +100,7 @@ struct LocalTerminalBackend: TerminalBackend {
             ? (ProcessInfo.processInfo.environment["SHELL"] ?? userShell())
             : shell
         var environment = ProcessInfo.processInfo.environment
+        let ownPluginFolders = environment["CLAUDE_CODE_PLUGIN_DIRS"]
         // Nothing from whatever launched Tiri should leak in. If Tiri was started from inside an
         // agent session, a terminal's agent would think it's a child of that session.
         for key in environment.keys where key.hasPrefix("CLAUDE_CODE") || key == "CLAUDECODE"
@@ -121,6 +122,9 @@ struct LocalTerminalBackend: TerminalBackend {
             environment["CLAUDE_CODE_SSE_PORT"] = String(bridge.port)
             environment["ENABLE_IDE_INTEGRATION"] = "true"
         }
+        // Plugins' parts for Claude Code, in Tiri's terminals only, beside any you'd set yourself. One folder,
+        // holding copies of what you approved, so a shell that's already open follows plugins coming and going.
+        environment["CLAUDE_CODE_PLUGIN_DIRS"] = ((ownPluginFolders.map { [$0] } ?? []) + [ClaudeParts.folder.path]).joined(separator: ":")
         // `tiri` works in every Tiri terminal, wherever the CLI was installed.
         if let helpers = Bundle.main.resourceURL?.appendingPathComponent("bin").path {
             environment["PATH"] = helpers + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
@@ -166,6 +170,20 @@ final class TiriTerminalView: LocalProcessTerminalView {
     private var hoverKey: String?
     private var hoverTarget: LinkTarget?
     private var swallowNextMouseUp = false
+
+    /// Whether what's running asked for pasted text to be marked as a paste, so that a line break in it
+    /// isn't taken as pressing Return. SwiftTerm keeps its terminal to itself on a Mac, and this is only
+    /// looked at when something's about to be pasted. Not being able to tell counts as no.
+    var holdsPastes: Bool {
+        var mirror: Mirror? = Mirror(reflecting: self)
+        while let current = mirror {
+            for child in current.children where child.label == "terminal" {
+                if let terminal = child.value as? Terminal { return terminal.bracketedPasteMode }
+            }
+            mirror = current.superclassMirror
+        }
+        return false
+    }
 
     enum LinkTarget {
         case choice([ResolvedPath])
@@ -1057,6 +1075,10 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// `resuming` tries the same conversation again, for when what stopped it may have passed.
     func restart(resuming: Bool = false) {
         guard exited else { return }
+        if let plugin = spec.plugin, model.plugins.enabledPlugin(named: plugin) == nil {
+            model.showToast(title: "\(plugin) is off", detail: "Turn it on to run this again.", symbol: "puzzlepiece.extension", tint: .secondary)
+            return
+        }
         model.updateRuntime(itemID) { runtime in
             runtime.status = .idle
             runtime.exitCode = nil

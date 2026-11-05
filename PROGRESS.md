@@ -22,6 +22,17 @@ Small real turns with Claude Code, Codex and Grok, in a demo project and in a wi
 
 Over SSH: real Claude Code on a Mac acting as a server, with a connection dropped mid-turn. On a short-lived Linux VM: the server suite (58 of 58), notebooks with a dropped connection, Other Work, conversations, one-shot protection, real exit codes and lines surviving reattaches, with stand-ins for agents since no agent's login was copied there.
 
+### Plugins (2026-11-04)
+
+Two suites against real test copies: `scripts/e2e-plugins.sh` (214 checks with its speed budgets, many of them attacks from inside a panel, last run on a copy signed as a release is) and `scripts/e2e-plugins-remote.sh` (25, against a private SSH server on this Mac). 49 unit tests. An independent review of the code found 24 defects, including ways to send data out of a panel and to get a panel's words sent. They are fixed, most with a test, except that approvals are not signed (a program already running as you could forge one anyway, which the README says), a copy of a plugin on a server is not checked again (what it can reach on the Mac was narrowed instead), and a program on a server that ignores its input closing can outlive being stopped (the guide tells authors).
+
+Real extensions and real agents:
+
+- **LeetCode, ported by a real Claude Code** given only `tiri plugin api`: all 17 of the extension's commands, 65 tests, and a list of what it dropped. Run in Tiri against the real site, signed out: 4,101 real problems in the sidebar, a real problem in the panel with no errors in its console, and a solution file made and opened. Anything that needs signing in, including Test, Submit and Star, only ran against a mock site.
+- **Gleam and Zig** `.vsix` files from Open VSX imported, turned on, and compiled in the real engine.
+- **Words from a panel in a real Claude Code:** three lines waited in its input, with it idle, under bypass permissions, until they'd have been sent by a person.
+- **A plugin's Claude Code part:** a skill loaded in a shell that was already open, and was gone from that same shell once the plugin was off.
+
 ### Not verified yet
 
 | What | Why | How to check |
@@ -40,6 +51,11 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 | Opening a past conversation with a real mouse, and a real resume | Return and the jump to a running conversation were tested with key events and a stand-in terminal. Clicking a row, clicking Read and ⌘↩ weren't pressed, and no real agent was resumed from the list. Titles were read on 20 real conversations and 40 ran without failing. Summarize all was run on made-up conversations, not a whole history, and its switch in Settings wasn't seen | Click a row, click Read, and turn on Title every conversation in advance |
 | ⌘T with sourcekit-lsp on a built package | Tested with clangd. An unbuilt Swift package has no index, so it reports nothing | Build, press ⌘T, type a name |
 | The paperclip's picker, Back on a diff in a Peek, the pointer over a change mark | Everything else in these flows had real clicks. These weren't pressed through | Try each once |
+| Real clicks on plugins: Turn On, a toggle, a sidebar row, a button above a file, a link in a panel | Test copies stay hidden and take no clicks. The dialog's buttons were pressed through AppKit, and a key went through the app's own event queue. A real ⌥⇧⌘J did run a command, before copies were hidden. Whether a real click counts as someone having acted in a panel hasn't been tried, and if it doesn't, a panel's Ask button and links do nothing rather than too much | Turn on a plugin, click a row, click a button in a panel that asks your agent, and click a link in one |
+| Return on the Turn On question landing on Cancel | Return posted to a background copy didn't reach the sheet, and left the plugin off. So Return can't turn one on, but whether it dismisses the sheet wasn't seen | Press Return on the question |
+| A panel leaking through DNS | A content policy doesn't cover `dns-prefetch`. It wasn't tried, so it's assumed open | Watch DNS while a panel adds such a link |
+| Plugins on a real Linux server | Tested on a private SSH server on this Mac. The first copy and login-shell handling are the likeliest to differ | Connect to a server and run a plugin's command there |
+| Words from a panel in a real Codex or Grok | A real Claude Code and a stand-in that behaves like one. Codex and Grok ask for pasted text the same way, as far as is known | Press a panel's Ask button with each running |
 | Dragging from Finder into an agent | Dragging from the explorer into Claude had real events | Drag a file in from Finder |
 | Clicking in Settings | Panes, search, recording, conflicts, filters, find by key and narrow panes were driven through the CLI, a test-only command and real key events posted to a test copy. Those windows take no clicks or hover, so the row buttons, the hover-only Add Shortcut, the info buttons, the word chips and the Ask menu weren't pressed | Click through Settings, and point at a command with no shortcut |
 | Apple Intelligence really being unavailable | This Mac has it, so each state was pretended in a test copy. Search and titles were checked without the model, and a real title was written when it came back. Open System Settings wasn't pressed, and the screen noticing a real change by itself wasn't seen. Title every conversation looks again within 5 minutes | Turn Apple Intelligence off in System Settings with Settings open |
@@ -82,6 +98,7 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 - **Dark mode:** every viewer. PDF, Office, iWork, RTF, font and web archive pages are inverted with their colors kept, with a moon button for true colors. Black artwork on transparency gets a light plate.
 - **Viewers:** markdown (rendered and source, with math and Mermaid), Jupyter notebooks (rendered and source), code with highlighting, images (HEIC, GIF), SVG, PDF (keeps page and zoom on reload), audio, video, HTML, CSV and TSV of any size, Office and iWork through Quick Look, Quick Look for everything else. All reload when the file changes. A `.tex` file offers its PDF to the side.
 - **Web:** address bar, back, forward, reload, auto-reload for local files, forced dark.
+- **Plugins:** a folder and a manifest, written by your agent and turned on by you. Commands, settings, panels, file viewers, sidebar sections, status bar items, buttons above files, languages, background processes, and a part for Claude Code. `tiri plugin`, and a Plugins pane in Settings that shows where a plugin can go and takes one line to ask for one. VS Code extensions: languages and grammars import directly, and the rest gets ported by an agent. See the README for what it can and can't do.
 - **Control API and CLI:** everything in spec §5, plus `send`, `read`, `layout`, `tree`, `commands`, `run`, `perf`, `hook`, `hooks`.
 - **Navigation:** quick open, command palette, all §6 keybindings, chords, breadcrumbs, find, tab drag and drop.
 - **Settings:** panes for General, Agents, Terminal, Editor, Languages, Files and Keyboard, built from one list of settings, with one search across them all. `tiri settings` is there for agents, and `tiri settings open` shows the user a pane, a setting, a command or a search. A one-click prompt goes from the screen to your agent. Keyboard shortcuts are grouped by what they're for, can be filtered and found by key, and ask before taking a key from another command; `tiri keys` does the same for agents. Nobody needs to touch JSON. The file is only where they're stored.
@@ -94,7 +111,7 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 - One main window. Any tab can move to its own window, but a second window can't hold its own workspace. A second instance can't take the control socket and says so.
 - Notebook cells are edited as plain text, without highlighting until you leave the cell, and there's no completion in them.
 - Adding a language server on an SSH server goes through your agent, since Tiri's own install is only for this Mac. Python gets one server per file, so ruff doesn't run alongside basedpyright.
-- A language with no entry in the server catalog, like Gleam, has colors and word completion but nothing offers to add a server, until the plugin system gives an agent somewhere to put one.
+- Plugins are personal: a folder on this Mac, with no store or sharing. Codex and Grok have no way to load a folder of skills without changing their own settings, so they find a plugin's skills listed in `tiri --skill`, and Claude Code is the only one that gets its part loaded automatically. A plugin's language server from its own folder only runs for workspaces on this Mac.
 - Notebook outputs that need scripts (Plotly, widgets) show a picture if they have one, or a note. The Source button on a very large notebook can stall for seconds.
 - A server: a workspace is on one server, not several, and not a mixture with local folders. Agents can't be told apart between two Macs on one server's Claude settings. If the connection comes back on another forwarded port, an agent already running there needs `/ide` to find the editor again.
 
@@ -110,6 +127,9 @@ A language server isn't counted below, because it's optional and only runs once 
 | Open text, code or image under 5 MB | < 100 ms | 15–30 ms |
 | Colors on 60 visible lines | < 16 ms | 1.2 ms |
 | Filtering 5,000 names for completion | < 16 ms | 1.9 ms |
+| Cold launch to window, with 50 plugins, 10 on | < 500 ms | 210–240 ms, the higher on a signed release |
+| Open a plugin panel | < 100 ms | 54–78 ms, the first included. Each plugin has its own storage, so there's no warm page to reuse |
+| Reading 50 plugins, off the main thread | < 150 ms, as a guard. Launch doesn't wait for it | 92–122 ms |
 | First use of a grammar | < 120 ms | Engine 7 ms, then Rust 14 ms; markdown, which pulls in many others, 77 ms |
 | Open markdown | < 100 ms | 47 ms typically; 110 ms for a 124 KB file (over budget) |
 | Open HEIC | (not in budget, was 8 MB) | 134 ms, decoded off the main thread |
@@ -162,4 +182,4 @@ Open times run from the request until the content is showing, except for Office 
 2. Highlighting while typing in a notebook cell, and a way to reopen a file in another encoding.
 3. A second window with its own workspace.
 4. An MCP wrapper around the control API, now that the CLI is stable.
-5. The plugin system, starting with its core. Snippets and AI ghost text are decided against, and so is any Git control beyond fetch, pull and push: the rest is for agents.
+5. What the LeetCode port found missing from plugins: a pop-up list of choices, right-click menus, marks on files in the explorer, and a way to save the file in front before a command runs, so a test sees what's on screen. Later, a store or a way to share them, probably a plain JSON index, and an OS sandbox for their programs, which hasn't been tried. Snippets and AI ghost text are decided against, and so is any Git control beyond fetch, pull and push: the rest is for agents.

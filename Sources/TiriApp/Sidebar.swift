@@ -93,6 +93,10 @@ struct SidebarView: View {
                         .frame(height: min(CGFloat(model.active.review.count) * 41 + 6, max(geometry.size.height * 0.28, 60)))
                 }
             }
+            ForEach(model.plugins.sections) { section in
+                Divider()
+                PluginSidebarSection(section: section)
+            }
             if explorerOpen, itemsOpen {
                 resizeHandle
             } else {

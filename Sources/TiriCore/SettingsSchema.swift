@@ -20,7 +20,7 @@ public enum MacModelState: String, CaseIterable, Sendable {
 
 /// The parts of the settings screen, in the order it lists them.
 public enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
-    case general, agents, terminal, editor, languages, files, keyboard
+    case general, agents, terminal, editor, languages, plugins, files, keyboard
 
     public var id: String { rawValue }
 
@@ -31,6 +31,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
         case .terminal: "Terminal"
         case .editor: "Editor"
         case .languages: "Languages"
+        case .plugins: "Plugins"
         case .files: "Files"
         case .keyboard: "Keyboard"
         }
@@ -43,6 +44,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
         case .terminal: "terminal"
         case .editor: "chevron.left.forwardslash.chevron.right"
         case .languages: "curlybraces"
+        case .plugins: "puzzlepiece.extension"
         case .files: "folder"
         case .keyboard: "keyboard"
         }
@@ -248,7 +250,8 @@ public enum SettingsSchema {
     }
 
     public static func definition(for key: String) -> SettingDefinition? {
-        all.first { $0.key == key }
+        if key.hasPrefix("plugin.") { return fromPlugins.first { $0.key == key } }
+        return all.first { $0.key == key }
     }
 
     public struct InvalidValue: Error, CustomStringConvertible {
@@ -302,7 +305,7 @@ public enum SettingsSchema {
         try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
     }
 
-    static func format(_ number: Double) -> String {
+    public static func format(_ number: Double) -> String {
         number == number.rounded() ? String(Int(number)) : String(number)
     }
 

@@ -34,16 +34,7 @@
   var registry = null;
   var kindOfColor = [];
 
-  function start(index, wasm, reader) {
-    read = reader;
-    injections = index.injections || {};
-    onig.loadWASM({
-      instantiator: function (imports) {
-        // Synchronous on purpose. This thread has no run loop for a compile to report back on.
-        var instance = new WebAssembly.Instance(new WebAssembly.Module(wasm), imports);
-        return Promise.resolve({ instance: instance, module: null });
-      },
-    }).then(function () { api.engineReady = 1; }, function (e) { api.engineReady = -1; api.engineError = String(e); });
+  function makeRegistry() {
     registry = new tm.Registry({
       onigLib: Promise.resolve({
         createOnigScanner: function (patterns) { return new onig.OnigScanner(patterns); },
@@ -61,6 +52,26 @@
       var match = /^#00000([1-7])$/.exec(colors[i] || '');
       kindOfColor[i] = match ? Number(match[1]) : 0;
     }
+  }
+
+  function start(index, wasm, reader) {
+    read = reader;
+    injections = index.injections || {};
+    onig.loadWASM({
+      instantiator: function (imports) {
+        // Synchronous on purpose. This thread has no run loop for a compile to report back on.
+        var instance = new WebAssembly.Instance(new WebAssembly.Module(wasm), imports);
+        return Promise.resolve({ instance: instance, module: null });
+      },
+    }).then(function () { api.engineReady = 1; }, function (e) { api.engineReady = -1; api.engineError = String(e); });
+    makeRegistry();
+  }
+
+  // A plugin came or went. What's compiled stays with whoever has it, and everything from here on
+  // reads what's there now.
+  function restartRegistry(next) {
+    injections = next || {};
+    makeRegistry();
   }
 
   var docs = new Map();
@@ -169,6 +180,7 @@
 
   var api = {
     start: start,
+    restartRegistry: restartRegistry,
     open: open,
     status: function (id) { var d = docs.get(id); return d ? d.status : -1; },
     close: function (id) { docs.delete(id); },

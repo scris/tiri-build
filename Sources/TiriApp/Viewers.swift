@@ -64,6 +64,7 @@ final class LocalFileSchemeHandler: NSObject, WKURLSchemeHandler {
 
 enum ViewerFactory {
     static func make(itemID: ItemID, spec: FileSpec, model: AppModel) -> ItemController {
+        if let viewer = model.plugins.makeViewer(itemID: itemID, spec: spec) { return viewer }
         let kind = FileClassifier.classify(path: spec.path) {
             guard let handle = FileHandle(forReadingAtPath: spec.path) else { return nil }
             defer { try? handle.close() }
@@ -1178,6 +1179,27 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
+    /// A plugin came or went. Same text, and maybe another language now.
+    func languagesChanged(restarting scopes: Set<String>) {
+        let language = LanguageCatalog.language(forPath: path, firstLine: Self.firstLine(of: textView.string))
+        // The same grammar under the same name carries on, with nothing to see.
+        if let grammar = language?.grammar, scopes.contains(grammar) { highlighter.use(language: nil) }
+        highlighter.use(language: language)
+    }
+
+    var currentLineForPlugins: Int {
+        let text = textView.string as NSString
+        let location = min(textView.selectedRange().location, text.length)
+        var line = 1
+        var index = 0
+        while index < location {
+            let unit = text.character(at: index)
+            if unit == 10 || (unit == 13 && (index + 1 >= text.length || text.character(at: index + 1) != 10)) { line += 1 }
+            index += 1
+        }
+        return line
+    }
+
     func save(overwriting: Bool) -> SaveResult {
         guard isDirty else { return .saved }
         let onDisk = Self.read(path: path).0
@@ -1189,6 +1211,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             isDirty = false
             model.languageServers.didSave(path)
             model.remote.didSave(path)
+            model.plugins.fileSaved(path)
             return .saved
         } catch {
             return .failed(error.localizedDescription)
@@ -1256,6 +1279,10 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         model.languageServers.viewerShown(path)
         highlighter.paintVisible()
         completion.refreshWordsSoon(delay: 0.1)
+        // The bar offers to add a language nobody knows, once there's a text file to say it about.
+        if LanguageCatalog.language(forPath: path) == nil {
+            DispatchQueue.main.async { [weak self] in self?.model.controllerRevision += 1 }
+        }
     }
 
     func isInStringOrComment(_ offset: Int) -> Bool { highlighter.isInStringOrComment(offset) }

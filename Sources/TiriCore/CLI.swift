@@ -5,6 +5,8 @@ public enum CLIParser {
     public enum Parsed: Equatable, Sendable {
         case request(ControlRequest, json: Bool)
         case printText(String)
+        /// Works on files, with no app, and only on this Mac: a server's terminal is refused.
+        case local(PluginTools.Action)
         /// `tiri notify` outside a Tiri terminal: succeed quietly so hooks never break elsewhere.
         case quietSuccess
     }
@@ -61,7 +63,8 @@ public enum CLIParser {
         case "--version", "-v":
             return .printText("tiri \(TiriCoreVersion.string)")
         case "--skill":
-            return .printText(AgentGuide.markdown)
+            // On a server, what's on this Mac means nothing.
+            return .printText(AgentGuide.markdown + (environment.translate == nil ? PluginTools.skillsSection() : ""))
 
         case "ping":
             return request("ping")
@@ -285,6 +288,17 @@ public enum CLIParser {
             }
             guard args.isEmpty else { throw UsageError("usage: tiri languages [add <id>]") }
             return request("languages")
+
+        case "dev-plugin-answer":
+            guard args.count == 1, args[0] == "yes" || args[0] == "no" else { throw UsageError("usage: tiri dev-plugin-answer yes|no   (test copies only)") }
+            return request("dev.plugin-answer", ["yes": .bool(args[0] == "yes")])
+
+        case "dev-plugin-question":
+            return request("dev.plugin-question")
+
+        case "dev-key":
+            guard args.count == 1, let code = Int(args[0]) else { throw UsageError("usage: tiri dev-key <key code>   (test copies only)") }
+            return request("dev.key", ["code": .int(code)])
 
         case "dev-compose":
             // What an input method does, which keys posted to a process can't: `dev-compose ni` shows
@@ -557,8 +571,92 @@ public enum CLIParser {
             }
 
         case "run":
-            guard args.count == 1 else { throw UsageError("usage: tiri run <command-id>   (see tiri commands)") }
-            return request("run", ["command": .string(args[0])])
+            // `tiri run leetcode.open id=12` hands a plugin's command what it asks for.
+            guard let id = args.first else { throw UsageError("usage: tiri run <command-id> [name=value ...]   (see tiri commands)") }
+            var payload: [String: JSONValue] = ["command": .string(id)]
+            var named: [String: JSONValue] = [:]
+            for pair in args.dropFirst() {
+                guard let equals = pair.firstIndex(of: "="), equals != pair.startIndex else {
+                    throw UsageError("usage: tiri run <command-id> [name=value ...]   (see tiri commands)")
+                }
+                named[String(pair[..<equals])] = .string(String(pair[pair.index(after: equals)...]))
+            }
+            if !named.isEmpty { payload["args"] = .object(named) }
+            if let item = environment.itemID { payload["source"] = .string(item) }
+            return request("run", payload)
+
+        case "plugin", "plugins":
+            let usage = """
+            usage: tiri plugin                     (what's installed, and what's on)
+                   tiri plugin new <name> [--dir DIR]
+                   tiri plugin validate <folder|name>   (what it adds and runs, without running it)
+                   tiri plugin test <folder|name>
+                   tiri plugin install <folder>   (copies it in, off)
+                   tiri plugin import <file.vsix> [--dir DIR]   (a VS Code extension's languages and grammars)
+                   tiri plugin enable <name>      (asks the person using Tiri)
+                   tiri plugin disable <name> | remove <name>
+                   tiri plugin reload [<name>]    (reads the folder again, with no restart)
+                   tiri plugin verify [<name>] [--tests]   (every plugin against this build)
+                   tiri plugin logs <name>        (what its programs printed to stderr)
+                   tiri plugin update <name> sidebar|status <id> <json>   (what a section or item shows)
+                   tiri plugin post <name>[.<panel>] <event> [<json>]   (tells its open panels)
+                   tiri plugin api                (the manifest and panel API, for writing one)
+            """
+            var options = Options(Array(args.dropFirst()))
+            let directory = try options.value("--dir")
+            let tests = options.flag("--tests")
+            let subcommand = args.first ?? "list"
+            func onlyName() throws -> String {
+                guard let name = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                return name
+            }
+            switch subcommand {
+            case "list":
+                try options.finish()
+                return request("plugin.list")
+            case "api":
+                try options.finish()
+                return .printText(PluginGuide.markdown)
+            case "new":
+                return .local(.new(name: try onlyName(), folder: directory))
+            case "validate":
+                return .local(.validate(try onlyName()))
+            case "test":
+                return .local(.test(try onlyName()))
+            case "install":
+                return .local(.install(try onlyName()))
+            case "import":
+                return .local(.importVSIX(file: try onlyName(), folder: directory))
+            case "verify":
+                let name = options.positional()
+                try options.finish()
+                return .local(.verify(name: name, runTests: tests))
+            case "enable", "disable", "remove", "logs":
+                return request("plugin." + subcommand, ["name": .string(try onlyName())])
+            case "reload":
+                let name = options.positional()
+                try options.finish()
+                return request("plugin.reload", name.map { ["name": .string($0)] } ?? [:])
+            case "update":
+                guard let name = options.positional(), let surface = options.positional(), ["sidebar", "status"].contains(surface),
+                      let id = options.positional(), let text = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                guard let value = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else { throw UsageError("That isn't JSON: \(text)") }
+                return request("plugin.update", ["name": .string(name), "surface": .string(surface), "id": .string(id), "value": value])
+            case "post":
+                guard let name = options.positional(), let event = options.positional() else { throw UsageError(usage) }
+                let text = options.positional()
+                try options.finish()
+                var payload: [String: JSONValue] = ["name": .string(name), "event": .string(event)]
+                if let text {
+                    guard let value = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else { throw UsageError("That isn't JSON: \(text)") }
+                    payload["data"] = value
+                }
+                return request("plugin.post", payload)
+            default:
+                throw UsageError(usage)
+            }
 
         case "send":
             var options = Options(args)
@@ -635,7 +733,9 @@ public enum CLIParser {
       tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open [<what>]]
       tiri send <item-id> <text> [--enter]
       tiri read <item-id> [--lines N]
-      tiri layout | tree | commands | run <command-id> | perf
+      tiri plugin [new | validate | test | install | import | enable | disable | remove | reload | verify | logs | update | post | api]
+                                   (panels, viewers, commands and languages of your own: tiri plugin api)
+      tiri layout | tree | commands | run <command-id> [name=value ...] | perf
       tiri ping
       tiri --skill      markdown guide for agents
 
@@ -962,6 +1062,26 @@ public enum AgentGuide {
     ```
 
     When someone asks about their settings or shortcuts, run these, describe them in plain words, and change what they ask for.
+
+    ## Plugins
+
+    When someone wants Tiri to show or do something it doesn't, write a plugin. Panels, file viewers,
+    sidebar sections, status bar items, buttons above files, settings and languages all come from a
+    plugin in a folder. You write it, and the person turns it on. `tiri plugin api` is the whole
+    reference, including how to port a VS Code extension, and worth reading before you start.
+
+    ```sh
+    tiri plugin new my-thing              # a working start, in Tiri's plugin folder
+    tiri plugin validate my-thing         # what it adds and runs, without running it
+    tiri plugin test my-thing             # its own tests
+    tiri plugin enable my-thing           # asks the person. You can't turn one on yourself
+    tiri plugin reload                    # after editing. Any change needs their yes again
+    tiri plugin import some.vsix          # a VS Code extension's languages and grammars
+    tiri run my-thing.hello name=value    # a plugin's commands work like any other
+    ```
+
+    Skills, hooks and MCP servers belong in your own plugin system, not here. A Tiri plugin is for
+    what a terminal can't draw. It can carry a part for Claude Code too, loaded only in Tiri's terminals.
 
     ## Anything else
 

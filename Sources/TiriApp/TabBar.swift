@@ -21,6 +21,9 @@ struct ItemIcon: View {
             Image(systemName: "gearshape").foregroundStyle(.secondary)
         case .diff:
             Image(systemName: "plus.forwardslash.minus").foregroundStyle(.secondary)
+        case .plugin(let spec):
+            Image(systemName: model.plugins.enabledPlugin(named: spec.plugin)?.manifest?.panels?.first { $0.id == spec.panel }?.symbol ?? "puzzlepiece.extension")
+                .foregroundStyle(.secondary)
         }
     }
 }

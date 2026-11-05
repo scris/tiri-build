@@ -819,10 +819,14 @@ enum RemoteRelay {
             return .init(output: text + "\n")
         case .quietSuccess:
             return .init()
+        case .local:
+            // What's installed on this Mac doesn't get decided from a server.
+            return refuse("plugins can only be managed on the Mac, not from a server.")
         case .request(var control, let json):
             guard allowed.contains(control.cmd) else {
                 return refuse("\(control.cmd) can only be run on the Mac, not from a server.")
             }
+            control.args["fromServer"] = true
             // Everything a path could mean has to be on this server. Nothing here is a path on the Mac.
             for key in ["path", "cwd", "folder", "file"] {
                 guard let path = control.args[key]?.stringValue else { continue }

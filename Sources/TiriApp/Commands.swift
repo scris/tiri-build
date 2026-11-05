@@ -145,6 +145,9 @@ extension AppModel {
             AppCommand(id: "themeLight", title: "Theme: Light", category: "Settings") { $0.setTheme(.light) },
             AppCommand(id: "themeDark", title: "Theme: Dark", category: "Settings") { $0.setTheme(.dark) },
             AppCommand(id: "manageLanguageServers", title: "Language Servers…", category: "Settings") { $0.openLanguageServerSettings() },
+            AppCommand(id: "newPlugin", title: "New Plugin…", category: "Settings") { $0.promptForNewPlugin() },
+            AppCommand(id: "managePlugins", title: "Plugins…", category: "Settings") { $0.openPluginSettings() },
+            AppCommand(id: "reloadPlugins", title: "Reload Plugins", category: "Settings") { $0.plugins.rescan() },
             AppCommand(id: "installCommandLine", title: "Install tiri Command for Other Terminals…", category: "Settings") {
                 $0.confirmCommandLineTool(install: true)
             },
@@ -164,9 +167,7 @@ extension AppModel {
         return list
     }()
 
-    private static let commandsByID: [String: AppCommand] = Dictionary(uniqueKeysWithValues: staticCommands.map { ($0.id, $0) })
-
-    func command(_ id: String) -> AppCommand? { Self.commandsByID[id] }
+    func command(_ id: String) -> AppCommand? { commands.byID[id] }
 
     /// Everything that can have a shortcut, as Settings lists it: the same rows whatever's going
     /// on, with the words a heading already says left out.
@@ -189,7 +190,7 @@ extension AppModel {
 
     /// Static commands plus the ones that depend on what's in the app right now.
     var allCommands: [AppCommand] {
-        var list = Self.staticCommands
+        var list = commands.list
         for preset in settings.activePresets where !preset.command.isEmpty {
             list.append(AppCommand(id: "newTerminal:\(preset.name)", title: "New Terminal: \(preset.name)", category: "Terminal") {
                 $0.startTerminal(command: preset.command)
@@ -219,7 +220,7 @@ extension AppModel {
 
     @discardableResult
     func run(_ id: String) -> Bool {
-        if let command = allCommands.first(where: { $0.id == id }) {
+        if let command = commands.byID[id] ?? allCommands.first(where: { $0.id == id }) {
             command.action(self)
             return true
         }
@@ -275,6 +276,21 @@ enum ControlHandler {
             return .success(id: request.id, .object(["highlight": measured]))
         }
         if request.cmd == "worktree.add" { return await worktreeAdd(request) }
+        if request.cmd == "plugin.verify" {
+            return .success(id: request.id, await AppModel.shared.plugins.verify(name: request.args["name"]?.stringValue))
+        }
+        if request.cmd == "plugin.reload" {
+            await withCheckedContinuation { continuation in
+                AppModel.shared.plugins.rescan { continuation.resume() }
+            }
+            return .success(id: request.id, .object([:]))
+        }
+        // A plugin's command answers with what it did, which can take a while.
+        if request.cmd == "run", let id = request.args["command"]?.stringValue, AppModel.shared.plugins.owns(id) {
+            let done = await AppModel.shared.plugins.run(id, args: request.args["args"]?.objectValue ?? [:], quietly: true)
+            if let problem = done.problem { return .failure(id: request.id, problem) }
+            return .success(id: request.id, .object(["ran": .string(id), "output": .string(done.output)]))
+        }
         if request.cmd == "work" { return await work(request) }
         if request.cmd.hasPrefix("web.") { return await AppModel.shared.webCommand(request) }
         if request.cmd == "conversations" { return await conversations(request) }
@@ -431,6 +447,9 @@ enum ControlHandler {
             if spec.branch == true { object["branch"] = true }
         case .settings:
             break
+        case .plugin(let spec):
+            object["plugin"] = .string(spec.plugin)
+            object["panel"] = .string(spec.panel)
         }
         return .object(object)
     }
@@ -856,7 +875,7 @@ enum ControlHandler {
                 }
                 return .array([entry(definition)])
             }
-            return .array(SettingsSchema.all.map(entry))
+            return .array(SettingsSchema.everything.map(entry))
 
         case "settings.get":
             let key = try string(request, "key")
@@ -1030,6 +1049,83 @@ enum ControlHandler {
             if let problem = model.removeAgent(try string(request, "agent")) { throw ControlFailure(problem) }
             return .object([:])
 
+        case "plugin.list":
+            return .array(model.plugins.plugins.map { plugin in
+                var object: [String: JSONValue] = ["name": .string(plugin.name), "title": .string(plugin.title), "version": .string(plugin.manifest?.version ?? ""),
+                                                   "folder": .string(plugin.folder.path), "adds": .array((plugin.manifest?.additions ?? []).map(JSONValue.string))]
+                switch plugin.state {
+                case .on: object["state"] = "on"
+                case .off: object["state"] = "off"
+                case .changed(let changes):
+                    object["state"] = "changed"
+                    object["why"] = .string(changes.summary.replacingOccurrences(of: "\n", with: "; "))
+                case .broken(let why):
+                    object["state"] = "broken"
+                    object["why"] = .string(why)
+                }
+                return .object(object)
+            })
+
+        case "plugin.enable":
+            let name = try string(request, "name")
+            guard model.plugins.plugin(named: name) != nil else { throw ControlFailure("No plugin called \(name). Run tiri plugin.") }
+            guard model.window?.attachedSheet == nil else { throw ControlFailure("Tiri is already asking something on screen. Try again once it's answered.") }
+            // A no is an answer. Asking again and again until someone gives in isn't asking.
+            if let wait = model.plugins.secondsUntilAskingAgain(name) { throw ControlFailure("The person just said no. Talk to them about it, and don't ask again for \(wait) seconds.") }
+            model.plugins.askToEnable(name)
+            return .object([:])
+
+        case "plugin.remove":
+            let name = try string(request, "name")
+            guard model.plugins.plugin(named: name) != nil else { throw ControlFailure("No plugin called \(name). Run tiri plugin.") }
+            guard model.window?.attachedSheet == nil else { throw ControlFailure("Tiri is already asking something on screen. Try again once it's answered.") }
+            model.plugins.askToRemove(name)
+            return .object([:])
+
+        case "plugin.disable":
+            let name = try string(request, "name")
+            guard model.plugins.plugin(named: name) != nil else { throw ControlFailure("No plugin called \(name). Run tiri plugin.") }
+            model.plugins.disable(name)
+            return .object([:])
+
+        case "plugin.logs":
+            let name = try string(request, "name")
+            return .object(["text": .string((try? String(contentsOf: PluginProcesses.logFile(name), encoding: .utf8)) ?? "")])
+
+        case "plugin.update":
+            let name = try string(request, "name")
+            if let problem = model.plugins.push(plugin: name, surface: try string(request, "surface"), id: try string(request, "id"), value: request.args["value"] ?? .null) {
+                throw ControlFailure(problem)
+            }
+            return .object([:])
+
+        case "plugin.post":
+            let target = try string(request, "name").split(separator: ".", maxSplits: 1).map(String.init)
+            guard let name = target.first else { throw ControlFailure("Which plugin?") }
+            guard model.plugins.enabledPlugin(named: name) != nil else { throw ControlFailure("\(name) isn't on.") }
+            let reached = model.plugins.post(plugin: name, panel: target.count > 1 ? target[1] : nil, event: try string(request, "event"), data: request.args["data"] ?? .null)
+            return .object(["reached": .int(reached)])
+
+        case "dev.plugin-answer":
+            // What the buttons do. In a test copy only: a real yes takes a real press.
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            guard model.plugins.answerForTest(yes: request.args["yes"]?.boolValue == true) else { throw ControlFailure("Nothing is being asked.") }
+            return .object([:])
+
+        case "dev.key":
+            // A real key event through the app's own queue, which is as close as a hidden window gets.
+            guard AppModel.isTestCopy, let code = request.args["code"]?.intValue, let window = model.window else { throw ControlFailure("Only for a test copy.") }
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                   context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: UInt16(code)) else { continue }
+                NSApp.postEvent(event, atStart: false)
+            }
+            return .object([:])
+
+        case "dev.plugin-question":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            return .object(["question": .string(model.plugins.pendingQuestion ?? "")])
+
         case "languages":
             let roots = model.active.folders.map(Git.real)
             return .array(LanguageServerCatalog.all.map { definition in
@@ -1152,6 +1248,10 @@ enum ControlHandler {
 
         case "perf":
             var object: [String: JSONValue] = ["footprintMB": .double(ProcessClock.footprintMegabytes())]
+            object["plugins"] = .int(model.plugins.plugins.count)
+            object["pluginsOn"] = .int(model.plugins.enabled.count)
+            object["pluginProcesses"] = .int(model.plugins.processes.runningCount)
+            if let scan = model.plugins.scanMilliseconds { object["pluginScanMs"] = .double(scan) }
             if let launch = model.launchMilliseconds { object["launchMs"] = .double(launch) }
             if let open = model.lastOpenMilliseconds { object["lastOpenMs"] = .double(open) }
             object["indexedFiles"] = .int(model.fileIndex.files.count)

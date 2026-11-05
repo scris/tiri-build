@@ -161,6 +161,8 @@ final class AppModel {
     /// moment on every switch, and the bar shouldn't go and come back, resizing every terminal.
     var barHasRepositories = false
     @ObservationIgnored lazy var languageServers = LanguageServerHub(model: self)
+    @ObservationIgnored lazy var plugins = PluginHost(model: self)
+    @ObservationIgnored let commands = CommandRegistry(builtIn: AppModel.staticCommands)
     @ObservationIgnored let languageTrust = LanguageServerTrust()
     @ObservationIgnored var hoverPopover: NSPopover?
     @ObservationIgnored var hoverWork: DispatchWorkItem?
@@ -261,6 +263,7 @@ final class AppModel {
         loadTurns()
         adoptNewAgents()
         languageServers.prepare()
+        plugins.load()
         // So the first file's colors aren't late, without making launch any longer.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { HighlightEngine.shared.prepare() }
         // Whatever isn't in a tab any more has nothing to come back to.
@@ -292,7 +295,7 @@ final class AppModel {
             case .terminal(let spec): paths.append(spec.cwd)
             case .file(let spec): paths.append(spec.path)
             case .diff(let spec): paths.append((spec.path as NSString).deletingLastPathComponent)
-            case .web, .settings: break
+            case .web, .settings, .plugin: break
             }
         }
         let unchecked = Array(Set(paths).subtracting(checkedPaths))
@@ -323,6 +326,7 @@ final class AppModel {
         fileTree.bind(active)
         refreshFileIndex()
         watchForChanges()
+        plugins.workspaceChanged()
         startActiveWorkspaceTerminals()
         requestFocus()
     }
@@ -350,6 +354,7 @@ final class AppModel {
         remote.prepareForQuit()
         for controller in controllers.values { controller.teardown() }
         languageServers.stopAll()
+        plugins.processes.stopAll()
         server?.stop()
     }
 
@@ -357,12 +362,27 @@ final class AppModel {
         markActiveItemSeen()
     }
 
+    /// Stage Manager brings any window back onto the screen, however far away it's put, and there it
+    /// could be seen and pressed by whoever's using this Mac. So a test copy hides itself as an app,
+    /// and stays hidden, and no click reaches its window even if something shows it for a moment.
+    private func keepOutOfSight(_ window: NSWindow) {
+        // scripts/dev-app.sh focus, for when nobody's using this Mac and a real click is the point.
+        if ProcessInfo.processInfo.environment["TIRI_DEV_VISIBLE"] == "1" { return }
+        window.ignoresMouseEvents = true
+        NSApp.hide(nil)
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                if !NSApp.isHidden { NSApp.hide(nil) }
+            }
+        }
+    }
+
     func windowDidAppear(_ window: NSWindow) {
         self.window = window
         // A test copy, out of sight, where it can't get in anyone's way and can still be captured.
         if ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1" {
             window.collectionBehavior.insert(.stationary)
-            window.setFrameOrigin(NSPoint(x: 30000, y: 200))
+            keepOutOfSight(window)
         }
         window.acceptsMouseMovedEvents = true
         window.isRestorable = false
@@ -500,7 +520,8 @@ final class AppModel {
                     launch = command
                 case .prefill(let command):
                     launch = nil
-                    prefill = command
+                    // What a plugin started goes through its command again, if it's still on, or not at all.
+                    prefill = spec.plugin == nil ? command : nil
                 }
             }
             let workspaceID = workspace(containing: id)?.id ?? activeID
@@ -522,12 +543,94 @@ final class AppModel {
         case .web(let spec):
             guard let url = URL(string: spec.url) else { return nil }
             controller = WebController(itemID: id, url: url, forceDark: spec.forceDark, isFile: false, model: self)
+        case .plugin(let spec):
+            controller = plugins.makeController(itemID: id, spec: spec)
         }
         controllers[id] = controller
         return controller
     }
 
     func existingController(for id: ItemID) -> ItemController? { controllers[id] }
+
+    /// Everything showing a plugin's page, in any workspace.
+    func allPanelControllers() -> [WebController] {
+        controllers.values.compactMap { $0 as? WebController }.filter { $0.panel != nil }
+    }
+
+    /// Languages came or went, so files open now may be something else. `restarting` are grammars
+    /// that may have new contents under the same name.
+    func languagesChanged(restarting scopes: Set<String>) {
+        for controller in controllers.values {
+            (controller as? TextController)?.languagesChanged(restarting: scopes)
+            (controller as? DiffController)?.languagesChanged()
+        }
+        languageRevision += 1
+    }
+
+    func measureOpen(_ id: ItemID) {
+        openInFlight = (id, ProcessClock.now())
+    }
+
+    /// Whatever shows these plugins' panels starts over, as what they are now. A file that had a plugin's
+    /// viewer goes back to Tiri's own, and one that could have one gets it.
+    func pluginPanelsChanged(changed names: Set<String>) {
+        for workspace in workspaces {
+            for item in workspace.items + (workspace.peek.map { [$0] } ?? []) {
+                guard let controller = controllers[item.id] else { continue }
+                switch item.content {
+                case .plugin(let spec) where names.contains(spec.plugin):
+                    discardController(item.id)
+                case .file(let spec):
+                    let showing = (controller as? WebController)?.panel?.plugin.name
+                    let wanted = plugins.viewer(for: spec)?.plugin.name
+                    guard !controller.isDirty else { continue }
+                    if showing != wanted || (showing.map(names.contains) ?? false) { discardController(item.id) }
+                default:
+                    break
+                }
+            }
+        }
+        controllerRevision += 1
+    }
+
+    func setViewer(_ id: ItemID, to viewer: String) {
+        if existingController(for: id)?.isDirty == true {
+            showToast(title: "Save this file first", detail: "It has changes that aren't saved.", symbol: "exclamationmark.triangle", tint: .orange)
+            return
+        }
+        updateWorkspace(containing: id) { workspace in
+            workspace.updateItem(id) { item in
+                if case .file(var spec) = item.content {
+                    spec.viewer = viewer
+                    item.content = .file(spec)
+                }
+            }
+        }
+        discardController(id)
+        controllerRevision += 1
+        scheduleSave()
+    }
+
+    func setPanelTitle(_ id: ItemID, to title: String) {
+        updateWorkspace(containing: id) { workspace in
+            workspace.updateItem(id) { item in
+                if case .plugin(var spec) = item.content {
+                    spec.title = title
+                    item.content = .plugin(spec)
+                }
+            }
+        }
+        scheduleSave()
+    }
+
+    /// A copy made by scripts/dev-app.sh, with its own identity and folders. Nothing with the real
+    /// app's identity, or using its folders, ever counts, whatever its environment says.
+    static var isTestCopy: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return Bundle.main.bundleIdentifier?.contains(".test.") == true && environment["TIRI_DEV_OFFSCREEN"] == "1" && environment["TIRI_HOME"]?.isEmpty == false
+    }
+
+    func openPluginSettings() { openSettings(pane: .plugins) }
 
     func discardController(_ id: ItemID) {
         controllers[id]?.teardown()
@@ -1020,11 +1123,13 @@ final class AppModel {
 
     @discardableResult
     func newTerminal(command: String? = nil, cwd: String? = nil, split: SplitDirection? = nil,
-                     in workspaceID: WorkspaceID? = nil) -> ItemID {
+                     in workspaceID: WorkspaceID? = nil, title: String? = nil, plugin: String? = nil) -> ItemID {
         let target = workspaceID ?? activeID
         let directory = cwd ?? defaultTerminalDirectory()
         let trimmed = command?.trimmingCharacters(in: .whitespaces)
-        let spec = TerminalSpec(command: trimmed?.isEmpty == true ? nil : trimmed, cwd: directory)
+        var spec = TerminalSpec(command: trimmed?.isEmpty == true ? nil : trimmed, cwd: directory)
+        spec.title = title
+        spec.plugin = plugin
         let item = Item(content: .terminal(spec))
         update(workspace: target) { $0.addItem(item, split: split) }
         if target == activeID { requestFocus() }
@@ -1083,7 +1188,7 @@ final class AppModel {
                 return active.folder(containing: spec.path) ?? (spec.path as NSString).deletingLastPathComponent
             case .diff(let spec):
                 return active.folder(containing: spec.path) ?? (spec.path as NSString).deletingLastPathComponent
-            case .web, .settings:
+            case .web, .settings, .plugin:
                 break
             }
         }
@@ -1282,11 +1387,11 @@ final class AppModel {
         switch item.content {
         case .terminal(let spec):
             if let title = runtimes[item.id]?.title, !title.isEmpty { return title }
-            return spec.isShell ? item.defaultTitle : (spec.command ?? item.defaultTitle)
+            return spec.isShell ? item.defaultTitle : (spec.title ?? spec.command ?? item.defaultTitle)
         case .web:
             if let title = (existingController(for: item.id) as? WebController)?.title, !title.isEmpty { return title }
             return item.defaultTitle
-        case .file, .settings, .diff:
+        case .file, .settings, .diff, .plugin:
             return item.defaultTitle
         }
     }
@@ -1410,6 +1515,8 @@ final class AppModel {
             return
         case .diff(let spec):
             updateActive { $0.addItem(Item(content: .diff(spec)), split: direction) }
+        case .plugin(let spec):
+            updateActive { $0.addItem(Item(content: .plugin(spec)), split: direction) }
         }
         requestFocus()
     }
@@ -1863,6 +1970,11 @@ final class AppModel {
     /// Returns what went wrong, if anything.
     @discardableResult
     func setSetting(_ key: String, to value: JSONValue) -> String? {
+        if let setting = SettingsSchema.splitPluginKey(key) {
+            PluginSettingsStore.set(setting.plugin, key: setting.key, to: value)
+            plugins.settingsChanged(plugin: setting.plugin)
+            return nil
+        }
         do {
             try settingsStore.write(key, value: value)
         } catch {
@@ -1873,6 +1985,11 @@ final class AppModel {
     }
 
     func resetSetting(_ key: String) {
+        if let setting = SettingsSchema.splitPluginKey(key) {
+            PluginSettingsStore.set(setting.plugin, key: setting.key, to: nil)
+            plugins.settingsChanged(plugin: setting.plugin)
+            return
+        }
         guard let definition = SettingsSchema.definition(for: key) else { return }
         setSetting(key, to: definition.value(TiriSettings()))
     }
@@ -2665,8 +2782,8 @@ final class AppModel {
         }
     }
 
-    private func rebuildKeybindings() {
-        keybindings = Keymap.build(user: settingsStore.userKeybindings)
+    func rebuildKeybindings() {
+        keybindings = Keymap.build(user: settingsStore.userKeybindings, plugins: plugins.defaultKeys)
         keyResolver = KeyResolver(bindings: keybindings)
     }
 
@@ -2728,7 +2845,7 @@ final class AppModel {
                     case .file(var spec):
                         spec.forceDark = on
                         item.content = .file(spec)
-                    case .terminal, .settings, .diff:
+                    case .terminal, .settings, .diff, .plugin:
                         break
                     }
                 }

@@ -309,6 +309,11 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
         return "No changes in this file."
     }
 
+    /// A plugin came or went, so this file may be another language now.
+    func languagesChanged() {
+        load()
+    }
+
     private func scheduleHighlight(_ pane: DiffPane) {
         pane.highlighter.use(language: LanguageCatalog.language(forPath: path))
         pane.highlighter.textReplaced()

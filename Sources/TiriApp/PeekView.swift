@@ -130,6 +130,8 @@ struct PeekView: View {
             return directory.isEmpty ? spec.scopeWord : directory + " · " + spec.scopeWord
         case .terminal, .settings:
             return nil
+        case .plugin(let spec):
+            return model.plugins.plugin(named: spec.plugin)?.title
         }
     }
 

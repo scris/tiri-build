@@ -26,6 +26,8 @@ final class SettingsController: ItemController {
     var reveal: String?
     var highlighted: String?
     var searchFocusRequests = 0
+    /// What's being asked for, which shouldn't vanish on a look at another pane.
+    var newPluginRequest = ""
     var shortcutFilter = ShortcutFilter.all
     var shortcutKeys: [KeyStroke] = []
     var expandedAgent: String?
@@ -124,6 +126,10 @@ extension AppModel {
         agentEntries.filter { SettingsSchema.matches(query, in: [$0.name, $0.command, "agents hooks resume"]) }
     }
 
+    func pluginsMatching(_ query: String) -> [InstalledPlugin] {
+        plugins.plugins.filter { SettingsSchema.matches(query, in: [$0.title, $0.name, $0.manifest?.description ?? "", "plugins extensions"]) }
+    }
+
     func languagesMatching(_ query: String) -> [LanguageServerDefinition] {
         LanguageServerCatalog.all.filter { SettingsSchema.matches(query, in: [$0.language, $0.id, "language server"]) }
     }
@@ -132,9 +138,10 @@ extension AppModel {
     var settingsMatchCounts: [SettingsPane: Int] {
         let query = settingsUI.trimmedQuery
         var counts: [SettingsPane: Int] = [:]
-        for definition in SettingsSchema.all where !definition.shownElsewhere && SettingsSchema.matches(query, definition) {
+        for definition in SettingsSchema.everything where !definition.shownElsewhere && SettingsSchema.matches(query, definition) {
             counts[definition.pane, default: 0] += 1
         }
+        counts[.plugins, default: 0] += pluginsMatching(query).count
         counts[.agents, default: 0] += agentEntriesMatching(query).count
         counts[.languages, default: 0] += languagesMatching(query).count
         if CommandLineRow.matches(query) { counts[.general, default: 0] += 1 }
@@ -431,6 +438,13 @@ struct SettingsContent: View {
         case .languages:
             SchemaGroups(pane: .languages)
             LanguageServersSection()
+        case .plugins:
+            PluginsSection()
+            // What's on brings its own settings, each under its plugin's name.
+            let _ = model.plugins.revision
+            ForEach(SettingsSchema.groups(in: .plugins, from: SettingsSchema.fromPlugins), id: \.name) { group in
+                PluginSettingsGroup(name: group.name, settings: group.settings)
+            }
         case .files:
             SchemaGroups(pane: .files)
         case .keyboard:
@@ -477,8 +491,19 @@ struct SettingsSearchResults: View {
     }
 
     @ViewBuilder private func results(in pane: SettingsPane, query: String) -> some View {
-        let settings = SettingsSchema.all.filter { $0.pane == pane && !$0.shownElsewhere && SettingsSchema.matches(query, $0) }
+        let settings = SettingsSchema.everything.filter { $0.pane == pane && !$0.shownElsewhere && SettingsSchema.matches(query, $0) }
         switch pane {
+        case .plugins:
+            let found = model.pluginsMatching(query)
+            if !found.isEmpty {
+                SettingsCard {
+                    ForEach(Array(found.enumerated()), id: \.element.id) { index, plugin in
+                        if index > 0 { SettingsRowDivider() }
+                        PluginRow(plugin: plugin)
+                    }
+                }
+            }
+            if !settings.isEmpty { SettingRows(definitions: settings) }
         case .keyboard:
             ShortcutSections(sections: model.shortcutSectionsMatchingQuery)
         case .languages:
@@ -600,7 +625,10 @@ struct SettingRow: View {
     @Environment(\.settingsRowsStack) private var rowsStack
     @State private var showsNote = false
 
-    private var value: JSONValue { definition.value(model.settings) }
+    private var value: JSONValue {
+        _ = model.plugins.revision
+        return definition.value(model.settings)
+    }
 
     private func set(_ value: JSONValue) { model.setSetting(definition.key, to: value) }
 
@@ -754,8 +782,8 @@ struct SettingRow: View {
             .labelsHidden()
             .fixedSize()
             .accessibilityLabel(definition.title)
-            // Segments don't fold, and they're no use cut off.
-            if rowsStack {
+            // Segments don't fold, and they're no use cut off, so they're only for a few short choices.
+            if rowsStack || options.count > 4 || options.contains(where: { $0.label.count > 14 }) {
                 picker.pickerStyle(.menu)
             } else {
                 picker.pickerStyle(.segmented)

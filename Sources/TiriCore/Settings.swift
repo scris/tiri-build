@@ -528,9 +528,16 @@ public enum Keymap {
         }
     }
 
-    public static func build(user: [(key: String, command: String)]) -> [Keybinding] {
+    /// `plugins` are their default keys. Whatever already has a key keeps it: a plugin can't take
+    /// one from Tiri or from another plugin, or change what your hands already know.
+    public static func build(user: [(key: String, command: String)], plugins: [(key: String, command: String)] = []) -> [Keybinding] {
         var bindings = defaults.compactMap { key, command in
             parseStrokes(key).map { Keybinding(strokes: $0, command: command) }
+        }
+        for (key, command) in plugins {
+            guard let strokes = parseStrokes(key), problem(with: key, command: command, bindings: bindings) == nil,
+                  !bindings.contains(where: { $0.strokes == strokes }) else { continue }
+            bindings.append(Keybinding(strokes: strokes, command: command))
         }
         for (key, command) in user {
             guard let strokes = parseStrokes(key) else { continue }

@@ -23,6 +23,8 @@ public struct TerminalSpec: Codable, Hashable, Sendable {
     public var command: String?
     public var cwd: String
     public var title: String?
+    /// Which plugin started it. It never comes back by itself after a relaunch, and only restarts while that's on.
+    public var plugin: String?
     /// The agent's own session id, reported by `tiri hook`. Lets a relaunch resume exactly
     /// this conversation; `--continue` would pick the latest in the folder, so two
     /// terminals in one folder would collide.
@@ -54,12 +56,30 @@ public struct FileSpec: Codable, Hashable, Sendable {
     public var col: Int?
     public var showSource: Bool?
     public var forceDark: Bool?
-    public init(path: String, line: Int? = nil, col: Int? = nil, showSource: Bool? = nil, forceDark: Bool? = nil) {
+    /// `plugin.panel` shows it there, and `text` means Tiri's own viewer, whatever a plugin offers.
+    public var viewer: String?
+    public init(path: String, line: Int? = nil, col: Int? = nil, showSource: Bool? = nil, forceDark: Bool? = nil, viewer: String? = nil) {
         self.path = path
         self.line = line
         self.col = col
         self.showSource = showSource
         self.forceDark = forceDark
+        self.viewer = viewer
+    }
+}
+
+/// One of a plugin's panels, in a tab. It comes back after a relaunch, and if its plugin has been
+/// turned off since, it says so and offers to turn it on.
+public struct PluginPanelSpec: Codable, Hashable, Sendable {
+    public var plugin: String
+    public var panel: String
+    public var title: String?
+    public var args: [String: JSONValue]?
+    public init(plugin: String, panel: String, title: String? = nil, args: [String: JSONValue]? = nil) {
+        self.plugin = plugin
+        self.panel = panel
+        self.title = title
+        self.args = args
     }
 }
 
@@ -114,6 +134,7 @@ public enum ItemContent: Codable, Hashable, Sendable {
     case web(WebSpec)
     case settings
     case diff(DiffSpec)
+    case plugin(PluginPanelSpec)
 
     public var kindName: String {
         switch self {
@@ -122,6 +143,7 @@ public enum ItemContent: Codable, Hashable, Sendable {
         case .web: "web"
         case .settings: "settings"
         case .diff: "changes"
+        case .plugin: "plugin"
         }
     }
 }
@@ -158,6 +180,8 @@ public struct Item: Codable, Hashable, Identifiable, Sendable {
             return "Settings"
         case .diff(let spec):
             return (spec.path as NSString).lastPathComponent + " (\(spec.scopeWord))"
+        case .plugin(let spec):
+            return spec.title ?? spec.panel
         }
     }
 }
@@ -382,6 +406,10 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     @discardableResult
     public mutating func peekWeb(url: String) -> PeekResult {
         setPeek(Item(content: .web(WebSpec(url: url))))
+    }
+
+    public mutating func peekPanel(_ item: Item) -> PeekResult {
+        setPeek(item)
     }
 
     private mutating func setPeek(_ item: Item) -> PeekResult {

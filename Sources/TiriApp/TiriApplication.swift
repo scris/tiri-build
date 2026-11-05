@@ -150,6 +150,17 @@ struct TiriMenus: Commands {
             item("openInExternalEditor")
             Divider()
         }
+        CommandMenu("Plugins") {
+            let _ = model.plugins.revision
+            ForEach(model.commands.fromPlugins) { command in
+                Button(command.title) { model.runFromMenu(command.id) }
+                    .modifier(MenuShortcut(binding: model.firstSingleStrokeBinding(for: command.id)))
+            }
+            if !model.commands.fromPlugins.isEmpty { Divider() }
+            item("newPlugin")
+            item("managePlugins")
+            item("reloadPlugins")
+        }
         CommandGroup(replacing: .help) {
             Button("Tiri Agent Guide") { model.showAgentGuide() }
         }

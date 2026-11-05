@@ -22,6 +22,9 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
     @ObservationIgnored private var requested: URL
     @ObservationIgnored private var showingError = false
     @ObservationIgnored private var lastPopupAt: Double = 0
+    /// Set for a plugin's page: what it may reach, and the only way it reaches it.
+    @ObservationIgnored let panel: PluginPanelContext?
+    @ObservationIgnored private var lastThemeWasDark: Bool?
 
     var addressText: String
     var title: String = ""
@@ -34,12 +37,15 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
     var picking = false
     @ObservationIgnored var log: [WebLogEntry] = []
     @ObservationIgnored var requests: [WebRequestEntry] = []
+    @ObservationIgnored var logWindowStart = 0.0
+    @ObservationIgnored var logWindowCount = 0
 
     var view: NSView { container }
 
     /// A web page has no lines to point at, so what's selected goes in as a quotation.
     var agentReference: AgentSelection? {
         guard let selection = webView.selection else { return nil }
+        if let panel { return AgentSelection(path: panel.quotePath, quote: AgentReference.quotation(from: panel.source, text: selection.text)) }
         let source = isFile ? (requested.path as NSString).lastPathComponent : currentURLString
         return AgentSelection(path: requested.path, quote: AgentReference.quotation(from: source, text: selection.text))
     }
@@ -54,26 +60,33 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         showingError ? requested.absoluteString : (webView.url?.absoluteString ?? requested.absoluteString)
     }
 
+    /// A panel draws its own light and dark.
+    var supportsForceDark: Bool { panel == nil }
+
     var forceDarkActive: Bool {
+        if panel != nil { return false }
         if let forceDarkOverride { return forceDarkOverride }
         return model.settings.webForceDark && model.effectiveDark
     }
 
-    init(itemID: ItemID, url: URL, forceDark: Bool?, isFile: Bool, model: AppModel) {
+    init(itemID: ItemID, url: URL, forceDark: Bool?, isFile: Bool, model: AppModel, panel: PluginPanelContext? = nil) {
         self.itemID = itemID
         self.isFile = isFile
         self.model = model
+        self.panel = panel
         self.requested = url
         self.forceDarkOverride = forceDark
         self.addressText = url.isFileURL ? url.path : url.absoluteString
         let configuration = WKWebViewConfiguration()
         configuration.preferences.isElementFullscreenEnabled = true
+        panel?.configure(configuration)
         webView = TiriWebView.makeConfigured(configuration)
         webView.isInspectable = true
         webView.allowsBackForwardNavigationGestures = true
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        panel?.attach(self)
         installTools()
         container.show(webView)
         webView.onQuote = { [weak self] in self?.model.addFrontToAgent() }
@@ -176,6 +189,12 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
     }
 
     private func applyDark() {
+        if let panel {
+            // It follows the app, through prefers-color-scheme, and hears about it if it wants to.
+            if lastThemeWasDark != nil, lastThemeWasDark != model.effectiveDark { panel.themeChanged() }
+            lastThemeWasDark = model.effectiveDark
+            return
+        }
         // Let pages with a dark mode use their own first; only fall back to inverting.
         webView.appearance = forceDarkActive ? NSAppearance(named: .darkAqua) : nil
         webView.evaluateJavaScript(forceDarkActive ? Self.enableDarkScript : Self.disableDarkScript, completionHandler: nil)
@@ -212,6 +231,10 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        if let panel {
+            decisionHandler(panel.decide(navigationAction))
+            return
+        }
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
             return
@@ -280,6 +303,11 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        // A panel opens nothing by itself. A link someone actually clicked becomes a page of its own.
+        if let panel {
+            _ = panel.decide(navigationAction)
+            return nil
+        }
         // target=_blank opens as a peer item rather than a stray window. Pages can ask for this
         // from a script without any click, so it's web links only, one at a time, in this
         // page's own workspace, and only the page in front gets to take the keyboard.
@@ -302,6 +330,7 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
 
     func teardown() {
         token = nil
+        panel?.teardown()
         observations.removeAll()
         webView.stopLoading()
         webView.navigationDelegate = nil

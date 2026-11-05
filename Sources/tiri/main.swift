@@ -65,6 +65,11 @@ case .printText(let text):
     exit(0)
 case .quietSuccess:
     exit(0)
+case .local(let action):
+    let outcome = PluginTools.run(action, cwd: cliEnvironment.cwd)
+    fputs(outcome.output, stdout)
+    fputs(outcome.errors, stderr)
+    exit(outcome.code)
 case .request(let value, let json):
     request = value
     rawJSON = json

@@ -172,7 +172,8 @@ public enum LanguageCatalog {
         Set(text.split(separator: " ").map(String.init))
     }
 
-    public static let all: [LanguageDefinition] = {
+    /// What came with Tiri. Never changes.
+    private static let builtIn: [LanguageDefinition] = {
         var found: [String: LanguageDefinition] = [:]
         var order: [String] = []
         for row in generatedTable.split(separator: "\n") {
@@ -216,6 +217,17 @@ public enum LanguageCatalog {
         return order.compactMap { found[$0] }
     }()
 
+    /// One consistent view of every language. Replaced whole when a plugin comes or goes, so
+    /// whoever's reading on another thread has either the old list or the new one.
+    private final class Snapshot: Sendable {
+        let all: [LanguageDefinition]
+        let lookup: Lookup
+        init(all: [LanguageDefinition], lookup: Lookup) {
+            self.all = all
+            self.lookup = lookup
+        }
+    }
+
     private struct Lookup: Sendable {
         var byID: [String: Int] = [:]
         var byExtension: [String: Int] = [:]
@@ -225,7 +237,32 @@ public enum LanguageCatalog {
         var certain = Set<String>()
     }
 
-    private static let lookup: Lookup = {
+    private static func snapshot(plugins: [LanguageDefinition]) -> Snapshot {
+        var all = builtIn
+        var positions: [String: Int] = [:]
+        for (index, language) in all.enumerated() { positions[language.id] = index }
+        // A plugin saying more about a language Tiri has adds to it. What it leaves out stays.
+        for language in plugins {
+            if let index = positions[language.id] {
+                var merged = all[index]
+                merged.name = language.name.isEmpty ? merged.name : language.name
+                merged.grammar = language.grammar ?? merged.grammar
+                merged.extensions.formUnion(language.extensions)
+                merged.fileNames.formUnion(language.fileNames)
+                merged.interpreters.formUnion(language.interpreters)
+                merged.aliases.formUnion(language.aliases)
+                merged.comment = language.comment ?? merged.comment
+                merged.server = language.server ?? merged.server
+                merged.lspID = language.lspID ?? merged.lspID
+                merged.colonOpensBlock = language.colonOpensBlock || merged.colonOpensBlock
+                merged.isProse = language.isProse || merged.isProse
+                merged.isCertainlyText = true
+                all[index] = merged
+            } else {
+                positions[language.id] = all.count
+                all.append(language)
+            }
+        }
         var table = Lookup()
         for (index, language) in all.enumerated() {
             table.byID[language.id] = index
@@ -248,29 +285,58 @@ public enum LanguageCatalog {
             }
             for interpreter in words(entry.interpreters) { table.byInterpreter[interpreter] = index }
         }
-        return table
-    }()
+        // And a plugin you turned on wins over all of it: that's why you turned it on.
+        for language in plugins {
+            guard let index = table.byID[language.id] else { continue }
+            for alias in language.aliases { table.byAlias[alias] = index }
+            for ext in language.extensions {
+                table.byExtension[ext] = index
+                table.certain.insert("." + ext)
+            }
+            for name in language.fileNames {
+                table.byName[name] = index
+                table.certain.insert(name)
+            }
+            for interpreter in language.interpreters { table.byInterpreter[interpreter] = index }
+        }
+        return Snapshot(all: all, lookup: table)
+    }
+
+    private static let storage = NSLock()
+    nonisolated(unsafe) private static var stored = snapshot(plugins: [])
+    private static var current: Snapshot { storage.withLock { stored } }
+
+    public static var all: [LanguageDefinition] { current.all }
+
+    /// What plugins add, all of them at once. An empty list puts things back as they came.
+    public static func setPluginLanguages(_ languages: [LanguageDefinition]) {
+        let next = snapshot(plugins: languages)
+        storage.withLock { stored = next }
+    }
 
     public static func language(id: String) -> LanguageDefinition? {
-        lookup.byID[id].map { all[$0] }
+        let now = current
+        return now.lookup.byID[id].map { now.all[$0] }
     }
 
     /// As a code fence or a notebook names it: `py`, `Python`, `c++`, or an extension.
     public static func language(named name: String) -> LanguageDefinition? {
         let key = name.trimmingCharacters(in: .whitespaces).lowercased()
         guard !key.isEmpty else { return nil }
-        if let index = lookup.byAlias[key] ?? lookup.byExtension[key] { return all[index] }
-        return all.first { $0.name.lowercased() == key }
+        let now = current
+        if let index = now.lookup.byAlias[key] ?? now.lookup.byExtension[key] { return now.all[index] }
+        return now.all.first { $0.name.lowercased() == key }
     }
 
     /// `firstLine` is for a file whose name says nothing, and whose `#!` line might.
     public static func language(forPath path: String, firstLine: String? = nil) -> LanguageDefinition? {
         let name = (path as NSString).lastPathComponent.lowercased()
-        if let index = lookup.byName[name] { return all[index] }
+        let now = current
+        if let index = now.lookup.byName[name] { return now.all[index] }
         if name.hasPrefix(".env.") { return language(id: "dotenv") }
         let ext = (name as NSString).pathExtension
-        if !ext.isEmpty, let index = lookup.byExtension[ext] { return all[index] }
-        if let firstLine, let interpreter = interpreter(in: firstLine), let index = lookup.byInterpreter[interpreter] { return all[index] }
+        if !ext.isEmpty, let index = now.lookup.byExtension[ext] { return now.all[index] }
+        if let firstLine, let interpreter = interpreter(in: firstLine), let index = now.lookup.byInterpreter[interpreter] { return now.all[index] }
         return nil
     }
 
@@ -289,6 +355,7 @@ public enum LanguageCatalog {
     /// Text for sure, going by the name alone. Anything else has its bytes looked at.
     public static func isCertainlyText(path: String) -> Bool {
         let name = (path as NSString).lastPathComponent.lowercased()
-        return lookup.certain.contains(name) || lookup.certain.contains("." + (name as NSString).pathExtension)
+        let certain = current.lookup.certain
+        return certain.contains(name) || certain.contains("." + (name as NSString).pathExtension)
     }
 }

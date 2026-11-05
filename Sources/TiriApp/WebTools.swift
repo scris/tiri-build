@@ -168,6 +168,14 @@ extension WebController: WKScriptMessageHandler {
             picked(body)
             return
         }
+        // The script in the page limits this too, and a page can talk past that script.
+        let now = ProcessClock.now()
+        if now - logWindowStart > 1000 {
+            logWindowStart = now
+            logWindowCount = 0
+        }
+        logWindowCount += 1
+        guard logWindowCount <= 400 else { return }
         switch body["kind"] as? String {
         case "log":
             let level = WebLogEntry.Level(rawValue: body["level"] as? String ?? "log") ?? .log
@@ -281,6 +289,8 @@ extension AppModel {
     func webCommand(_ request: ControlRequest) async -> ControlResponse {
         do {
             let web = try webController(named: request.args["item"]?.stringValue)
+            // A panel can run things on this Mac. A server's terminal doesn't get to press its buttons.
+            if request.args["fromServer"]?.boolValue == true, web.panel != nil { throw ControlHandler.ControlFailure("A plugin's panel can only be driven from the Mac, not from a server.") }
             let lines = request.args["lines"]?.intValue ?? 100
             switch request.cmd {
             case "web.console":

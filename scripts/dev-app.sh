@@ -4,7 +4,9 @@
 #   scripts/dev-app.sh run <name>        launch what's already assembled, without building
 #   scripts/dev-app.sh stop <name>       quit it and end its terminals
 #   scripts/dev-app.sh shot <name> <png> capture its main window, whatever is in front of it
-#   scripts/dev-app.sh focus <name> -- cmd…  takes the keyboard, so needs TIRI_DEV_MAY_TAKE_FOCUS=yes: for when nobody's using this Mac
+#   scripts/dev-app.sh focus <name> -- cmd…  takes the keyboard, so needs TIRI_DEV_MAY_TAKE_FOCUS=yes, for this and to start it: for when nobody's using this Mac
+# A copy hides itself as an app, because Stage Manager brings any window back on screen. Only with
+# TIRI_DEV_MAY_TAKE_FOCUS=yes at the start is it visible and clickable. If one reaches the screen, it's stopped.
 #   scripts/dev-app.sh env <name>        prints `export ...` lines; `eval` them to use its CLI
 #   scripts/dev-app.sh cli <name> ...    runs its `tiri`
 # Never run ./build.sh to test while someone's Tiri is open: it deletes the running app.
@@ -35,6 +37,7 @@ launch_in_background() {
   : >"$DIR/app.log"
   open -g -n -a "$APP" --stdout "$DIR/app.log" --stderr "$DIR/app.log" \
     --env TIRI_HOME="$TIRI_HOME" --env TIRI_CONFIG_HOME="$TIRI_CONFIG_HOME" --env TIRI_SOCKET="$TIRI_SOCKET" --env TIRI_DEV_OFFSCREEN=1 \
+    ${TIRI_DEV_MAY_TAKE_FOCUS:+--env TIRI_DEV_VISIBLE=1} \
     ${TIRI_SSH_CONFIG:+--env TIRI_SSH_CONFIG="$TIRI_SSH_CONFIG"} \
     ${TIRI_CONVERSATIONS_HOME:+--env TIRI_CONVERSATIONS_HOME="$TIRI_CONVERSATIONS_HOME"} \
     ${CODEX_HOME:+--env CODEX_HOME="$CODEX_HOME"} ${GROK_HOME:+--env GROK_HOME="$GROK_HOME"}
@@ -44,16 +47,43 @@ launch_in_background() {
     sleep 0.1
   done
   echo "${pid:-}" > "$DIR/pid"
+  if [ -n "${pid:-}" ] && [ "${TIRI_DEV_MAY_TAKE_FOCUS:-}" != "yes" ]; then stop_if_on_screen "$pid"; fi
 }
 
-window_id() { # the app's largest on-screen window
+# Someone may be using this Mac. A test copy that reaches their screen is stopped, and that's a failure.
+stop_if_on_screen() {
+  local found
+  sleep 0.4
+  found="$(swift - "$1" <<'SWIFT'
+import CoreGraphics
+let pid = Int32(CommandLine.arguments[1])!
+var displays = [CGDirectDisplayID](repeating: 0, count: 16)
+var count: UInt32 = 0
+CGGetActiveDisplayList(16, &displays, &count)
+let screens = displays.prefix(Int(count)).map { CGDisplayBounds($0) }
+let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid && (w[kCGWindowLayer as String] as? Int) == 0
+    && (w[kCGWindowIsOnscreen as String] as? Bool) == true {
+    let b = w[kCGWindowBounds as String] as? [String: Double] ?? [:]
+    let frame = CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
+    if frame.width > 100, screens.contains(where: { $0.intersects(frame) }) { print(Int(frame.minX), Int(frame.minY)) }
+}
+SWIFT
+)"
+  if [ -n "$found" ]; then
+    kill -9 "$1" 2>/dev/null || true
+    echo "The test copy's window reached the screen, at $found, so it was stopped." >&2
+    exit 70
+  fi
+}
+
+window_id() { # the app's largest window, which is hidden from the screen but still draws
   swift - "$1" <<'SWIFT'
 import CoreGraphics
 let pid = Int32(CommandLine.arguments[1])!
 let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
 var best = (0, 0.0)
-for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid && (w[kCGWindowLayer as String] as? Int) == 0
-    && (w[kCGWindowIsOnscreen as String] as? Bool) == true {
+for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid && (w[kCGWindowLayer as String] as? Int) == 0 {
     let b = w[kCGWindowBounds as String] as? [String: Double] ?? [:]
     let area = (b["Width"] ?? 0) * (b["Height"] ?? 0)
     if area > best.1 { best = (w[kCGWindowNumber as String] as? Int ?? 0, area) }
@@ -115,7 +145,7 @@ focus)
   "$@"
   ;;
 shot)
-  # By window, without raising it. In a Stage Manager strip it comes out as a thumbnail.
+  # By window, without raising it. The copy keeps itself hidden, and this reads what it drew.
   screencapture -x -o -l"$(window_id "$(cat "$DIR/pid")")" "${3:?png path}"
   ;;
 env)
