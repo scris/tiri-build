@@ -109,7 +109,7 @@ public enum LanguageCatalog {
         Entry(id: "json", extensions: "json", comment: .none, server: "json", symbols: .keys, icon: .data),
         Entry(id: "jsonc", extensions: "jsonc code-workspace", comment: .given(slashes), server: "json", symbols: .keys, icon: .data),
         Entry(id: "json5", extensions: "json5", comment: .given(slashes), icon: .data),
-        Entry(id: "tool-settings", name: "Tool settings", grammar: "source.jsonc", fileNames: ".prettierrc .eslintrc", comment: .none, icon: .data),
+        Entry(id: "tool-settings", name: "Tool settings", grammar: "source.json.comments", fileNames: ".prettierrc .eslintrc", comment: .none, icon: .data),
 
         Entry(id: "python", extensions: "py pyi", interpreters: "python python2 python3 pypy pypy3", comment: .given(hash), server: "python", colon: true),
         Entry(id: "ruby", extensions: "rb", fileNames: "gemfile rakefile podfile brewfile", comment: .given(hash), server: "ruby"),

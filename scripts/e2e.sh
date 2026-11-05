@@ -305,6 +305,18 @@ check "run zoomReset" "$CLI" run zoomReset
 expect "compact folders on by default" "on" "$CLI" settings get explorer.compactFolders
 expect "keys list has the new ones" "⌘/" bash -c "'$CLI' keys | grep toggleLineComment"
 
+# The speed budgets. A miss counts as a bug.
+budgets() {
+    "$CLI" perf highlight --json | python3 -c '
+import json, sys
+m = json.load(sys.stdin)["result"]["highlight"]
+print(m)
+budget = {"visibleLinesMs": 16, "firstUseRustMs": 120, "firstUseMarkdownMs": 250, "bestPassMs": 600}
+missed = {k: m.get(k) for k, v in budget.items() if m.get(k, 1e9) >= v}
+sys.exit(f"over budget: {missed}" if missed else 0)'
+}
+check "highlighting within its budgets" budgets
+
 printf '{ broken' > "$TIRI_CONFIG_HOME/settings.json"
 sleep 0.5
 expect "still alive with invalid settings" "pong" "$CLI" ping

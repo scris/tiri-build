@@ -14,9 +14,12 @@ public struct DocumentExtras: Sendable {
     public var mathStylesheet: (@Sendable () -> String)?
     /// Diagrams already drawn, so a reload doesn't have to load the library again.
     public var diagrams: [String: Diagram]
+    /// Colored markup for some code in a language, or nil if there's no telling.
+    public var highlight: (@Sendable (_ code: String, _ language: String) -> String?)?
 
     public init(renderMath: (@Sendable (String, Bool) -> String?)? = nil, mathStylesheet: (@Sendable () -> String)? = nil,
-                diagrams: [String: Diagram] = [:]) {
+                diagrams: [String: Diagram] = [:], highlight: (@Sendable (String, String) -> String?)? = nil) {
+        self.highlight = highlight
         self.renderMath = renderMath
         self.mathStylesheet = mathStylesheet
         self.diagrams = diagrams
@@ -77,7 +80,7 @@ public enum MarkdownRenderer {
             let tall = math.spans.filter { $0.endLine != nil }
             let document = Document(parsing: math.markdown)
             var html = document.children.map { block -> String in
-                let inner = DocumentHTML.format(block)
+                let inner = DocumentHTML.format(block, highlight: extras.highlight)
                 guard let lineOffset, let range = block.range else { return inner }
                 var end = range.upperBound.line - 1
                 // Math over several lines is one line to the parser.
@@ -257,7 +260,7 @@ public enum MarkdownRenderer {
         html.replacingOccurrences(of: "<li><input type=\"checkbox\"", with: "<li class=\"task\"><input type=\"checkbox\"")
     }
 
-    static func escapeText(_ text: String) -> String {
+    public static func escapeText(_ text: String) -> String {
         text.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
@@ -276,8 +279,11 @@ public enum MarkdownRenderer {
         private var alignments: [Table.ColumnAlignment?] = []
         private var column = 0
 
-        static func format(_ markup: Markup) -> String {
+        var highlight: (@Sendable (String, String) -> String?)?
+
+        static func format(_ markup: Markup, highlight: (@Sendable (String, String) -> String?)? = nil) -> String {
             var walker = DocumentHTML()
+            walker.highlight = highlight
             walker.visit(markup)
             return walker.result
         }
@@ -296,7 +302,9 @@ public enum MarkdownRenderer {
 
         mutating func visitCodeBlock(_ node: CodeBlock) {
             let language = node.language.map { " class=\"language-\(escapeAttribute($0))\"" } ?? ""
-            result += "<pre><code\(language)>\(escapeText(node.code))</code></pre>\n"
+            // A diagram's source is read back out of the page, so it stays as written.
+            let colored = node.language.flatMap { $0.lowercased() == "mermaid" ? nil : highlight?(node.code, $0) }
+            result += "<pre><code\(language)>\(colored ?? escapeText(node.code))</code></pre>\n"
         }
 
         mutating func visitHeading(_ node: Heading) { wrap("h\(node.level)", node, newline: true) }
@@ -403,6 +411,10 @@ public enum MarkdownRenderer {
 
     static let stylesheet = """
     .src { display: contents; }
+    :root { --c-comment:#6e6e73; --c-function:#1a57bf; --c-type:#07707a; --c-attr:#a6450f; --c-string:#177a33; --c-number:#996600; --c-keyword:#8733ad; }
+    @media (prefers-color-scheme: dark) { :root { --c-comment:#a1a1a6; --c-function:#82b5fa; --c-type:#6bd1d1; --c-attr:#ed9e78; --c-string:#73d48f; --c-number:#e6bf7a; --c-keyword:#c791eb; } }
+    .tk-comment { color:var(--c-comment); } .tk-string { color:var(--c-string); } .tk-number { color:var(--c-number); } .tk-keyword { color:var(--c-keyword); }
+    .tk-function { color:var(--c-function); } .tk-type { color:var(--c-type); } .tk-attribute { color:var(--c-attr); }
     :root { color-scheme: light dark; --fg:#1d1d1f; --muted:#6e6e73; --line:#d9d9de; --code:#f4f4f6; --link:#0a66d6; --bg:#ffffff; --quote:#55555a; }
     @media (prefers-color-scheme: dark) { :root { --fg:#e8e8ed; --muted:#a1a1a6; --line:#3a3a3e; --code:#2a2a2d; --link:#5aa5ff; --bg:#1c1c1e; --quote:#b0b0b5; } }
     html { background: var(--bg); }

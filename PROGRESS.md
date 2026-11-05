@@ -50,7 +50,7 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 - **Terminal:** login shell with your aliases, truecolor, full-screen TUIs, cwd tracking, presets, exit bar with Restart.
 - **Peek:** ⌘-click or `tiri open` from a terminal floats a viewer, with Open as Tab, Open to the Side, replace on next click, Esc and click-outside to close.
 - **Path links:** existing paths underline on ⌘-hover, VS Code's location formats, soft and hard wrapped paths, directories reveal, web URLs float too.
-- **Editing and highlighting:** plain-text editing with save, undo and conflict handling, and highlight.js grammars, bundled and run locally, for common languages.
+- **Editing and highlighting:** plain-text editing with save, undo and conflict handling. Colors come from TextMate grammars, 231 languages bundled and run locally, line by line on their own queue, visible lines first, in the editor, diffs, markdown and notebooks, with no limit on file size.
 - **Sessions:** a small background server keeps each terminal's program running while Tiri is closed, and Tiri reattaches. Closing the tab ends it.
 - **Agents:** Claude Code, Codex and Grok come from one catalog in `Agents.swift`. Which ones you use is one list, on or off, that everything offering agents reads, shown as one table in Settings and through `tiri agents`. You can add any command as an agent, and delete it again.
 - **Agent input:** selections reach Claude Code through its editor protocol. ⌘L, paste, drag and a picker add lines, files and images to any agent.
@@ -76,7 +76,7 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 - **Agent attention:** status on the tab, item list and workspace switcher, toasts, dock badge, jump to next (⌘⇧U), hooks, fallback estimate when there are no hooks.
 - **Session restore:** layout, cwd and terminals. Agents resume, and one with nothing to resume starts fresh. Other commands wait typed at the prompt, so nothing like `./deploy.sh` re-runs by itself.
 - **Dark mode:** every viewer. PDF, Office, iWork, RTF, font and web archive pages are inverted with their colors kept, with a moon button for true colors. Black artwork on transparency gets a light plate.
-- **Viewers:** markdown (rendered and source, with math and Mermaid), Jupyter notebooks (rendered and source), code with light highlighting, images (HEIC, GIF), SVG, PDF (keeps page and zoom on reload), audio, video, HTML, CSV and TSV of any size, Office and iWork through Quick Look, Quick Look for everything else. All reload when the file changes. A `.tex` file offers its PDF to the side.
+- **Viewers:** markdown (rendered and source, with math and Mermaid), Jupyter notebooks (rendered and source), code with highlighting, images (HEIC, GIF), SVG, PDF (keeps page and zoom on reload), audio, video, HTML, CSV and TSV of any size, Office and iWork through Quick Look, Quick Look for everything else. All reload when the file changes. A `.tex` file offers its PDF to the side.
 - **Web:** address bar, back, forward, reload, auto-reload for local files, forced dark.
 - **Control API and CLI:** everything in spec §5, plus `send`, `read`, `layout`, `tree`, `commands`, `run`, `perf`, `hook`, `hooks`.
 - **Navigation:** quick open, command palette, all §6 keybindings, chords, breadcrumbs, find, tab drag and drop.
@@ -100,6 +100,8 @@ A language server isn't counted below, because it's optional and only runs once 
 |---|---|---|
 | Cold launch to window | < 500 ms | 270–360 ms after the first launch of a build. The first launch after a build was 480–900 ms |
 | Open text, code or image under 5 MB | < 100 ms | 15–30 ms |
+| Colors on 60 visible lines | < 16 ms | 1.2 ms |
+| First use of a grammar | < 120 ms | Engine 7 ms, then Rust 14 ms; markdown, which pulls in many others, 77 ms |
 | Open markdown | < 100 ms | 47 ms typically; 110 ms for a 124 KB file (over budget) |
 | Open HEIC | (not in budget, was 8 MB) | 134 ms, decoded off the main thread |
 | 50,000 files | stays responsive | Switching in takes 42 ms, the tree loads lazily, quick open searches off the main thread |

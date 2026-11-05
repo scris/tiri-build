@@ -310,22 +310,8 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     }
 
     private func scheduleHighlight(_ pane: DiffPane) {
-        let text = pane.textView.string
-        let language = FileClassifier.language(path: path)
-        guard (text as NSString).length < 500_000 else { return }
-        pane.highlightGeneration += 1
-        let current = pane.highlightGeneration
-        Task.detached(priority: .utility) { [weak self, weak pane] in
-            let spans = SyntaxHighlighter.spans(text: text, language: language)
-            await MainActor.run {
-                guard self != nil, let pane, pane.highlightGeneration == current, let layout = pane.textView.layoutManager else { return }
-                let full = NSRange(location: 0, length: (pane.textView.string as NSString).length)
-                layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: full)
-                for span in spans where NSMaxRange(span.range) <= full.length {
-                    layout.addTemporaryAttribute(.foregroundColor, value: span.kind.color, forCharacterRange: span.range)
-                }
-            }
-        }
+        pane.highlighter.use(language: LanguageCatalog.language(forPath: path))
+        pane.highlighter.textReplaced()
     }
 
     private var textFont: NSFont {
@@ -689,7 +675,7 @@ final class DiffPane {
     private(set) var length = 0
     private(set) var lineHeight: CGFloat = 16
     var wordRanges: ((Int) -> [NSRange])?
-    var highlightGeneration = 0
+    private(set) lazy var highlighter = LineHighlighter(textView: textView)
 
     init(side: Side) {
         self.side = side

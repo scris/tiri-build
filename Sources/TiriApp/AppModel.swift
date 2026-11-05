@@ -2,6 +2,7 @@ import AppKit
 import Observation
 import SwiftUI
 import TiriCore
+import TiriHighlight
 import UniformTypeIdentifiers
 import UserNotifications
 
@@ -255,6 +256,8 @@ final class AppModel {
         loadTurns()
         adoptNewAgents()
         languageServers.prepare()
+        // So the first file's colors aren't late, without making launch any longer.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { HighlightEngine.shared.prepare() }
         // Whatever isn't in a tab any more has nothing to come back to.
         TerminalSessions.endAll(except: Set(workspaces.flatMap { $0.items.map(\.id) }))
         router.install(model: self)

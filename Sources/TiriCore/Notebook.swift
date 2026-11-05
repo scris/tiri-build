@@ -533,8 +533,8 @@ public enum NotebookRenderer {
     """
 
     static let notebookStyles = """
-    :root { --c-comment:#6e6e73; --c-function:#1a57bf; --c-type:#07707a; --c-attr:#a6450f; --c-string:#177a33; --c-number:#996600; --c-keyword:#8733ad; --err:#fbeeee; --warn:#fbf6e9; }
-    @media (prefers-color-scheme: dark) { :root { --c-comment:#a1a1a6; --c-function:#82b5fa; --c-type:#6bd1d1; --c-attr:#ed9e78; --c-string:#73d48f; --c-number:#e6bf7a; --c-keyword:#c791eb; --err:#3a2526; --warn:#35301f; } }
+    :root { --err:#fbeeee; --warn:#fbf6e9; }
+    @media (prefers-color-scheme: dark) { :root { --err:#3a2526; --warn:#35301f; } }
     main { max-width:1000px; padding:20px 28px 80px 12px; }
     .nb-cell { display:grid; grid-template-columns:44px minmax(0,1fr); column-gap:8px; margin:0 0 14px; }
     .nb-prompt { font:12px/1.5 ui-monospace,"SF Mono",Menlo,monospace; color:var(--muted); text-align:right; padding-top:11px; white-space:nowrap; user-select:none; -webkit-user-select:none; position:relative; }
@@ -573,13 +573,6 @@ public enum NotebookRenderer {
       .nb-prompt { text-align:left; padding:0 0 2px; }
       .nb-prompt:empty { display:none; }
     }
-    .hljs-comment,.hljs-quote,.hljs-doctag { color:var(--c-comment); }
-    .hljs-string,.hljs-regexp,.hljs-addition,.hljs-symbol,.hljs-bullet,.hljs-code { color:var(--c-string); }
-    .hljs-number,.hljs-literal { color:var(--c-number); }
-    .hljs-keyword,.hljs-selector-tag { color:var(--c-keyword); }
-    .hljs-title,.hljs-function,.hljs-section,.hljs-selector-id,.hljs-selector-class,.hljs-name { color:var(--c-function); }
-    .hljs-title.class_,.hljs-type,.hljs-built_in,.hljs-class { color:var(--c-type); }
-    .hljs-attr,.hljs-attribute,.hljs-property,.hljs-params,.hljs-variable,.hljs-template-variable,.hljs-meta,.hljs-tag { color:var(--c-attr); }
     .ansi-bold { font-weight:700; }
     .ansi-fg30 { color:#3b3b3f; } .ansi-fg31 { color:#c4281c; } .ansi-fg32 { color:#177a33; } .ansi-fg33 { color:#996600; } .ansi-fg34 { color:#1a57bf; } .ansi-fg35 { color:#8733ad; } .ansi-fg36 { color:#07707a; } .ansi-fg37 { color:#6e6e73; }
     .ansi-fg90 { color:#6e6e73; } .ansi-fg91 { color:#e0392a; } .ansi-fg92 { color:#1f9e47; } .ansi-fg93 { color:#b58a00; } .ansi-fg94 { color:#2f7fe0; } .ansi-fg95 { color:#a64fd1; } .ansi-fg96 { color:#0a8a93; } .ansi-fg97 { color:#1d1d1f; }

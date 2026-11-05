@@ -19,13 +19,15 @@ let package = Package(
             name: "TiriCore",
             dependencies: [.product(name: "Markdown", package: "swift-markdown")]
         ),
+        .target(name: "TiriHighlight", dependencies: ["TiriCore"]),
         .executableTarget(
             name: "TiriApp",
-            dependencies: ["TiriCore", .product(name: "SwiftTerm", package: "SwiftTerm")],
+            dependencies: ["TiriCore", "TiriHighlight", .product(name: "SwiftTerm", package: "SwiftTerm")],
             swiftSettings: [.defaultIsolation(MainActor.self)]
         ),
         .executableTarget(name: "tiri", dependencies: ["TiriCore"]),
         .executableTarget(name: "tiri-session"),
         .testTarget(name: "TiriCoreTests", dependencies: ["TiriCore"]),
+        .testTarget(name: "TiriHighlightTests", dependencies: ["TiriHighlight", "TiriCore"]),
     ]
 )

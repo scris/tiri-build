@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TiriCore
+import TiriHighlight
 
 /// Every app action, in one place. Keybindings, the command palette, the menu bar and
 /// `tiri run` all call through this, so they can't drift apart.
@@ -250,7 +251,7 @@ enum ControlHandler {
             return .success(id: request.id, .object(["answer": .string(answer)]))
         }
         if request.cmd == "perf", request.args["measure"]?.stringValue == "highlight" {
-            let measured = await Task.detached(priority: .userInitiated) { SyntaxHighlighter.measure() }.value
+            let measured = await Task.detached(priority: .userInitiated) { HighlightEngine.shared.measure() }.value
             return .success(id: request.id, .object(["highlight": measured]))
         }
         if request.cmd == "worktree.add" { return await worktreeAdd(request) }

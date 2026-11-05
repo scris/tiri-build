@@ -4,6 +4,7 @@ import PDFKit
 import QuickLookUI
 import JavaScriptCore
 import TiriCore
+import TiriHighlight
 import WebKit
 
 /// A plain container so a viewer can swap what it shows while keeping one view in the tab.
@@ -322,7 +323,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
         do {
             let notebook = try Notebook.parse(data)
             let rendered = NotebookRenderer.render(notebook, baseHref: base.absoluteString, title: title, extras: extras(diagrams: diagrams),
-                                                   highlight: { CodeGrammar.shared.html(text: $0, language: $1) }, interactive: true)
+                                                   highlight: { HighlightEngine.shared.html(code: $0, language: $1) }, interactive: true)
             return .success((rendered, notebook.cells))
         } catch {
             return .failure(error)
@@ -368,7 +369,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
     nonisolated private static func extras(diagrams: [String: DocumentExtras.Diagram]) -> DocumentExtras {
         let document = UUID()
         return DocumentExtras(renderMath: { MathEngine.shared.markup(tex: $0, display: $1, document: document) },
-                              mathStylesheet: { MathEngine.stylesheet }, diagrams: diagrams)
+                              mathStylesheet: { MathEngine.stylesheet }, diagrams: diagrams,
+                              highlight: { HighlightEngine.shared.html(code: $0, language: $1) })
     }
 
     private func load(_ rendered: RenderedDocument, base: URL, anchor: String?, keepScroll: Bool) {
@@ -716,12 +718,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var token: FileWatchHub.Token?
     private var pendingLocation: (Int?, Int?)
     private var loadedOnce = false
-    private var highlightWork: DispatchWorkItem?
+    private var editWork: DispatchWorkItem?
+    private lazy var highlighter = LineHighlighter(textView: textView)
     private var quoteButton: QuoteButton?
-    private var highlightGeneration = 0
-    /// Strings and comments, in order, as of the colors with this generation.
-    private var ignorableSpans: [NSRange] = []
-    private var spansGeneration = -1
     private var scrollObservation: NSObjectProtocol?
     /// What's on disk, as far as this viewer knows.
     private var savedText = ""
@@ -909,6 +908,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions, range editedRange: NSRange, changeInLength delta: Int) {
         guard editedMask.contains(.editedCharacters) else { return }
         ruler.textEdited(range: editedRange, delta: delta, in: textStorage.string as NSString)
+        highlighter.textEdited(range: editedRange, delta: delta, in: textStorage)
     }
 
     // MARK: Wrapping
@@ -981,16 +981,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         restoreMatchMarks()
         let selection = textView.selectedRange()
         guard selection.length == 0, string.length > 0, string.length < 8_000_000 else { return }
-        let spans = highlightGeneration == spansGeneration ? ignorableSpans : []
-        let found = BracketMatcher.match(in: string, caret: selection.location) { offset in
-            var low = 0
-            var high = spans.count
-            while low < high {
-                let mid = (low + high) / 2
-                if NSMaxRange(spans[mid]) <= offset { low = mid + 1 } else { high = mid }
-            }
-            return low < spans.count && spans[low].location <= offset
-        }
+        let found = BracketMatcher.match(in: string, caret: selection.location) { [highlighter] in highlighter.isInStringOrComment($0) }
         guard let found else { return }
         let color = NSColor.labelColor.withAlphaComponent(0.16)
         for offset in [found.open, found.close] {
@@ -1006,7 +997,6 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         ruler.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSizeZoomed) - 1)
         applyWrap()
         ruler.needsDisplay = true
-        scheduleHighlight()
     }
 
     func reload() {
@@ -1068,6 +1058,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         let selection = textView.selectedRange()
         textView.dropExtraCursors()
         textView.string = text
+        highlighter.use(language: LanguageCatalog.language(forPath: path, firstLine: Self.firstLine(of: text)))
         // What undo remembers is about text that's gone.
         undo.removeAllActions()
         reviewChanged()
@@ -1082,7 +1073,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         }
         loadedOnce = true
         applyPendingLocation()
-        scheduleHighlight()
+        highlighter.paintVisible()
         diagnosticsChanged()
         model.languageServers.fileMayHaveChanged(path)
         refreshChangeMarks()
@@ -1165,17 +1156,14 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         reviewChanged()
         ruler.needsDisplay = true
         findIsStale = true
-        // Until the new colors arrive, what's known to be a string may have moved.
-        spansGeneration = -1
         markBrackets()
-        highlightWork?.cancel()
+        editWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.scheduleHighlight()
             self.refreshFindAfterEdit()
             self.model.languageServers.unsavedText(self.isDirty ? self.textView.string : nil, for: self.path)
         }
-        highlightWork = work
+        editWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
@@ -1204,31 +1192,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         reload()
     }
 
-    private func scheduleHighlight() {
-        highlightGeneration += 1
-        let generation = highlightGeneration
-        let text = textView.string
-        let language = FileClassifier.language(path: path)
-        guard (text as NSString).length < 500_000 else { return }
-        Task.detached(priority: .utility) { [weak self] in
-            let spans = SyntaxHighlighter.spans(text: text, language: language)
-            await MainActor.run {
-                guard let self, self.highlightGeneration == generation else { return }
-                self.apply(spans)
-                self.ignorableSpans = spans.filter { $0.kind == .string || $0.kind == .comment }.map(\.range).sorted { $0.location < $1.location }
-                self.spansGeneration = generation
-                self.markBrackets()
-            }
-        }
-    }
-
-    private func apply(_ spans: [SyntaxHighlighter.Span]) {
-        guard let layout = textView.layoutManager else { return }
-        let full = NSRange(location: 0, length: textView.nsText.length)
-        layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: full)
-        for span in spans where NSMaxRange(span.range) <= full.length {
-            layout.addTemporaryAttribute(.foregroundColor, value: span.kind.color, forCharacterRange: span.range)
-        }
+    /// For a file whose name doesn't say, like a script with a `#!` line.
+    private static func firstLine(of text: String) -> String {
+        String(text.prefix(200).prefix { !$0.isNewline })
     }
 
     private func applyPendingLocation() {
@@ -1275,7 +1241,10 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         model.languageServers.viewerShown(path)
     }
 
-    func didAttach() { model.languageServers.viewerShown(path) }
+    func didAttach() {
+        model.languageServers.viewerShown(path)
+        highlighter.paintVisible()
+    }
 
     func teardown() {
         token = nil
@@ -1698,185 +1667,6 @@ final class CodeContainer: NSView {
         scrollView.frame = CGRect(x: width, y: 0, width: max(bounds.width - width, 0), height: bounds.height)
         gutter.needsDisplay = true
         onLayout?()
-    }
-}
-
-/// A small, fast highlighter: comments, strings, numbers and keywords. Not a parser. It's
-/// here to make code easier to scan while reviewing, and it stays out of the way when unsure.
-nonisolated enum SyntaxHighlighter {
-    enum Kind: Sendable {
-        case comment, string, number, keyword, function, type, attribute
-
-        @MainActor var color: NSColor {
-            switch self {
-            case .comment: .secondaryLabelColor
-            case .function: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.51, green: 0.71, blue: 0.98, alpha: 1) : NSColor(srgbRed: 0.1, green: 0.34, blue: 0.75, alpha: 1) }
-            case .type: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.42, green: 0.82, blue: 0.82, alpha: 1) : NSColor(srgbRed: 0.03, green: 0.44, blue: 0.47, alpha: 1) }
-            case .attribute: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.93, green: 0.62, blue: 0.47, alpha: 1) : NSColor(srgbRed: 0.65, green: 0.27, blue: 0.07, alpha: 1) }
-            case .string: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.45, green: 0.83, blue: 0.56, alpha: 1) : NSColor(srgbRed: 0.09, green: 0.48, blue: 0.2, alpha: 1) }
-            case .number: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.9, green: 0.75, blue: 0.48, alpha: 1) : NSColor(srgbRed: 0.6, green: 0.4, blue: 0, alpha: 1) }
-            case .keyword: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor(srgbRed: 0.78, green: 0.57, blue: 0.92, alpha: 1) : NSColor(srgbRed: 0.53, green: 0.2, blue: 0.68, alpha: 1) }
-            }
-        }
-    }
-
-    struct Span: Sendable {
-        var range: NSRange
-        var kind: Kind
-    }
-
-    private static let hashComments: Set<String> = ["py", "rb", "sh", "bash", "zsh", "fish", "yaml", "yml", "toml", "r", "pl", "ex", "exs", "conf", "ini", "env", "tf", "gitignore"]
-    private static let slashComments: Set<String> = ["swift", "m", "mm", "h", "hpp", "c", "cc", "cpp", "cs", "java", "kt", "kts", "go", "rs", "js", "jsx", "mjs", "cjs", "ts", "tsx", "css", "scss", "less", "php", "dart", "scala", "proto", "gradle", "jsonc", "code-workspace"]
-    private static let keywords = Set("""
-    if else for while do switch case default break continue return func function def class struct enum protocol interface extension import from export package module public private protected internal static final const let var val fn impl trait type try catch throw throws finally async await new this self super nil null none true false True False None in is as guard defer where match with yield lambda and or not pub mut use mod
-    """.split(whereSeparator: \.isWhitespace).map(String.init))
-
-    /// One full pass over the same 10,000 lines of Rust, for `tiri perf highlight`.
-    static func measure() -> JSONValue {
-        let unit = "use std::fmt;\n// note\nstruct P { x: i32 }\nimpl fmt::Display for P {\n    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, \"{}\", self.x) }\n}\n"
-        let text = String(repeating: unit, count: 1_666)
-        var times: [Double] = []
-        for _ in 0..<3 {
-            let start = DispatchTime.now().uptimeNanoseconds
-            _ = CodeGrammar.shared.spans(text: text, language: "rust", limit: .max)
-            times.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
-        }
-        return .object(["engine": "highlight.js", "lines": 10_000, "firstMs": .double(times[0]), "bestMs": .double(times.min() ?? 0)])
-    }
-
-    /// A real grammar when there is one, and the small tokenizer below when there isn't.
-    static func spans(text: String, language: String?) -> [Span] {
-        if let language, let found = CodeGrammar.shared.spans(text: text, language: language) { return found }
-        return tokenSpans(text: text, language: language)
-    }
-
-    private static func tokenSpans(text: String, language: String?) -> [Span] {
-        let language = language ?? ""
-        let hash = hashComments.contains(language)
-        let slash = slashComments.contains(language)
-        let isData = language == "json" || language == "yaml" || language == "yml" || language == "toml"
-        let isProse = !hash && !slash && !isData
-        if isProse { return [] }
-        let units = Array(text.utf16)
-        var spans: [Span] = []
-        var index = 0
-        let count = units.count
-        var token = [UInt16]()
-        func isWord(_ unit: UInt16) -> Bool {
-            (unit >= 48 && unit <= 57) || (unit >= 65 && unit <= 90) || (unit >= 97 && unit <= 122) || unit == 95
-        }
-        while index < count {
-            let unit = units[index]
-            if slash, unit == 47, index + 1 < count, units[index + 1] == 47 {
-                let start = index
-                while index < count, units[index] != 10 { index += 1 }
-                spans.append(Span(range: NSRange(location: start, length: index - start), kind: .comment))
-            } else if slash, unit == 47, index + 1 < count, units[index + 1] == 42 {
-                let start = index
-                index += 2
-                while index + 1 < count, !(units[index] == 42 && units[index + 1] == 47) { index += 1 }
-                index = min(index + 2, count)
-                spans.append(Span(range: NSRange(location: start, length: index - start), kind: .comment))
-            } else if hash, unit == 35 {
-                let start = index
-                while index < count, units[index] != 10 { index += 1 }
-                spans.append(Span(range: NSRange(location: start, length: index - start), kind: .comment))
-            } else if unit == 34 || unit == 39 || unit == 96 {
-                // An apostrophe in the middle of a word isn't a string.
-                if unit == 39, index > 0, isWord(units[index - 1]) {
-                    index += 1
-                    continue
-                }
-                let start = index
-                index += 1
-                while index < count, units[index] != unit, units[index] != 10 || unit == 96 {
-                    if units[index] == 92 { index += 1 }
-                    index += 1
-                }
-                index = min(index + 1, count)
-                spans.append(Span(range: NSRange(location: start, length: index - start), kind: .string))
-            } else if isWord(unit) {
-                let start = index
-                token.removeAll(keepingCapacity: true)
-                while index < count, isWord(units[index]) {
-                    token.append(units[index])
-                    index += 1
-                }
-                if token[0] >= 48, token[0] <= 57 {
-                    spans.append(Span(range: NSRange(location: start, length: index - start), kind: .number))
-                } else if !isData, keywords.contains(String(decoding: token, as: UTF16.self)) {
-                    spans.append(Span(range: NSRange(location: start, length: index - start), kind: .keyword))
-                }
-            } else {
-                index += 1
-            }
-        }
-        return spans
-    }
-}
-
-/// highlight.js, run in JavaScriptCore on its own thread. Bundled with the app, nothing fetched.
-nonisolated final class CodeGrammar: @unchecked Sendable {
-    static let shared = CodeGrammar()
-    private let queue = DispatchQueue(label: "tiri.grammar", qos: .utility)
-    private var context: JSContext?
-    private var known = Set<String>()
-    private var loaded = false
-
-    /// Beyond this, a real grammar isn't worth the wait on a file you're scrolling.
-    static let maximumLength = 300_000
-
-    private func load() {
-        guard !loaded else { return }
-        loaded = true
-        guard let url = Bundle.main.url(forResource: "highlight.min", withExtension: "js"),
-              let source = try? String(contentsOf: url, encoding: .utf8), let context = JSContext() else { return }
-        context.evaluateScript(source)
-        context.evaluateScript("var hl = globalThis.hljs || hljs; function tiriHighlight(t, l) { return hl.highlight(t, { language: l, ignoreIllegals: true }).value; }")
-        self.context = context
-    }
-
-    /// highlight.js's own markup, for pages that style its classes.
-    func html(text: String, language: String) -> String? {
-        guard text.utf16.count <= Self.maximumLength else { return nil }
-        return queue.sync {
-            load()
-            guard let context, context.evaluateScript("!!hl.getLanguage(\(Self.quote(language)))")?.toBool() == true else { return nil }
-            return context.objectForKeyedSubscript("tiriHighlight")?.call(withArguments: [text, language])?.toString()
-        }
-    }
-
-    func spans(text: String, language: String, limit: Int = CodeGrammar.maximumLength) -> [SyntaxHighlighter.Span]? {
-        guard text.utf16.count <= limit else { return nil }
-        return queue.sync {
-            load()
-            guard let context, context.evaluateScript("!!hl.getLanguage(\(Self.quote(language)))")?.toBool() == true,
-                  let html = context.objectForKeyedSubscript("tiriHighlight")?.call(withArguments: [text, language])?.toString() else { return nil }
-            return HighlightMarkup.parse(html).compactMap { run in
-                Self.kind(for: run.scope).map { SyntaxHighlighter.Span(range: run.range, kind: $0) }
-            }
-        }
-    }
-
-    private static func quote(_ text: String) -> String {
-        "\"" + text.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == "+" || $0 == "#" } + "\""
-    }
-
-    private static func kind(for scope: String) -> SyntaxHighlighter.Kind? {
-        let parts = scope.split(separator: " ").map { $0.replacingOccurrences(of: "hljs-", with: "") }
-        guard let first = parts.first else { return nil }
-        switch first {
-        case "comment", "quote", "doctag": return .comment
-        case "string", "regexp", "addition", "symbol", "bullet", "code": return .string
-        case "number", "literal": return .number
-        case "keyword", "selector-tag", "meta-keyword", "operator" where first != "operator": return .keyword
-        case "title":
-            return parts.contains("class_") ? .type : .function
-        case "function", "section", "selector-id", "selector-class", "name": return .function
-        case "type", "built_in", "class": return .type
-        case "attr", "attribute", "property", "params", "variable", "template-variable", "meta", "tag": return .attribute
-        default: return nil
-        }
     }
 }
 
