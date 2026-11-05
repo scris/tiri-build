@@ -29,7 +29,7 @@ cp -R Resources/web "$APP/Contents/Resources/web"
 IDENTITY="${TIRI_SIGN_IDENTITY:--}"
 codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Resources/bin/tiri"
 codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Resources/bin/tiri-session"
-codesign --force --sign "$IDENTITY" --timestamp=none "$APP"
+codesign --force --sign "$IDENTITY" --timestamp=none --entitlements Resources/Tiri.entitlements "$APP"
 
 mkdir -p "$HOME/.local/bin"
 # Removed first: if Settings put a link here, copying would write into the app it points at.

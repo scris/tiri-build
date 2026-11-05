@@ -249,6 +249,10 @@ enum ControlHandler {
             guard let answer else { return ControlResponse.failure(id: request.id, "Cancelled.") }
             return .success(id: request.id, .object(["answer": .string(answer)]))
         }
+        if request.cmd == "perf", request.args["measure"]?.stringValue == "highlight" {
+            let measured = await Task.detached(priority: .userInitiated) { SyntaxHighlighter.measure() }.value
+            return .success(id: request.id, .object(["highlight": measured]))
+        }
         if request.cmd == "worktree.add" { return await worktreeAdd(request) }
         if request.cmd == "work" { return await work(request) }
         if request.cmd.hasPrefix("web.") { return await AppModel.shared.webCommand(request) }

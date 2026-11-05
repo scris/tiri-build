@@ -1731,6 +1731,19 @@ nonisolated enum SyntaxHighlighter {
     if else for while do switch case default break continue return func function def class struct enum protocol interface extension import from export package module public private protected internal static final const let var val fn impl trait type try catch throw throws finally async await new this self super nil null none true false True False None in is as guard defer where match with yield lambda and or not pub mut use mod
     """.split(whereSeparator: \.isWhitespace).map(String.init))
 
+    /// One full pass over the same 10,000 lines of Rust, for `tiri perf highlight`.
+    static func measure() -> JSONValue {
+        let unit = "use std::fmt;\n// note\nstruct P { x: i32 }\nimpl fmt::Display for P {\n    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, \"{}\", self.x) }\n}\n"
+        let text = String(repeating: unit, count: 1_666)
+        var times: [Double] = []
+        for _ in 0..<3 {
+            let start = DispatchTime.now().uptimeNanoseconds
+            _ = CodeGrammar.shared.spans(text: text, language: "rust", limit: .max)
+            times.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+        }
+        return .object(["engine": "highlight.js", "lines": 10_000, "firstMs": .double(times[0]), "bestMs": .double(times.min() ?? 0)])
+    }
+
     /// A real grammar when there is one, and the small tokenizer below when there isn't.
     static func spans(text: String, language: String?) -> [Span] {
         if let language, let found = CodeGrammar.shared.spans(text: text, language: language) { return found }
@@ -1811,7 +1824,7 @@ nonisolated final class CodeGrammar: @unchecked Sendable {
     private var loaded = false
 
     /// Beyond this, a real grammar isn't worth the wait on a file you're scrolling.
-    private static let maximumLength = 300_000
+    static let maximumLength = 300_000
 
     private func load() {
         guard !loaded else { return }
@@ -1833,8 +1846,8 @@ nonisolated final class CodeGrammar: @unchecked Sendable {
         }
     }
 
-    func spans(text: String, language: String) -> [SyntaxHighlighter.Span]? {
-        guard text.utf16.count <= Self.maximumLength else { return nil }
+    func spans(text: String, language: String, limit: Int = CodeGrammar.maximumLength) -> [SyntaxHighlighter.Span]? {
+        guard text.utf16.count <= limit else { return nil }
         return queue.sync {
             load()
             guard let context, context.evaluateScript("!!hl.getLanguage(\(Self.quote(language)))")?.toBool() == true,

@@ -72,7 +72,8 @@ public enum CLIParser {
         case "commands":
             return request("commands")
         case "perf":
-            return request("perf")
+            // `tiri perf highlight` measures the highlighter on a fixed 10,000-line text.
+            return request("perf", args.first.map { ["measure": JSONValue.string($0)] } ?? [:])
         case "tree":
             return request("tree")
 
