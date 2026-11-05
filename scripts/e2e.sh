@@ -311,7 +311,7 @@ budgets() {
 import json, sys
 m = json.load(sys.stdin)["result"]["highlight"]
 print(m)
-budget = {"visibleLinesMs": 16, "firstUseRustMs": 120, "firstUseMarkdownMs": 250, "bestPassMs": 600}
+budget = {"visibleLinesMs": 16, "firstUseRustMs": 120, "firstUseMarkdownMs": 250, "bestPassMs": 600, "completionFilterMs": 16}
 missed = {k: m.get(k) for k, v in budget.items() if m.get(k, 1e9) >= v}
 sys.exit(f"over budget: {missed}" if missed else 0)'
 }

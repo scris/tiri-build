@@ -125,6 +125,18 @@ final class LineHighlighter {
             textReplaced(paint: false)
             return
         }
+        // Typing within a line: what's known stays roughly right until the real answer arrives, so
+        // nothing flickers, and it's still known whether this is a string or a comment.
+        if edit.removed == 0, edit.inserted == 0, let line = tokens[edit.start] {
+            let column = range.location - table.starts[edit.start]
+            tokens[edit.start] = shiftedTokens(line, column: column, removed: oldLength, inserted: range.length)
+            painted[edit.start] = false
+            sequence += 1
+            edits.append((sequence, edit))
+            document?.edit(range: oldRange, replacement: string.substring(with: range), sequence: sequence)
+            DispatchQueue.main.async { [weak self] in self?.paintVisible() }
+            return
+        }
         let fresh = edit.start..<(edit.start + edit.inserted + 1)
         tokens.replaceSubrange(edit.start..<(edit.start + edit.removed + 1), with: fresh.map { _ in nil })
         painted.replaceSubrange(edit.start..<(edit.start + edit.removed + 1), with: fresh.map { _ in false })

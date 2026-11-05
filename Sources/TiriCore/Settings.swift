@@ -66,6 +66,7 @@ public struct TiriSettings: Equatable, Sendable {
     public var codeFontSize = 12.0
     public var editorWordWrap = WordWrap.off
     public var editorWordWrapColumn = 120
+    public var editorCompletion = true
     /// Steps of ⌘+ and ⌘-. Each is one point of text, in terminals and in files.
     public var zoomLevel = 0
     public var terminalFontSizeZoomed: Double { Self.zoomed(terminalFontSize, level: zoomLevel) }
@@ -123,6 +124,7 @@ public struct TiriSettings: Equatable, Sendable {
       // "off", "on" (at the pane's edge) or "bounded" (at editor.wordWrapColumn).
       "editor.wordWrap": "off",
       "editor.wordWrapColumn": 120,
+      "editor.completion": true,
 
       // Steps of ⌘+ and ⌘-.
       "window.zoomLevel": 0,
@@ -245,6 +247,7 @@ public struct TiriSettings: Equatable, Sendable {
             }
             settings.editorWordWrap = wrap
         }
+        try bool("editor.completion") { settings.editorCompletion = $0 }
         try number("editor.wordWrapColumn") { settings.editorWordWrapColumn = min(max(Int($0), 20), 1_000) }
         try number("window.zoomLevel") { settings.zoomLevel = min(max(Int($0), Self.zoomRange.lowerBound), Self.zoomRange.upperBound) }
         try strings("externalEditors") { settings.externalEditors = $0 }
@@ -444,6 +447,9 @@ public enum Keymap {
             ("shift+alt+down", "copyLinesDown"),
             ("cmd+shift+k", "deleteLine"),
             ("cmd+d", "addNextOccurrence"),
+            // ⌃Space is often the input source switcher, so there's a second way.
+            ("ctrl+space", "triggerCompletion"),
+            ("alt+escape", "triggerCompletion"),
             ("ctrl+g", "goToLine"),
             ("alt+z", "toggleWordWrap"),
             ("cmd+shift+o", "symbolsInFile"),

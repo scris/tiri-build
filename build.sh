@@ -21,7 +21,7 @@ cp "$BIN_DIR/tiri" "$APP/Contents/Resources/bin/tiri"
 cp "$BIN_DIR/tiri-session" "$APP/Contents/Resources/bin/tiri-session"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-cp -R Resources/textmate Resources/grammars "$APP/Contents/Resources/"
+cp -R Resources/textmate Resources/grammars Resources/language-servers "$APP/Contents/Resources/"
 cp -R Resources/remote "$APP/Contents/Resources/remote"
 cp -R Resources/web "$APP/Contents/Resources/web"
 

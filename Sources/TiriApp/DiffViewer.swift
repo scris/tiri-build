@@ -64,7 +64,7 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
             token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.load() }
         }
         load()
-        model.languageServers.viewerOpened(path)
+        model.languageServers.viewerOpened(path, viewer: self) { nil }
     }
 
     private func configure(_ pane: DiffPane) {
@@ -332,7 +332,7 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func focus() { activePane.textView.window?.makeFirstResponder(activePane.textView) }
     func teardown() {
         token = nil
-        model.languageServers.viewerClosed(path)
+        model.languageServers.viewerClosed(path, viewer: self)
     }
 
     // MARK: Going to a change

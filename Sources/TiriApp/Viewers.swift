@@ -720,6 +720,8 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var loadedOnce = false
     private var editWork: DispatchWorkItem?
     private lazy var highlighter = LineHighlighter(textView: textView)
+    private(set) lazy var completion = CompletionController(editor: self)
+    private lazy var realPath = Git.real(path)
     private var quoteButton: QuoteButton?
     private var scrollObservation: NSObjectProtocol?
     /// What's on disk, as far as this viewer knows.
@@ -762,7 +764,10 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             watchForCompiledPDF()
         }
         reload()
-        model.languageServers.viewerOpened(path)
+        model.languageServers.viewerOpened(path, viewer: self) { [weak self] in
+            guard let self, self.isDirty else { return nil }
+            return self.textView.string
+        }
     }
 
     /// An agent's first latexmk makes the PDF while this is open, so its folder gets watched.
@@ -777,6 +782,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     @objc private func selectionDidChange(_ notification: Notification) {
         if textView.isSteering { return }
+        completion.selectionMoved()
         reportSelection()
     }
 
@@ -897,7 +903,10 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             self?.fitTextToWrapColumn()
         }
         scrollObservation = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scrollView.contentView, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.markVisibleMatches() }
+            MainActor.assumeIsolated {
+                self?.markVisibleMatches()
+                self?.completion.scrolled()
+            }
         }
         applySettings()
     }
@@ -909,6 +918,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         guard editedMask.contains(.editedCharacters) else { return }
         ruler.textEdited(range: editedRange, delta: delta, in: textStorage.string as NSString)
         highlighter.textEdited(range: editedRange, delta: delta, in: textStorage)
+        let replacement = (textStorage.string as NSString).substring(with: editedRange)
+        model.languageServers.textEdited(realPath: realPath, range: NSRange(location: editedRange.location, length: editedRange.length - delta),
+                                         replacement: replacement, length: textStorage.length)
     }
 
     // MARK: Wrapping
@@ -1161,7 +1173,6 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.refreshFindAfterEdit()
-            self.model.languageServers.unsavedText(self.isDirty ? self.textView.string : nil, for: self.path)
         }
         editWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
@@ -1176,7 +1187,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             savedText = textView.string
             diskChangedUnderEdits = false
             isDirty = false
-            model.languageServers.unsavedText(nil, for: path)
+            model.languageServers.didSave(path)
             model.remote.didSave(path)
             return .saved
         } catch {
@@ -1187,9 +1198,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func discardEdits() {
         isDirty = false
         diskChangedUnderEdits = false
-        model.languageServers.unsavedText(nil, for: path)
         undo.removeAllActions()
         reload()
+        model.languageServers.fileMayHaveChanged(path)
     }
 
     /// For a file whose name doesn't say, like a script with a `#!` line.
@@ -1244,12 +1255,16 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func didAttach() {
         model.languageServers.viewerShown(path)
         highlighter.paintVisible()
+        completion.refreshWordsSoon(delay: 0.1)
     }
+
+    func isInStringOrComment(_ offset: Int) -> Bool { highlighter.isInStringOrComment(offset) }
 
     func teardown() {
         token = nil
         folderToken = nil
-        model.languageServers.viewerClosed(path)
+        completion.close()
+        model.languageServers.viewerClosed(path, viewer: self)
     }
 
     func diagnosticsChanged() {

@@ -39,8 +39,19 @@ final class CodeTextView: NSTextView {
         }
     }
 
-    /// Esc and F5 would offer word completions. Tiri doesn't pop things up while you're reading.
+    /// Esc and F5 would offer the system's word list. Esc is for closing things, and ⌃Space asks for Tiri's own.
     override func complete(_ sender: Any?) {}
+
+    override func resignFirstResponder() -> Bool {
+        editor?.completion.close()
+        return super.resignFirstResponder()
+    }
+
+    /// Another tab came to the front. Nothing tells a view it's lost the keyboard when that happens.
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { editor?.completion.close() }
+        super.viewWillMove(toWindow: newWindow)
+    }
 
     override func insertTab(_ sender: Any?) {
         guard let editor, isEditable, !hasMarkedText() else {
@@ -211,11 +222,25 @@ final class CodeTextView: NSTextView {
     // MARK: Typing with several cursors
 
     override func insertText(_ string: Any, replacementRange: NSRange) {
+        let text = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+        let completion = editor?.completion
+        let wasComposing = hasMarkedText()
+        completion?.isEditing = true
+        insertTextAtCursors(string, text: text, replacementRange: replacementRange)
+        completion?.isEditing = false
+        // What an input method settles on isn't a name being typed out, letter by letter.
+        if wasComposing {
+            completion?.close()
+        } else {
+            completion?.typed(text)
+        }
+    }
+
+    private func insertTextAtCursors(_ string: Any, text: String, replacementRange: NSRange) {
         guard hasMultipleCursors else {
             super.insertText(string, replacementRange: replacementRange)
             return
         }
-        let text = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
         if composing {
             isSteering = true
             super.insertText(string, replacementRange: replacementRange)
@@ -239,6 +264,8 @@ final class CodeTextView: NSTextView {
     private var composedLength = 0
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        // Hidden while an input method is composing.
+        editor?.completion.close()
         guard hasMultipleCursors, let textStorage else {
             super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
             return
@@ -404,6 +431,16 @@ final class CodeTextView: NSTextView {
     ]
 
     override func doCommand(by selector: Selector) {
+        let completion = editor?.completion
+        if completion?.handle(selector) == true { return }
+        let deleting = selector == #selector(deleteBackward(_:)) || selector == #selector(deleteBackwardByDecomposingPreviousCharacter(_:))
+        completion?.isEditing = deleting
+        runCommand(selector)
+        completion?.isEditing = false
+        if deleting { completion?.deleted() }
+    }
+
+    private func runCommand(_ selector: Selector) {
         guard hasMultipleCursors else {
             super.doCommand(by: selector)
             return
@@ -471,6 +508,25 @@ final class CodeTextView: NSTextView {
         if let origin { enclosingScrollView?.contentView.scroll(to: origin) }
         let result = MultiCursor.deleting(ranges)
         commit(result.changes, cursors: result.cursors, primaryIndex: wanted, typing: true)
+    }
+
+    // MARK: Accepting a completion
+
+    /// `left` and `right` are how much around the cursor it replaces. At other cursors, it's the
+    /// same amount, as far as the name there goes.
+    func applyCompletion(left: Int, right: Int, text: String, extra: [TextChange]) {
+        guard textStorage != nil else { return }
+        let string = nsText
+        let index = primaryIndex
+        let heads = hasMultipleCursors ? allCursors.map(\.head) : [selectedRange().location]
+        let wordStarts = hasMultipleCursors ? heads.map { WordIndex.prefix(in: string, before: $0)?.location ?? $0 } : nil
+        let ranges = CompletionEdit.ranges(heads: heads, left: left, right: right, wordStarts: wordStarts, length: string.length)
+        let made = CompletionEdit.make(replacing: ranges, with: text, extra: extra)
+        guard hasMultipleCursors else {
+            apply(TextEdit(changes: made.changes, selection: NSRange(location: made.carets.first ?? 0, length: 0)), name: "Completion")
+            return
+        }
+        commit(made.changes, cursors: made.carets.map { TextCursor(anchor: $0, head: $0) }, primaryIndex: index, typing: false)
     }
 
     // MARK: Copying and pasting with several cursors
@@ -569,7 +625,7 @@ final class CodeTextView: NSTextView {
 /// that file has the keyboard, so ⌥↑ still reaches a terminal and ⌘[ a web page.
 enum EditorCommand: String, CaseIterable {
     case toggleLineComment, indentLines, outdentLines, moveLinesUp, moveLinesDown
-    case copyLinesUp, copyLinesDown, deleteLine, insertLineBelow, insertLineAbove, addNextOccurrence
+    case copyLinesUp, copyLinesDown, deleteLine, insertLineBelow, insertLineAbove, addNextOccurrence, triggerCompletion
 
     var title: String {
         switch self {
@@ -584,6 +640,7 @@ enum EditorCommand: String, CaseIterable {
         case .insertLineBelow: "Insert Line Below"
         case .insertLineAbove: "Insert Line Above"
         case .addNextOccurrence: "Add Next Occurrence"
+        case .triggerCompletion: "Suggest Completions"
         }
     }
 }
@@ -595,6 +652,10 @@ extension TextController {
         guard codeView.isEditable, !codeView.hasMarkedText() else { return }
         if command == .addNextOccurrence {
             codeView.addNextOccurrence()
+            return
+        }
+        if command == .triggerCompletion {
+            completion.trigger()
             return
         }
         // These are about lines around the cursor, so they apply to the one that was added last.
@@ -619,7 +680,7 @@ extension TextController {
         case .insertLineBelow:
             edit = TextEditing.insertLineBelow(in: text, selection: selection, style: style, colonOpensBlock: CommentSyntax.colonOpensBlock(path))
         case .insertLineAbove: edit = TextEditing.insertLineAbove(in: text, selection: selection)
-        case .addNextOccurrence: edit = nil
+        case .addNextOccurrence, .triggerCompletion: edit = nil
         }
         if let edit { codeView.apply(edit, name: command.title) }
     }
@@ -742,6 +803,14 @@ extension AppModel {
               let controller = existingController(for: target) else { return nil }
         if let text = controller as? TextController { return text }
         return (controller as? MarkdownController)?.sourceIfShowing
+    }
+
+    /// Every file editor open, in any workspace. Their words can be offered in each other.
+    var openTextEditors: [TextController] {
+        workspaces.flatMap { $0.items + ($0.peek.map { [$0] } ?? []) }.compactMap { item in
+            let controller = existingController(for: item.id)
+            return (controller as? TextController) ?? (controller as? MarkdownController)?.sourceIfShowing
+        }
     }
 
     func zoom(by steps: Int) {

@@ -115,7 +115,7 @@ Right-click a tab and choose **Move to New Window** to put a terminal, file or p
 
 ## Quick edits
 
-Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes the file while you're editing, your text stays on screen and Tiri tells you, so nothing is overwritten without you choosing. Editing a Peek makes it a tab. This is for quick fixes, and it's still not a full editor: no autocomplete, snippets or AI ghost text.
+Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes the file while you're editing, your text stays on screen and Tiri tells you, so nothing is overwritten without you choosing. Editing a Peek makes it a tab. This is for quick fixes, and it's still not a full editor: no snippets or AI ghost text.
 
 The keys are VS Code's. ⌘/ comments, ⌘] and ⌘[ or Tab and ⇧Tab indent, ⌥↑ and ⌥↓ move lines, ⇧⌥↑ and ⇧⌥↓ copy them, ⇧⌘K deletes them, and ⌘↩ and ⇧⌘↩ add a line below or above. ⌃G goes to a line. ⌘D adds the next occurrence as another cursor, and typing goes in at all of them, with an input method too. Esc goes back to one. ⌥⌘F replaces, with a count of matches.
 
@@ -158,9 +158,21 @@ Widgets that need scripts in the page, like `ipywidgets`, show a picture or text
 
 With no language server for that file, Tiri searches the workspace, the same way it does for a path. One match opens, several let you choose, and none shows a toast with a way to search. This is a good guess rather than a compiler's answer, and it doesn't need any setup.
 
+## Colors
+
+Every viewer of code uses the same TextMate grammars, 231 languages bundled and run locally: the editor, diffs, markdown and notebooks. A file with no extension goes by its `#!` line. Lines are colored off the main thread, visible ones first, and typing usually redoes one line, so there's no limit on file size. A few grammars aren't included because of their licences: Ada, Gnuplot, nginx, Org, Racket and AutoHotkey 2 are GPL or LGPL, and APL, DAX, DreamMaker, GLSL and Tcl have no licence to go by. `Resources/grammars/NOTICE.txt` has the rest.
+
+## Completion
+
+While you type a name, or after `.` and the like, a list offers what the language server knows. With no server it offers words from this file and your other open files, from the second letter. ⌃Space or ⌥Esc asks at any time, including in comments, strings and prose, where it otherwise stays quiet.
+
+Arrows move, Return and Tab accept, and Esc closes the list without reaching the agent or closing a Peek. "cra" finds `createApplication`, and what you've used lately and names close to the cursor come first. An import the name needs comes along with it, and accepting inserts at every cursor. The list stays hidden while an input method is composing. `editor.completion` turns off the list that appears by itself.
+
 ## Language servers
 
-Tiri uses the language servers already on your Mac, for TypeScript and JavaScript, Python, Rust, Go, Swift, C and its relatives, Ruby and Lua. None are bundled and there's nothing to configure. Settings shows which it found, and for one it didn't, offers to ask your agent to install it. This is for reading and reviewing: there's no autocomplete, snippets or AI ghost text, and a file in Tiri stays a quick place to fix something.
+Tiri uses a language server you already have, wherever your shell or the project keeps it, for TypeScript and JavaScript, Python, Rust, Go, Swift, C and its relatives, shell scripts, YAML, JSON, HTML, CSS, Ruby, Lua, Java, Kotlin, C#, PHP and more. Servers you set up through Claude Code's language plugins work too.
+
+The first time you open a language with no server, Tiri asks once whether to add one. Nothing downloads until you say so. **Add** installs it into Tiri's own folder, at exact versions and hashes that came with the app, with `uv`, `npm --ignore-scripts` or `go`, and nothing outside that folder changes. Python gets basedpyright, about 283 MB, and it doesn't need Node. Settings offers the same thing, or for the rest, a prompt for your agent. Agents can run `tiri languages` and `tiri languages add <id>`. On a server, your agent does the installing.
 
 - ⌘-click, F12 and ⇧F12 ask the server first, and search if it has no answer yet.
 - Hold ⌘ over a name for a moment, or press ⌘K ⌘I, to see what it is.

@@ -29,7 +29,7 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 | The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
 | Sessions over days, and across a reboot | Quit and relaunch are tested on a real Claude session. A long run isn't | Use it |
 | Clicking a native notification | What a click does is tested: the right workspace and terminal come up. The click itself comes from the system, and notifications need permission | Allow notifications, then click one when an agent finishes while you're in another app |
-| rust-analyzer, gopls, pyright, typescript-language-server, ruby-lsp and lua-language-server | clangd and sourcekit-lsp are tested for real: diagnostics, definition, references, hover, an edit on disk, and stopping when idle. On this Mac rust-analyzer is a rustup shim for a component that isn't installed, which did prove that case is reported. The others aren't installed. The protocol they share is the same, but each has its own habits | Open a file in each language, and press F12 on a name |
+| rust-analyzer, gopls, pyright, ruby-lsp, lua-language-server and the newer servers in the catalog | clangd and sourcekit-lsp are tested for real: diagnostics, definition, references, hover, an edit on disk, and stopping when idle. Completion is tested for real on basedpyright and typescript-language-server here, and clangd over SSH. On this Mac rust-analyzer is a rustup shim for a component that isn't installed, which did prove that case is reported. The others aren't installed. The protocol they share is the same, but each has its own habits | Open a file in each language, and press F12 on a name |
 | Fetch, pull and push against a real remote | Tested with a local bare repository, so no real remote changed. SSH keys, the keychain and push hooks are unproven from the app | Fetch in a real repository, then push something you mean to |
 | A password rather than a key, and one-time codes | Passphrases and unknown hosts had real keystrokes. Passwords and codes go through the same prompt | Connect to a host that asks |
 | Waking from real sleep on a server workspace | Dropped connections are tested, and wake triggers the same retry, but the Mac was kept awake | Close the lid, open it |
@@ -56,7 +56,8 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 - **Agent input:** selections reach Claude Code through its editor protocol. ⌘L, paste, drag and a picker add lines, files and images to any agent.
 - **Review comments:** comment on lines of any file or diff, keep them in the sidebar across a relaunch, and send them to one agent as one message, unsent. They follow lines an agent moves. `tiri review` for agents.
 - **Go to definition:** ⌘-click or F12 in a file or diff floats the definition as a Peek, with Back. ⇧F12 finds uses. Found by searching the workspace when there's no language server.
-- **Language servers:** finds the servers on this Mac and starts them when a file has been looked at for a moment. Hover, definition, references and diagnostics. Diagnostics reach Claude through `getDiagnostics`, any agent through `tiri diagnostics`, and diffs for the lines they added.
+- **Completion:** from the language server, or words from open files when there's none. ⌃Space, camelCase matching, imports, every cursor, hidden while composing, and on servers too. Details load only for what's highlighted.
+- **Language servers:** finds the servers on this Mac and starts them when a file has been looked at for a moment. Offers once to add a missing one, with a pinned, hash-checked install in one click. Updates go as edits, right before each question. Hover, definition, references, completion and diagnostics. Diagnostics reach Claude through `getDiagnostics`, any agent through `tiri diagnostics`, and diffs for the lines they added.
 - **Changes:** a sidebar section and diff items in the main window, live, in tabs and Peeks, with `tiri changes` and `tiri diff`. Read-only: no staging or committing.
 - **Reviewing commits:** Changes also shows This Branch, which names its base, and Recent Commits, with `tiri changes --branch`, `--commit`, and `tiri log`. Handles root commits, merges, empty branches, detached HEAD, no commits, renames and binary files.
 - **Diff viewer:** inline or side by side (`diff.sideBySide`), changed words highlighted, images before and after, F7 and ⇧F7. Tens of thousands of changed lines stay responsive.
@@ -87,6 +88,8 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 - Find doesn't cover images, video or Quick Look files. Web and markdown find has no match count.
 - One main window. Any tab can move to its own window, but a second window can't hold its own workspace. A second instance can't take the control socket and says so.
 - Notebook cells are edited as plain text, without highlighting until you leave the cell, and there's no completion in them.
+- Adding a language server on an SSH server goes through your agent, since Tiri's own install is only for this Mac. Python gets one server per file, so ruff doesn't run alongside basedpyright.
+- A language with no entry in the server catalog, like Gleam, has colors and word completion but nothing offers to add a server, until the plugin system gives an agent somewhere to put one.
 - Notebook outputs that need scripts (Plotly, widgets) show a picture if they have one, or a note. The Source button on a very large notebook can stall for seconds.
 - A server: a workspace is on one server, not several, and not a mixture with local folders. Agents can't be told apart between two Macs on one server's Claude settings. If the connection comes back on another forwarded port, an agent already running there needs `/ide` to find the editor again.
 
@@ -101,6 +104,7 @@ A language server isn't counted below, because it's optional and only runs once 
 | Cold launch to window | < 500 ms | 270–360 ms after the first launch of a build. The first launch after a build was 480–900 ms |
 | Open text, code or image under 5 MB | < 100 ms | 15–30 ms |
 | Colors on 60 visible lines | < 16 ms | 1.2 ms |
+| Filtering 5,000 names for completion | < 16 ms | 1.9 ms |
 | First use of a grammar | < 120 ms | Engine 7 ms, then Rust 14 ms; markdown, which pulls in many others, 77 ms |
 | Open markdown | < 100 ms | 47 ms typically; 110 ms for a 124 KB file (over budget) |
 | Open HEIC | (not in budget, was 8 MB) | 134 ms, decoded off the main thread |
@@ -153,4 +157,4 @@ Open times run from the request until the content is showing, except for Office 
 2. Highlighting while typing in a notebook cell, and a way to reopen a file in another encoding.
 3. A second window with its own workspace.
 4. An MCP wrapper around the control API, now that the CLI is stable.
-5. Completion on request, from the language server, if real use shows people want it. Snippets and AI ghost text are decided against, and so is any Git control beyond fetch, pull and push: the rest is for agents.
+5. The plugin system, starting with its core. Snippets and AI ghost text are decided against, and so is any Git control beyond fetch, pull and push: the rest is for agents.

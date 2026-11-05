@@ -23,6 +23,23 @@ public enum TokenKind: UInt8, Sendable, CaseIterable {
 /// One line's colors. Each entry is start * 8 + kind, and runs until the next entry or the line's end.
 public typealias LineTokens = [UInt32]
 
+/// A line's colors after part of it was replaced, close enough to show until the real answer comes.
+public func shiftedTokens(_ line: LineTokens, column: Int, removed: Int, inserted: Int) -> LineTokens {
+    line.map { entry in
+        let start = TokenKind.start(of: entry)
+        let moved: Int
+        if start <= column {
+            moved = start
+        } else if start >= column + removed {
+            moved = start - removed + inserted
+        } else {
+            // Inside what's gone: it starts where the new text ends.
+            moved = column + inserted
+        }
+        return UInt32(max(moved, 0)) << 3 | (entry & 7)
+    }
+}
+
 extension TokenKind {
     public static func of(_ entry: UInt32) -> TokenKind { TokenKind(rawValue: UInt8(entry & 7)) ?? .plain }
     public static func start(of entry: UInt32) -> Int { Int(entry >> 3) }
@@ -286,6 +303,9 @@ public final class HighlightEngine: @unchecked Sendable {
             result["firstPassMs"] = .double(times[0])
             result["bestPassMs"] = .double(times.min() ?? 0)
             result["visibleLinesMs"] = .double(milliseconds { _ = engine.tokenize(id: id, start: 0, text: screenful, count: 60, budget: 0, dirtyUntil: 60, peek: false) })
+            // Filtering 5,000 names for what's been typed, which happens at every key press.
+            let names = (0..<5_000).map { CompletionItem(label: "someFunctionName\($0)", isFromServer: false) }
+            result["completionFilterMs"] = .double(milliseconds { _ = CompletionRanker.rank(names, query: "sfn12") })
             return .object(result)
         }
     }

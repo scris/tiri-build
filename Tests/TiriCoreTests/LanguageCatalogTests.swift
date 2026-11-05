@@ -107,7 +107,31 @@ import Testing
         #expect(LanguageCatalog.language(named: "c++")?.id == "cpp")
         #expect(LanguageCatalog.language(forPath: "/a/b.gleam")?.id == "gleam")
         for language in LanguageCatalog.all where language.server != nil {
-            #expect(LanguageServerCatalog.all.contains { $0.id == language.server } || ["csharp", "java", "kotlin", "scala", "vue", "svelte", "css", "php", "dart", "zig", "json", "bash", "yaml", "toml", "elixir", "terraform", "docker", "haskell", "html", "ocaml"].contains(language.server!), "\(language.id)")
+            #expect(LanguageServerCatalog.all.contains { $0.id == language.server }, "\(language.id)")
+        }
+    }
+
+    @Test func aServerSetUpForClaudeCodeWorksHereToo() {
+        let servers: [String: Any] = [
+            "kotlin": ["command": "kotlin-lsp", "args": ["--stdio"], "extensionToLanguage": [".kt": "kotlin"]],
+            "odd": ["command": "odd-server", "extensionToLanguage": [".ODD": "odd"]],
+            "broken": ["command": "x"],
+        ]
+        let found = ClaudeLanguagePlugins.parse(servers, plugin: "p", knownCommands: ["kotlin-lsp"])
+        #expect(found.map(\.id) == ["claude-odd"])
+        #expect(found.first?.commands == [["odd-server"]])
+        #expect(found.first?.languageID(for: "/a/b.odd") == "odd")
+    }
+
+    @Test func installableServersPointAtALockThatExists() {
+        let locks = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/language-servers")
+        for server in LanguageServerCatalog.all {
+            guard let managed = server.managed else { continue }
+            switch managed.tool {
+            case .uv: #expect(FileManager.default.fileExists(atPath: locks.appendingPathComponent("\(managed.lock)/requirements.txt").path), "\(server.id)")
+            case .npm: #expect(FileManager.default.fileExists(atPath: locks.appendingPathComponent("\(managed.lock)/package-lock.json").path), "\(server.id)")
+            case .go: #expect(managed.package != nil, "\(server.id)")
+            }
         }
     }
 }

@@ -267,8 +267,19 @@ public enum CLIParser {
             return request("diagnostics", paths.isEmpty ? [:] : ["paths": .array(paths)])
 
         case "languages":
-            guard args.isEmpty else { throw UsageError("usage: tiri languages") }
+            // `tiri languages add python` does what the Add button does.
+            if args.first == "add" {
+                guard args.count == 2 else { throw UsageError("usage: tiri languages add <id>") }
+                return request("languages.add", ["id": .string(args[1])])
+            }
+            guard args.isEmpty else { throw UsageError("usage: tiri languages [add <id>]") }
             return request("languages")
+
+        case "dev-compose":
+            // What an input method does, which keys posted to a process can't: `dev-compose ni` shows
+            // letters still being worked on, and `dev-compose --commit 你` settles on some.
+            guard let text = args.last else { throw UsageError("usage: tiri dev-compose [--commit] <text>   (test copies only)") }
+            return request("dev-compose", ["text": .string(text), "commit": .bool(args.first == "--commit")])
 
         case "agents":
             let usage = "usage: tiri agents [on <agent> | off <agent> | add <name> <command> | remove <agent>]"
@@ -605,7 +616,7 @@ public enum CLIParser {
       tiri review [add <path>[:line[-line]] <text> | remove <id> | clear | send [--to <item-id>]]
                                    (comments waiting to go to an agent, all at once)
       tiri diagnostics [<path> ...]   (errors and warnings; without paths, in files changed since the last commit)
-      tiri languages               (which language servers Tiri can find)
+      tiri languages [add <id>]    (which language servers Tiri can find, and installing one it has versions for)
       tiri agents [on <agent> | off <agent> | add <name> <command> | remove <agent>]
                                    (which agents Tiri offers, everywhere it offers them)
       tiri follow <item-id> <row> <col>   (what ⌘-click does, on a terminal's path or a file's name)
@@ -884,7 +895,8 @@ public enum AgentGuide {
 
     `tiri diagnostics` asks the language servers on this Mac. Without paths, it checks the files
     changed since the last commit, and waits for an answer. It prints what compilers print, so
-    the user can ⌘-click it. `tiri languages` says which servers Tiri can find.
+    the user can ⌘-click it. `tiri languages` says which servers Tiri can find, and for those
+    marked as ones it can add, `tiri languages add <id>` installs them into its own folder.
 
     ```sh
     tiri diagnostics                      # the files you've changed

@@ -144,7 +144,7 @@ public enum CLIOutput {
             break
         case "languages":
             for entry in response.result?.arrayValue ?? [] {
-                say([cell(entry["language"]), cell(entry["state"]), cell(entry["path"])].joined(separator: "\t"))
+                say([cell(entry["id"]), cell(entry["language"]), cell(entry["state"]), cell(entry["path"])].joined(separator: "\t"))
             }
         case "turns":
             for entry in response.result?.arrayValue ?? [] {

@@ -111,6 +111,31 @@ private func waitUntil(_ seconds: Double = 5, _ condition: () -> Bool) async -> 
         #expect(listener.kinds(1, of: "y = 2")["2"] == .number)
     }
 
+    @Test func aSecondEditDoesntStopAChangeOnItsWayDown() async {
+        let listener = Listener()
+        let document = HighlightDocument(engine: engine, scope: "source.python") { listener.receive($0) }
+        defer { document.close() }
+        let count = 3_000
+        let text = (0..<count).map { "v\($0) = \($0)" }.joined(separator: "\n")
+        document.replaceAll(text, sequence: 0)
+        #expect(await waitUntil(30) { listener.line(count - 1) != nil })
+        listener.clear()
+        // Opens a string that runs to the end of the file, and lands while that's still on its way.
+        document.edit(range: NSRange(location: 0, length: 0), replacement: "\"\"\"", sequence: 1)
+        #expect(await waitUntil(30) { listener.line(40) != nil })
+        document.edit(range: NSRange(location: 3, length: 0), replacement: "x", sequence: 2)
+        let last = "v\(count - 1) = \(count - 1)"
+        #expect(await waitUntil(60) { listener.kinds(count - 1, of: last)[last] == .string })
+    }
+
+    @Test func removingPartOfALineMovesItsColorsWithoutGoingNegative() {
+        let line: LineTokens = [4, 3 * 8 + 5, 9 * 8 + 2]
+        #expect(shiftedTokens(line, column: 0, removed: 9, inserted: 0).map(TokenKind.start(of:)) == [0, 0, 0])
+        #expect(shiftedTokens(line, column: 2, removed: 0, inserted: 3).map(TokenKind.start(of:)) == [0, 6, 12])
+        #expect(shiftedTokens(line, column: 4, removed: 2, inserted: 0).map(TokenKind.start(of:)) == [0, 3, 7])
+        #expect(shiftedTokens(line, column: 0, removed: 5, inserted: 1).map(TokenKind.of) == [.keyword, .function, .string])
+    }
+
     @Test func aLineFarAheadGetsAGuessFirst() async {
         let listener = Listener()
         let document = HighlightDocument(engine: engine, scope: "source.python") { listener.receive($0) }
@@ -170,6 +195,13 @@ private func waitUntil(_ seconds: Double = 5, _ condition: () -> Bool) async -> 
         #expect(mirror.apply(range: NSRange(location: 2, length: 0), replacement: "1\n2\n") == LineEdit(start: 1, removed: 0, inserted: 2))
         #expect(mirror.lines.count == 6)
         #expect(mirror.apply(range: NSRange(location: 0, length: 2), replacement: "") == LineEdit(start: 0, removed: 1, inserted: 0))
+    }
+
+    @Test func aWholeLineReplacedWithItsEndingStaysOneLine() {
+        let mirror = TextMirror("a\nb\nc\n")
+        #expect(mirror.apply(range: NSRange(location: 2, length: 2), replacement: "xy\n") == LineEdit(start: 1, removed: 0, inserted: 0))
+        #expect(mirror.text == "a\nxy\nc\n")
+        #expect(mirror.apply(range: NSRange(location: 2, length: 3), replacement: "p\nq\n") == LineEdit(start: 1, removed: 0, inserted: 1))
     }
 
     @Test func aCarriageReturnMeetingANewlineIsOneLineEnding() {

@@ -2,6 +2,46 @@ import Foundation
 
 // MARK: - What Tiri knows about servers
 
+/// How Tiri can install a server itself, with one click: exact versions and hashes that came with
+/// the app. A server you installed yourself always comes first.
+public struct ManagedServer: Sendable, Equatable {
+    public enum Tool: String, Sendable {
+        /// A virtual environment, from `requirements.txt` in Resources/language-servers/`lock`.
+        case uv
+        /// `npm ci` with no install scripts, from a `package-lock.json` in the same place.
+        case npm
+        /// `go install` at this exact version, which Go checks against its checksum database.
+        case go
+    }
+
+    public var tool: Tool
+    public var lock: String
+    /// Changing it installs again, beside the old one.
+    public var version: String
+    public var megabytes: Int
+    /// The name of the server, for saying what's about to be installed.
+    public var title: String
+    public var package: String?
+
+    public init(tool: Tool, lock: String, version: String, megabytes: Int, title: String, package: String? = nil) {
+        self.tool = tool
+        self.lock = lock
+        self.version = version
+        self.megabytes = megabytes
+        self.title = title
+        self.package = package
+    }
+
+    /// Where its programs end up, inside its own folder.
+    public var binaryFolder: String {
+        switch tool {
+        case .uv: "venv/bin"
+        case .npm: "node_modules/.bin"
+        case .go: "bin"
+        }
+    }
+}
+
 /// A language server Tiri knows how to find. They aren't bundled: this says what to look for.
 public struct LanguageServerDefinition: Sendable, Identifiable, Equatable {
     public var id: String
@@ -14,39 +54,98 @@ public struct LanguageServerDefinition: Sendable, Identifiable, Equatable {
     public var localBins: [String]
     /// How to get it, for the prompt to your agent.
     public var installHint: String
+    public var managed: ManagedServer?
+    /// For servers known from elsewhere: the extensions they said they cover.
+    public var extraExtensions: [String: String] = [:]
 
     public func languageID(for path: String) -> String {
-        LanguageCatalog.language(forPath: path)?.languageServerID ?? (path as NSString).pathExtension.lowercased()
+        let ext = (path as NSString).pathExtension.lowercased()
+        if let own = extraExtensions[ext] { return own }
+        return LanguageCatalog.language(forPath: path)?.languageServerID ?? ext
     }
 }
 
 public enum LanguageServerCatalog {
-    public static let all: [LanguageServerDefinition] = [
+    private static let builtIn: [LanguageServerDefinition] = [
         .init(id: "typescript", language: "TypeScript and JavaScript",
               commands: [["typescript-language-server", "--stdio"]], rootMarkers: ["tsconfig.json", "jsconfig.json", "package.json"],
-              localBins: ["node_modules/.bin"], installHint: "npm install -g typescript typescript-language-server"),
+              localBins: ["node_modules/.bin"], installHint: "npm install -g typescript typescript-language-server",
+              managed: .init(tool: .npm, lock: "typescript", version: "6.0.3", megabytes: 26, title: "typescript-language-server")),
         .init(id: "python", language: "Python",
-              commands: [["pyright-langserver", "--stdio"], ["basedpyright-langserver", "--stdio"], ["pylsp"]],
+              commands: [["pyright-langserver", "--stdio"], ["basedpyright-langserver", "--stdio"], ["pylsp"], ["jedi-language-server"], ["ty", "server"]],
               rootMarkers: ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],
-              localBins: [".venv/bin", "venv/bin", "node_modules/.bin"], installHint: "npm install -g pyright"),
+              localBins: [".venv/bin", "venv/bin", "node_modules/.bin"], installHint: "uv tool install basedpyright, or npm install -g pyright",
+              managed: .init(tool: .uv, lock: "python", version: "1.40.2", megabytes: 283, title: "basedpyright")),
         .init(id: "rust", language: "Rust", commands: [["rust-analyzer"]], rootMarkers: ["Cargo.toml"],
               localBins: [], installHint: "rustup component add rust-analyzer"),
         .init(id: "go", language: "Go", commands: [["gopls"]], rootMarkers: ["go.mod"],
-              localBins: [], installHint: "go install golang.org/x/tools/gopls@latest"),
+              localBins: [], installHint: "go install golang.org/x/tools/gopls@latest",
+              managed: .init(tool: .go, lock: "", version: "v0.24.0", megabytes: 41, title: "gopls", package: "golang.org/x/tools/gopls")),
         .init(id: "swift", language: "Swift", commands: [["sourcekit-lsp"]], rootMarkers: ["Package.swift"],
               localBins: [], installHint: "It comes with Xcode: xcode-select --install"),
         .init(id: "c", language: "C, C++ and Objective-C",
               commands: [["clangd"]], rootMarkers: ["compile_commands.json", "compile_flags.txt", "CMakeLists.txt", "Makefile"],
               localBins: [], installHint: "It comes with Xcode: xcode-select --install"),
+        .init(id: "bash", language: "Shell scripts", commands: [["bash-language-server", "start"]], rootMarkers: [],
+              localBins: ["node_modules/.bin"], installHint: "npm install -g bash-language-server",
+              managed: .init(tool: .npm, lock: "bash", version: "5.8.1", megabytes: 26, title: "bash-language-server")),
+        .init(id: "yaml", language: "YAML", commands: [["yaml-language-server", "--stdio"]], rootMarkers: [],
+              localBins: ["node_modules/.bin"], installHint: "npm install -g yaml-language-server",
+              managed: .init(tool: .npm, lock: "yaml", version: "2.0.0", megabytes: 19, title: "yaml-language-server")),
+        .init(id: "json", language: "JSON", commands: [["vscode-json-language-server", "--stdio"]], rootMarkers: [],
+              localBins: ["node_modules/.bin"], installHint: "npm install -g vscode-langservers-extracted",
+              managed: .init(tool: .npm, lock: "web", version: "4.10.0", megabytes: 94, title: "VS Code's web language servers")),
+        .init(id: "html", language: "HTML", commands: [["vscode-html-language-server", "--stdio"]], rootMarkers: [],
+              localBins: ["node_modules/.bin"], installHint: "npm install -g vscode-langservers-extracted",
+              managed: .init(tool: .npm, lock: "web", version: "4.10.0", megabytes: 94, title: "VS Code's web language servers")),
+        .init(id: "css", language: "CSS, SCSS and Less", commands: [["vscode-css-language-server", "--stdio"]], rootMarkers: [],
+              localBins: ["node_modules/.bin"], installHint: "npm install -g vscode-langservers-extracted",
+              managed: .init(tool: .npm, lock: "web", version: "4.10.0", megabytes: 94, title: "VS Code's web language servers")),
         .init(id: "ruby", language: "Ruby", commands: [["ruby-lsp"], ["solargraph", "stdio"]], rootMarkers: ["Gemfile"],
               localBins: ["bin"], installHint: "gem install ruby-lsp"),
         .init(id: "lua", language: "Lua", commands: [["lua-language-server"]], rootMarkers: [".luarc.json"],
               localBins: [], installHint: "brew install lua-language-server"),
+        .init(id: "java", language: "Java", commands: [["jdtls"]], rootMarkers: ["pom.xml", "build.gradle", "build.gradle.kts"],
+              localBins: [], installHint: "brew install jdtls"),
+        .init(id: "kotlin", language: "Kotlin", commands: [["kotlin-lsp", "--stdio"]], rootMarkers: ["settings.gradle.kts", "build.gradle.kts", "build.gradle", "pom.xml"],
+              localBins: [], installHint: "brew install JetBrains/utils/kotlin-lsp"),
+        .init(id: "scala", language: "Scala", commands: [["metals"]], rootMarkers: ["build.sbt", "build.sc"],
+              localBins: [], installHint: "cs install metals"),
+        .init(id: "csharp", language: "C#", commands: [["csharp-ls"]], rootMarkers: ["global.json"],
+              localBins: [], installHint: "dotnet tool install --global csharp-ls"),
+        .init(id: "php", language: "PHP", commands: [["intelephense", "--stdio"]], rootMarkers: ["composer.json"],
+              localBins: ["vendor/bin", "node_modules/.bin"], installHint: "npm install -g intelephense"),
+        .init(id: "dart", language: "Dart", commands: [["dart", "language-server", "--protocol=lsp"]], rootMarkers: ["pubspec.yaml"],
+              localBins: [], installHint: "It comes with the Dart SDK: brew install dart"),
+        .init(id: "zig", language: "Zig", commands: [["zls"]], rootMarkers: ["build.zig"],
+              localBins: [], installHint: "brew install zls"),
+        .init(id: "elixir", language: "Elixir", commands: [["elixir-ls"], ["lexical"]], rootMarkers: ["mix.exs"],
+              localBins: [], installHint: "brew install elixir-ls"),
+        .init(id: "haskell", language: "Haskell", commands: [["haskell-language-server-wrapper", "--lsp"]], rootMarkers: ["stack.yaml", "cabal.project", "hie.yaml"],
+              localBins: [], installHint: "ghcup install hls"),
+        .init(id: "ocaml", language: "OCaml", commands: [["ocamllsp"]], rootMarkers: ["dune-project"],
+              localBins: [], installHint: "opam install ocaml-lsp-server"),
+        .init(id: "terraform", language: "Terraform", commands: [["terraform-ls", "serve"]], rootMarkers: [".terraform"],
+              localBins: [], installHint: "brew install hashicorp/tap/terraform-ls"),
+        .init(id: "docker", language: "Dockerfiles", commands: [["docker-langserver", "--stdio"]], rootMarkers: [],
+              localBins: ["node_modules/.bin"], installHint: "npm install -g dockerfile-language-server-nodejs"),
+        .init(id: "toml", language: "TOML", commands: [["taplo", "lsp", "stdio"]], rootMarkers: [],
+              localBins: [], installHint: "brew install taplo"),
+        .init(id: "vue", language: "Vue", commands: [["vue-language-server", "--stdio"]], rootMarkers: ["package.json"],
+              localBins: ["node_modules/.bin"], installHint: "npm install -g @vue/language-server"),
+        .init(id: "svelte", language: "Svelte", commands: [["svelteserver", "--stdio"]], rootMarkers: ["package.json"],
+              localBins: ["node_modules/.bin"], installHint: "npm install -g svelte-language-server"),
     ]
 
+    public static let all: [LanguageServerDefinition] = builtIn + ClaudeLanguagePlugins.servers(known: builtIn)
+
     public static func definition(for path: String) -> LanguageServerDefinition? {
-        guard let server = LanguageCatalog.language(forPath: path)?.server else { return nil }
-        return all.first { $0.id == server }
+        if let server = LanguageCatalog.language(forPath: path)?.server {
+            return all.first { $0.id == server }
+        }
+        let ext = (path as NSString).pathExtension.lowercased()
+        guard !ext.isEmpty else { return nil }
+        return all.first { $0.extraExtensions[ext] != nil }
     }
 
     /// The project a file belongs to: the nearest folder with a marker, inside the workspace
@@ -145,7 +244,7 @@ public enum LSP {
         .object(["textDocument": .object(["uri": .string(uri(for: path))]), "position": position(line: line, character: character)])
     }
 
-    /// What Tiri can do with a server's answers. Asks for nothing to do with typing.
+    /// What Tiri can do with a server's answers.
     /// `processID` is nil over SSH, where a server would look for it, not find it, and exit.
     public static func initializeParams(root: String, processID: Int32?) -> JSONValue {
         .object([
@@ -164,7 +263,23 @@ public enum LSP {
                 ]),
                 "window": .object(["workDoneProgress": false]),
                 "textDocument": .object([
-                    "synchronization": .object(["didSave": true]),
+                    "synchronization": .object(["didSave": true, "willSave": false, "dynamicRegistration": false]),
+                    // Plain text only: snippets are decided against, and so is anything that types by itself.
+                    "completion": .object([
+                        "dynamicRegistration": false,
+                        "contextSupport": true,
+                        "completionItem": .object([
+                            "snippetSupport": false,
+                            "commitCharactersSupport": false,
+                            "insertReplaceSupport": false,
+                            "labelDetailsSupport": true,
+                            "preselectSupport": true,
+                            "deprecatedSupport": true,
+                            "documentationFormat": .array(["plaintext", "markdown"]),
+                            "resolveSupport": .object(["properties": .array(["documentation", "detail", "additionalTextEdits"])]),
+                        ]),
+                        "completionItemKind": .object(["valueSet": .array((1...25).map { .int($0) })]),
+                    ]),
                     "hover": .object(["contentFormat": .array(["markdown", "plaintext"])]),
                     "definition": .object(["linkSupport": true]),
                     "references": .object([:]),
@@ -323,6 +438,12 @@ public final class LSPClient: @unchecked Sendable {
         }
     }
 
+    /// For taking back a question nobody wants the answer to any more.
+    public final class RequestToken: @unchecked Sendable {
+        fileprivate var id: Int?
+        public init() {}
+    }
+
     private let queue = DispatchQueue(label: "tiri.lsp")
     private let launch: Launch
     private var process: Process?
@@ -428,7 +549,7 @@ public final class LSPClient: @unchecked Sendable {
     }
 
     /// The answer arrives exactly once: nil for an error, an exit or running out of time.
-    public func request(_ method: String, _ params: JSONValue, timeout: TimeInterval = 10, answer: @escaping @Sendable (JSONValue?) -> Void) {
+    public func request(_ method: String, _ params: JSONValue, timeout: TimeInterval = 10, token: RequestToken? = nil, answer: @escaping @Sendable (JSONValue?) -> Void) {
         queue.async {
             guard !self.exited else {
                 answer(nil)
@@ -436,6 +557,7 @@ public final class LSPClient: @unchecked Sendable {
             }
             let id = self.nextID
             self.nextID += 1
+            token?.id = id
             self.pending[id] = answer
             self.write(.object(["jsonrpc": "2.0", "id": .int(id), "method": .string(method), "params": params]))
             self.queue.asyncAfter(deadline: .now() + timeout) {
@@ -444,9 +566,16 @@ public final class LSPClient: @unchecked Sendable {
         }
     }
 
-    public func request(_ method: String, _ params: JSONValue, timeout: TimeInterval = 10) async -> JSONValue? {
+    public func request(_ method: String, _ params: JSONValue, timeout: TimeInterval = 10, token: RequestToken? = nil) async -> JSONValue? {
         await withCheckedContinuation { continuation in
-            request(method, params, timeout: timeout) { continuation.resume(returning: $0) }
+            request(method, params, timeout: timeout, token: token) { continuation.resume(returning: $0) }
+        }
+    }
+
+    public func cancel(_ token: RequestToken) {
+        queue.async {
+            guard let id = token.id, self.pending[id] != nil else { return }
+            self.write(.object(["jsonrpc": "2.0", "method": "$/cancelRequest", "params": .object(["id": .int(id)])]))
         }
     }
 
@@ -484,5 +613,44 @@ extension LSP {
     static func fromServer(_ data: Data, map: RemotePathMap) -> Data {
         let escaped = map.localRoot.replacingOccurrences(of: "/", with: "\\/")
         return replacing(data, [("file:\\/\\/\\/", "file:\\/\\/" + escaped + "\\/"), ("file:///", "file://" + map.localRoot + "/")])
+    }
+}
+
+// MARK: - Servers you already set up for Claude Code
+
+/// Claude Code's language plugins name a command for some extensions. A server set up there works
+/// here too, with nothing else to do. Ones Tiri already knows by the same command aren't listed twice.
+public enum ClaudeLanguagePlugins {
+    public static func servers(known: [LanguageServerDefinition], home: String = NSHomeDirectory()) -> [LanguageServerDefinition] {
+        let plugins = home + "/.claude/plugins"
+        guard let installed = readJSON(plugins + "/installed_plugins.json")?["plugins"] as? [String: Any] else { return [] }
+        var found: [LanguageServerDefinition] = []
+        let knownCommands = Set(known.flatMap { $0.commands.compactMap(\.first) })
+        for key in installed.keys.sorted() {
+            let parts = key.split(separator: "@", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            let catalog = readJSON(plugins + "/marketplaces/\(parts[1])/.claude-plugin/marketplace.json")?["plugins"] as? [[String: Any]]
+            guard let entry = catalog?.first(where: { $0["name"] as? String == parts[0] }),
+                  let servers = entry["lspServers"] as? [String: Any] else { continue }
+            found += parse(servers, plugin: parts[0], knownCommands: knownCommands)
+        }
+        return found
+    }
+
+    /// `{"name": {"command": "x", "args": [...], "extensionToLanguage": {".x": "x"}}}`
+    public static func parse(_ servers: [String: Any], plugin: String, knownCommands: Set<String>) -> [LanguageServerDefinition] {
+        servers.keys.sorted().compactMap { name in
+            guard let server = servers[name] as? [String: Any], let command = server["command"] as? String, !knownCommands.contains(command),
+                  let languages = server["extensionToLanguage"] as? [String: String], !languages.isEmpty else { return nil }
+            var extensions: [String: String] = [:]
+            for (ext, language) in languages { extensions[ext.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()] = language }
+            return LanguageServerDefinition(id: "claude-\(name)", language: name, commands: [[command] + (server["args"] as? [String] ?? [])], rootMarkers: [], localBins: [],
+                                            installHint: "It comes from the Claude Code plugin \(plugin). See its README.", extraExtensions: extensions)
+        }
+    }
+
+    private static func readJSON(_ path: String) -> [String: Any]? {
+        guard let data = FileManager.default.contents(atPath: path) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 }

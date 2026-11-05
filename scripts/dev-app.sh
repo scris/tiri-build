@@ -76,7 +76,7 @@ start)
   cp "$BIN/TiriApp" "$APP/Contents/MacOS/Tiri"
   cp "$BIN/tiri" "$BIN/tiri-session" "$APP/Contents/Resources/bin/"
   cp Resources/AppIcon.icns "$APP/Contents/Resources/"
-  for extra in Resources/remote Resources/web Resources/textmate Resources/grammars; do [ -e "$extra" ] && cp -R "$extra" "$APP/Contents/Resources/"; done
+  for extra in Resources/remote Resources/web Resources/textmate Resources/grammars Resources/language-servers; do [ -e "$extra" ] && cp -R "$extra" "$APP/Contents/Resources/"; done
   sed "s/dev.tiri.app/dev.tiri.test.$NAME/" Resources/Info.plist > "$APP/Contents/Info.plist"
   codesign --force --sign "${TIRI_DEV_SIGN_IDENTITY:--}" --timestamp=none --entitlements Resources/Tiri.entitlements "$APP" >/dev/null 2>&1
   launch_in_background

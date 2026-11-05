@@ -76,13 +76,16 @@ public final class HighlightDocument: @unchecked Sendable {
             let edit = self.mirror.apply(range: range, replacement: replacement)
             if self.isOpen { self.engine.edit(id: self.id, edit) }
             let difference = edit.inserted - edit.removed
+            // A change still making its way down the file. Past where it got to, what's known is from
+            // before it, so finding the same state there doesn't yet mean anything has settled.
+            let reached = self.dirtyUntil >= 0 ? (self.next > edit.start + edit.removed ? self.next + difference : edit.start + edit.inserted) : -1
             if edit.start + edit.removed < self.tokenizedEnd {
                 self.tokenizedEnd += difference
             } else {
                 self.tokenizedEnd = min(self.tokenizedEnd, edit.start)
             }
             if self.dirtyUntil > edit.start { self.dirtyUntil += difference }
-            self.dirtyUntil = max(self.dirtyUntil, edit.start + edit.inserted)
+            self.dirtyUntil = max(self.dirtyUntil, edit.start + edit.inserted, reached)
             self.next = min(self.next, edit.start)
             self.engine.schedule()
         }

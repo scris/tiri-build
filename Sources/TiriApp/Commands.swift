@@ -108,6 +108,7 @@ extension AppModel {
                 if let id = model.active.focused.active { model.bringBack(id) }
             },
             AppCommand(id: "saveFile", title: "Save", category: "File") { $0.saveFront() },
+            AppCommand(id: "manageLanguageServers", title: "Language Servers…", category: "Code") { $0.openLanguageServerSettings() },
             AppCommand(id: "manageAgents", title: "Manage Agents…", category: "Agent") { $0.openAgentSettings() },
             AppCommand(id: "addToAgent", title: "Add to Agent", category: "Agent") { $0.addFrontToAgent() },
             AppCommand(id: "attachToAgent", title: "Add Files or Images to Agent…", category: "Agent") { $0.chooseFilesForAgent() },
@@ -266,8 +267,17 @@ enum ControlHandler {
         if request.cmd == "diagnostics" {
             return await diagnostics(request)
         }
-        if request.cmd == "languages" {
+        if request.cmd == "languages" || request.cmd == "languages.add" {
             await AppModel.shared.languageServers.waitForLocations()
+        }
+        if request.cmd == "languages.add" {
+            let hub = AppModel.shared.languageServers
+            guard let definition = LanguageServerCatalog.all.first(where: { $0.id == request.args["id"]?.stringValue }) else {
+                return ControlResponse.failure(id: request.id, "No such language server. Run tiri languages.")
+            }
+            guard definition.managed != nil else { return ControlResponse.failure(id: request.id, "Tiri can't install this one itself. The usual way: \(definition.installHint)") }
+            if let failure = await hub.add(definition) { return ControlResponse.failure(id: request.id, failure) }
+            return .success(id: request.id, .object(["added": .string(definition.id)]))
         }
         if let response = await history(request) { return response }
         // Looking at a turn can mean snapshotting the files. The app keeps responding while it does.
@@ -963,10 +973,11 @@ enum ControlHandler {
             let roots = model.active.folders.map(Git.real)
             return .array(LanguageServerCatalog.all.map { definition in
                 let hub = model.languageServers
-                var object: [String: JSONValue] = ["id": .string(definition.id), "language": .string(definition.language), "install": .string(definition.installHint)]
+                var object: [String: JSONValue] = ["id": .string(definition.id), "language": .string(definition.language), "canAdd": .bool(definition.managed != nil), "install": .string(definition.installHint)]
                 switch hub.availability(of: definition, roots: roots) {
                 case .looking: object["state"] = "looking"
                 case .missing: object["state"] = "not installed"
+                case .installing: object["state"] = "installing"
                 case .needsTrust(let path):
                     object["state"] = "only in this project"
                     object["path"] = .string(path)
@@ -1068,12 +1079,23 @@ enum ControlHandler {
             guard let terminal = model.controller(for: id) as? TerminalController else { throw ControlFailure("\(id) isn't a terminal") }
             return .object(["text": .string(terminal.readText(lines: request.args["lines"]?.intValue))])
 
+        case "dev-compose":
+            guard Bundle.main.bundleIdentifier?.contains(".test.") == true else { throw ControlFailure("Only in a test copy.") }
+            guard let view = model.frontEditor?.codeView, let text = request.args["text"]?.stringValue else { throw ControlFailure("No file in front.") }
+            if request.args["commit"]?.boolValue == true {
+                view.insertText(text, replacementRange: view.markedRange().location == NSNotFound ? NSRange(location: NSNotFound, length: 0) : view.markedRange())
+            } else {
+                view.setMarkedText(text, selectedRange: NSRange(location: (text as NSString).length, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            }
+            return .object([:])
+
         case "perf":
             var object: [String: JSONValue] = ["footprintMB": .double(ProcessClock.footprintMegabytes())]
             if let launch = model.launchMilliseconds { object["launchMs"] = .double(launch) }
             if let open = model.lastOpenMilliseconds { object["lastOpenMs"] = .double(open) }
             object["indexedFiles"] = .int(model.fileIndex.files.count)
             object["firstResponder"] = .string(model.window?.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
+            if let editor = model.frontEditor { object["completion"] = editor.completion.state }
             return .object(object)
 
         case "tree":

@@ -630,6 +630,11 @@ final class AppModel {
             closeFind()
             return true
         }
+        // Before anything else about the editor: the list is the thing floating nearest you.
+        if let editor = focusedEditor, editor.completion.isOpen {
+            editor.completion.close()
+            return true
+        }
         if let editor = focusedEditor, editor.codeView.hasMultipleCursors {
             editor.codeView.dropExtraCursors()
             return true
@@ -2688,13 +2693,13 @@ final class AppModel {
 
     @discardableResult
     func showToast(title: String, detail: String?, symbol: String, tint: Color,
-                   actionTitle: String? = nil, action: (() -> Void)? = nil) -> UUID {
+                   actionTitle: String? = nil, duration: TimeInterval = 6, action: (() -> Void)? = nil) -> UUID {
         let toast = AppToast(title: title, detail: detail, symbol: symbol, tint: tint, actionTitle: actionTitle, action: action)
         withAnimation(.smooth(duration: 0.25)) {
             toasts.append(toast)
             if toasts.count > 3 { toasts.removeFirst() }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self, id = toast.id] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self, id = toast.id] in
             self?.dismissToast(id)
         }
         return toast.id
