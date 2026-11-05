@@ -314,6 +314,11 @@ public enum CLIParser {
             guard args.count == 2 else { throw UsageError("usage: tiri dev-plugin-export <name> <file>   (test copies only)") }
             return request("dev.plugin-export", ["name": .string(args[0]), "path": .string(args[1])])
 
+        case "dev-drag":
+            // A mouse drag through the app's own queue, from one point to another, in the window from the top left.
+            let numbers = args.first.map { $0.split(separator: ",").compactMap { Double($0) } } ?? []
+            guard args.count == 1, numbers.count == 4 else { throw UsageError("usage: tiri dev-drag x1,y1,x2,y2   (test copies only)") }
+            return request("dev.drag", ["from": .array([.double(numbers[0]), .double(numbers[1])]), "to": .array([.double(numbers[2]), .double(numbers[3])])])
         case "dev-key":
             guard args.count == 1, let code = Int(args[0]) else { throw UsageError("usage: tiri dev-key <key code>   (test copies only)") }
             return request("dev.key", ["code": .int(code)])

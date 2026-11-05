@@ -23,13 +23,19 @@ final class EventRouter {
             guard let self else { return event }
             return self.handleKey(event)
         } as Any)
-        monitors.append(NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .otherMouseDown]) { [weak self] event in
+        monitors.append(NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .otherMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }
+            if self.markingTook(event) { return nil }
+            if event.type == .rightMouseDown { return event }
             return self.handleMouseDown(event)
+        } as Any)
+        monitors.append(NSEvent.addLocalMonitorForEvents(matching: .leftMouseDragged) { [weak self] event in
+            self?.markingTook(event) == true ? nil : event
         } as Any)
         // A SwiftUI drag gesture can be cancelled without calling onEnded. The mouse going up
         // is what really ends a tab drag, so a drop can't be lost and a ghost can't get stuck.
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
+            if self?.markingTook(event) == true { return nil }
             if self?.model?.tabDrag != nil { self?.model?.endTabDrag() }
             return event
         } as Any)
@@ -185,6 +191,14 @@ final class EventRouter {
         }
         chordTimeout = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Marking a part of the window owns the mouse until it's done, before anything in the window sees it:
+    /// the toolbar would move the window, and a click outside the Peek would close what's being marked.
+    private func markingTook(_ event: NSEvent) -> Bool {
+        guard let model, model.yourTiri.isMarking, event.window === model.window else { return false }
+        model.yourTiri.markingMouse(event.type, at: model.globalPoint(event))
+        return true
     }
 
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {

@@ -219,16 +219,12 @@ struct YourTiriStatusItem: View {
 /// Drag a box around what you mean. The window dims, nothing is clickable, and Esc gets you out.
 struct ChangeMarkingOverlay: View {
     @Environment(AppModel.self) private var model
-    @State private var start: CGPoint?
-    @State private var current: CGPoint?
     @FocusState private var hasKeyboard: Bool
 
-    private var box: CGRect? {
-        guard let start, let current else { return nil }
-        return CGRect(x: min(start.x, current.x), y: min(start.y, current.y), width: abs(start.x - current.x), height: abs(start.y - current.y))
-    }
-
     var body: some View {
+        // The mouse never reaches this: EventRouter takes it first, so the toolbar can't move the window
+        // and a click can't close the Peek. This only draws.
+        let box = model.yourTiri.markingBox
         GeometryReader { _ in
             ZStack(alignment: .top) {
                 Canvas { context, size in
@@ -241,32 +237,20 @@ struct ChangeMarkingOverlay: View {
                     }
                 }
                 .allowsHitTesting(false)
-                Text("Drag a box around the part you mean. Esc cancels.")
-                    .font(.system(size: 14, weight: .medium))
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .background(.regularMaterial, in: .capsule)
-                    .padding(.top, 64)
-                    .allowsHitTesting(false)
+                // Out of the way once a box is started: it may be over the very part being marked.
+                if box == nil {
+                    Text("Drag a box around the part you mean. Esc cancels.")
+                        .font(.system(size: 14, weight: .medium))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(.regularMaterial, in: .capsule)
+                        .padding(.top, 64)
+                        .allowsHitTesting(false)
+                }
             }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 4, coordinateSpace: .named("changeMarking"))
-                    .onChanged { value in
-                        start = value.startLocation
-                        current = value.location
-                    }
-                    .onEnded { _ in
-                        let chosen = box
-                        start = nil
-                        current = nil
-                        if let chosen, chosen.width > 8, chosen.height > 8 {
-                            model.yourTiri.finishMarking(chosen)
-                        }
-                    }
-            )
         }
-        .coordinateSpace(name: "changeMarking")
+        .onAppear { NSCursor.crosshair.push() }
+        .onDisappear { NSCursor.pop() }
         .focusable()
         .focusEffectDisabled()
         .focused($hasKeyboard)
@@ -285,12 +269,19 @@ struct ChangeMarkingOverlay: View {
 enum WindowPicture {
     /// `box` is measured from the top left of the window's content.
     static func take(_ box: CGRect, of window: NSWindow, done: @escaping (NSImage?) -> Void) {
-        guard let root = window.contentView, let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { return done(nil) }
+        guard let content = window.contentView else { return done(nil) }
+        // The toolbar is drawn by the frame around the content, so the picture is taken of that frame.
+        let root = content.superview ?? content
+        guard let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { return done(nil) }
         root.cacheDisplay(in: root.bounds, to: rep)
         let size = root.bounds.size
-        func flipped(_ rect: CGRect) -> CGRect { root.isFlipped ? CGRect(x: rect.minX, y: size.height - rect.maxY, width: rect.width, height: rect.height) : rect }
-        let wanted = root.isFlipped ? box : CGRect(x: box.minX, y: size.height - box.maxY, width: box.width, height: box.height)
-        let webViews = allWebViews(in: root).filter { !$0.isHiddenOrHasHiddenAncestor && $0.convert($0.bounds, to: root).intersects(wanted) }
+        /// From top-left measurements to a view's own, and back: the same flip either way.
+        func flip(_ rect: CGRect, in view: NSView) -> CGRect {
+            view.isFlipped ? rect : CGRect(x: rect.minX, y: view.bounds.height - rect.maxY, width: rect.width, height: rect.height)
+        }
+        let wanted = content.convert(flip(box, in: content), to: root)
+        let fromTop = flip(wanted, in: root)
+        let webViews = allWebViews(in: content).filter { !$0.isHiddenOrHasHiddenAncestor && $0.convert($0.bounds, to: root).intersects(wanted) }
         var snapshots: [(CGRect, NSImage)] = []
         var pending = webViews.count
         func finish() {
@@ -301,11 +292,12 @@ enum WindowPicture {
                 CGRect(origin: .zero, size: size).fill()
             }
             NSImage(size: size).then { $0.addRepresentation(rep) }.draw(in: CGRect(origin: .zero, size: size))
-            for (frame, snapshot) in snapshots { snapshot.draw(in: flipped(frame)) }
+            // The picture is drawn from the bottom left, whichever way the frame counts.
+            for (frame, snapshot) in snapshots { snapshot.draw(in: root.isFlipped ? flip(frame, in: root) : frame) }
             picture.unlockFocus()
             guard let whole = picture.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return done(nil) }
             let drawn = CGFloat(whole.width) / max(size.width, 1)
-            let pixels = CGRect(x: box.minX * drawn, y: box.minY * drawn, width: box.width * drawn, height: box.height * drawn)
+            let pixels = CGRect(x: fromTop.minX * drawn, y: fromTop.minY * drawn, width: fromTop.width * drawn, height: fromTop.height * drawn)
             done(whole.cropping(to: pixels).map { NSImage(cgImage: $0, size: box.size) })
         }
         if pending == 0 { return finish() }

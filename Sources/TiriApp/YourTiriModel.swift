@@ -40,6 +40,9 @@ struct ChangeMark {
     private var dismissedReady: Date?
     /// Being dragged around right now, with the window dimmed.
     private(set) var isMarking = false
+    /// The box being dragged, in the window's content coordinates from the top left.
+    private(set) var markingBox: CGRect?
+    @ObservationIgnored private var markingStart: CGPoint?
     private(set) var mark: ChangeMark?
     private var chosenAgentName = UserDefaults.standard.string(forKey: "YourTiri.agent")
     /// Where someone was when they asked, for Keep Working to go back to.
@@ -303,12 +306,36 @@ struct ChangeMark {
     func beginMarking(query: String) {
         markingQuery = query
         model?.closePalette(restoreFocus: false)
+        markingStart = nil
+        markingBox = nil
         isMarking = true
     }
 
     func cancelMarking() {
         isMarking = false
+        markingStart = nil
+        markingBox = nil
         beginChange(surface: nil, initial: markingQuery)
+    }
+
+    /// The mouse while marking. Any button but the left one does nothing.
+    func markingMouse(_ type: NSEvent.EventType, at point: CGPoint) {
+        switch type {
+        case .leftMouseDown:
+            markingStart = point
+            markingBox = nil
+        case .leftMouseDragged:
+            guard let start = markingStart else { return }
+            let box = CGRect(x: min(start.x, point.x), y: min(start.y, point.y), width: abs(start.x - point.x), height: abs(start.y - point.y))
+            markingBox = box.width >= 4 || box.height >= 4 ? box : nil
+        case .leftMouseUp:
+            let chosen = markingBox
+            markingStart = nil
+            markingBox = nil
+            if let chosen, chosen.width > 8, chosen.height > 8 { finishMarking(chosen) }
+        default:
+            break
+        }
     }
 
     /// Back to the question, with the part they marked beside it. The dimming has to be gone from the picture first.

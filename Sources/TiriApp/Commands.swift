@@ -971,7 +971,7 @@ enum ControlHandler {
             yours.refresh()
             return .object(["personal": .bool(yours.isPersonalCopy), "bundle": .string(Bundle.main.bundlePath),
                             "commit": .string(Bundle.main.object(forInfoDictionaryKey: YourTiri.commitKey) as? String ?? ""),
-                            "swiftTools": .bool(SwiftTools.areHere()),
+                            "swiftTools": .bool(SwiftTools.areHere()), "marking": .bool(yours.isMarking),
                             "ready": .string(yours.ready?.sentence ?? ""), "trial": .string(yours.state?.trial?.sentence ?? ""),
                             "plainForNow": .bool(PlainForNow.isOn), "panes": .array(model.settingsPanes.map { .string($0.rawValue) }),
                             "offers": .bool(yours.entriesAreOn), "update": .string(yours.update?.line ?? ""), "version": .string(YourTiriModel.version)])
@@ -1180,6 +1180,23 @@ enum ControlHandler {
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                                                    context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: UInt16(code)) else { continue }
+                NSApp.postEvent(event, atStart: false)
+            }
+            return .object([:])
+
+        case "dev.drag":
+            // The left button down, moved in steps, and up: what a real drag sends, for the monitors to see first.
+            guard AppModel.isTestCopy, let window = model.window, let height = window.contentView?.bounds.height,
+                  case .array(let from) = request.args["from"], case .array(let to) = request.args["to"],
+                  let x1 = from.first?.numberValue, let y1 = from.last?.numberValue,
+                  let x2 = to.first?.numberValue, let y2 = to.last?.numberValue else { throw ControlFailure("Only for a test copy.") }
+            let steps = 6
+            for step in 0...(steps + 1) {
+                let type: NSEvent.EventType = step == 0 ? .leftMouseDown : step <= steps ? .leftMouseDragged : .leftMouseUp
+                let progress = Double(min(step, steps)) / Double(steps)
+                let point = CGPoint(x: x1 + (x2 - x1) * progress, y: height - (y1 + (y2 - y1) * progress))
+                guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                     windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { continue }
                 NSApp.postEvent(event, atStart: false)
             }
             return .object([:])

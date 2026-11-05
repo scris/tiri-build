@@ -749,6 +749,11 @@ final class AppModel {
     }
 
     func handleEscape() -> Bool {
+        // Whatever has the keyboard underneath, marking is what's in front.
+        if yourTiri.isMarking {
+            yourTiri.cancelMarking()
+            return true
+        }
         if shortcutNotice != nil {
             shortcutNotice = nil
             return true
