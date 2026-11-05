@@ -12,13 +12,24 @@ Needs macOS 26 or later and Xcode 26 or later.
 ./build.sh && open build/Tiri.app
 ```
 
-This builds `build/Tiri.app` and installs the `tiri` CLI to `~/.local/bin`.
+This builds `build/Tiri.app` and installs the `tiri` CLI to `~/.local/bin`. It runs on Apple silicon with macOS 26 or newer.
 
-macOS asks for permission the first time Tiri opens something in Documents, Desktop or Downloads, and terminals inside Tiri count as Tiri. An ad-hoc-signed build counts as a new app each time you rebuild, so macOS asks again. To keep your answer across rebuilds, sign with an identity of your own:
+macOS asks for permission the first time Tiri opens something in Documents, Desktop or Downloads, and terminals inside Tiri count as Tiri. So do the microphone, camera, and scripting other apps: an agent asking for one of those shows Tiri's name, and it's your answer either way. An ad-hoc-signed build counts as a new app each time you rebuild, so macOS asks again. To keep your answer across rebuilds, sign with an identity of your own, which also turns on the hardened runtime:
 
 ```sh
-TIRI_SIGN_IDENTITY="Apple Development: you@example.com (ABCDE12345)" ./build.sh
+TIRI_SIGN_IDENTITY="Developer ID Application: Your Name (ABCDE12345)" ./build.sh
 ```
+
+### A build for other people
+
+A notarized build opens on any Mac with a double-click, with no warning and no right-click to get past. It needs a Developer ID certificate from the Apple Developer Program, and notary credentials saved once in your keychain:
+
+```sh
+xcrun notarytool store-credentials tiri-notary --apple-id you@example.com --team-id ABCDE12345
+scripts/release.sh
+```
+
+That leaves a stapled `build/release/Tiri.app` and a zip beside it. It checks every program in the bundle before sending anything to Apple, doesn't touch a running Tiri, and publishes nothing. `TIRI_RELEASE_IDENTITY` and `TIRI_NOTARY_PROFILE` choose another certificate or set of credentials.
 
 ## Terminals outlive Tiri
 

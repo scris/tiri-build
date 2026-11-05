@@ -78,7 +78,15 @@ start)
   cp Resources/AppIcon.icns "$APP/Contents/Resources/"
   for extra in Resources/remote Resources/web Resources/textmate Resources/grammars Resources/language-servers; do [ -e "$extra" ] && cp -R "$extra" "$APP/Contents/Resources/"; done
   sed "s/dev.tiri.app/dev.tiri.test.$NAME/" Resources/Info.plist > "$APP/Contents/Info.plist"
-  codesign --force --sign "${TIRI_DEV_SIGN_IDENTITY:--}" --timestamp=none --entitlements Resources/Tiri.entitlements "$APP" >/dev/null 2>&1
+  # TIRI_DEV_SIGN_IDENTITY tries it as a release runs: signed, under the hardened runtime.
+  if [ -n "${TIRI_DEV_SIGN_IDENTITY:-}" ]; then
+    for program in "$APP/Contents/Resources/bin/tiri" "$APP/Contents/Resources/bin/tiri-session" "$APP"/Contents/Resources/remote/tiri-remote-darwin-*; do
+      codesign --force --sign "$TIRI_DEV_SIGN_IDENTITY" --options runtime --timestamp=none "$program" >/dev/null 2>&1
+    done
+    codesign --force --sign "$TIRI_DEV_SIGN_IDENTITY" --options runtime --timestamp=none --entitlements Resources/Tiri.entitlements "$APP" >/dev/null 2>&1
+  else
+    codesign --force --sign - --timestamp=none --entitlements Resources/Tiri.entitlements "$APP" >/dev/null 2>&1
+  fi
   launch_in_background
   for _ in $(seq 1 100); do "$CLI" ping >/dev/null 2>&1 && break; sleep 0.1; done
   "$CLI" ping

@@ -1,9 +1,13 @@
 #!/bin/bash
-# Assembles build/Tiri.app, ad-hoc signs it, and installs the tiri CLI to ~/.local/bin.
+# Assembles build/Tiri.app, signs it, and installs the tiri CLI to ~/.local/bin.
 #   ./build.sh           release build
 #   ./build.sh debug     debug build
 # Ad-hoc signing gives each build a new identity, so macOS asks for folder access again after
-# every rebuild. Set TIRI_SIGN_IDENTITY to a signing identity of yours to keep the answer.
+# every rebuild. Set TIRI_SIGN_IDENTITY to a signing identity of yours to keep the answer: that also
+# turns on the hardened runtime, so what you run is what a notarized release runs.
+# scripts/release.sh is the way to a notarized build. It sets the other two:
+#   TIRI_BUILD_DIR    somewhere other than build/, so a running Tiri isn't deleted, with no CLI installed
+#   TIRI_SIGN_TIMESTAMP=1    a secure timestamp, which notarization requires and which needs the network
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -13,7 +17,9 @@ swift build -c "$CONFIG" --product tiri
 swift build -c "$CONFIG" --product tiri-session
 BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 
-APP="build/Tiri.app"
+OUT="${TIRI_BUILD_DIR:-build}"
+APP="$OUT/Tiri.app"
+mkdir -p "$OUT"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin"
 cp "$BIN_DIR/TiriApp" "$APP/Contents/MacOS/Tiri"
@@ -27,9 +33,22 @@ cp -R Resources/web "$APP/Contents/Resources/web"
 
 # Ad-hoc is enough to run locally and to ask for notifications.
 IDENTITY="${TIRI_SIGN_IDENTITY:--}"
-codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Resources/bin/tiri"
-codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Resources/bin/tiri-session"
-codesign --force --sign "$IDENTITY" --timestamp=none --entitlements Resources/Tiri.entitlements "$APP"
+SIGN=(codesign --force --sign "$IDENTITY")
+if [ "$IDENTITY" != "-" ]; then SIGN+=(--options runtime); fi
+if [ "${TIRI_SIGN_TIMESTAMP:-}" = "1" ]; then SIGN+=(--timestamp); else SIGN+=(--timestamp=none); fi
+
+# Inside out: every program in the bundle, then the bundle around them. The helpers that get copied
+# to Mac servers count too, and notarization looks at those as well.
+for program in "$APP/Contents/Resources/bin/tiri" "$APP/Contents/Resources/bin/tiri-session" \
+               "$APP"/Contents/Resources/remote/tiri-remote-darwin-*; do
+  "${SIGN[@]}" "$program"
+done
+"${SIGN[@]}" --entitlements Resources/Tiri.entitlements "$APP"
+
+if [ -n "${TIRI_BUILD_DIR:-}" ]; then
+  echo "Built $APP"
+  exit 0
+fi
 
 mkdir -p "$HOME/.local/bin"
 # Removed first: if Settings put a link here, copying would write into the app it points at.

@@ -36,6 +36,22 @@
     <string>Tiri shows the projects you open, and the terminals inside it work in them.</string>
     <key>NSRemovableVolumesUsageDescription</key>
     <string>Tiri shows the projects you open, and the terminals inside it work in them.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Something running in a Tiri terminal asked for this. macOS counts terminals as Tiri.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Something running in a Tiri terminal asked for this. macOS counts terminals as Tiri.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Something running in a Tiri terminal asked for this. macOS counts terminals as Tiri.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>Something running in a Tiri terminal asked for this. macOS counts terminals as Tiri.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Something running in a Tiri terminal asked for this. macOS counts terminals as Tiri.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Something running in a Tiri terminal asked for this. macOS counts terminals as Tiri.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Something running in a Tiri terminal asked for this. macOS counts terminals as Tiri.</string>
+    <key>NSLocationUsageDescription</key>
+    <string>Something running in a Tiri terminal asked for this. macOS counts terminals as Tiri.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>

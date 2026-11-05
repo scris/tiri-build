@@ -27,6 +27,7 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 | What | Why | How to check |
 |---|---|---|
 | The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
+| A notarized build on another Mac | Notarization is checked here with `spctl` and `stapler`. A real download on a Mac that's never seen Tiri isn't | Unzip one elsewhere and double-click it |
 | Sessions over days, and across a reboot | Quit and relaunch are tested on a real Claude session. A long run isn't | Use it |
 | Clicking a native notification | What a click does is tested: the right workspace and terminal come up. The click itself comes from the system, and notifications need permission | Allow notifications, then click one when an agent finishes while you're in another app |
 | rust-analyzer, gopls, pyright, ruby-lsp, lua-language-server and the newer servers in the catalog | clangd and sourcekit-lsp are tested for real: diagnostics, definition, references, hover, an edit on disk, and stopping when idle. Completion is tested for real on basedpyright and typescript-language-server here, and clangd over SSH. On this Mac rust-analyzer is a rustup shim for a component that isn't installed, which did prove that case is reported. The others aren't installed. The protocol they share is the same, but each has its own habits | Open a file in each language, and press F12 on a name |
@@ -82,6 +83,8 @@ Over SSH: real Claude Code on a Mac acting as a server, with a connection droppe
 - **Control API and CLI:** everything in spec §5, plus `send`, `read`, `layout`, `tree`, `commands`, `run`, `perf`, `hook`, `hooks`.
 - **Navigation:** quick open, command palette, all §6 keybindings, chords, breadcrumbs, find, tab drag and drop.
 - **Settings:** a screen built from one list of settings, and `tiri settings` for agents, with a one-click prompt from the screen to your agent. Keyboard shortcuts too, with `tiri keys`. Nobody needs to touch JSON. The file is only where they're stored.
+
+- **Signing:** `scripts/release.sh` makes a build with a Developer ID, the hardened runtime and a stapled notarization, and refuses before uploading if any program in it isn't ready. JavaScript still gets its JIT under the hardened runtime. Terminals keep access to the microphone, camera and scripting other apps, because under the hardened runtime they'd otherwise be refused with no question shown.
 
 ## What is stubbed or thin
 
