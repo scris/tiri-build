@@ -18,7 +18,24 @@ nonisolated enum ConversationAssistant {
         var best: [Int]
     }
 
-    static var isAvailable: Bool { SystemLanguageModel.default.isAvailable }
+    /// A test copy can pretend, since nobody can turn this off on the Mac it's running on.
+    nonisolated(unsafe) static var pretending: MacModelState?
+
+    static var state: MacModelState {
+        if let pretending { return pretending }
+        switch SystemLanguageModel.default.availability {
+        case .available: return .ready
+        case .unavailable(let reason):
+            switch reason {
+            case .deviceNotEligible: return .cantRun
+            case .appleIntelligenceNotEnabled: return .turnedOff
+            case .modelNotReady: return .gettingReady
+            @unknown default: return .unavailable
+            }
+        }
+    }
+
+    static var isAvailable: Bool { state == .ready }
 
     /// Other words the conversation is likely to use, in English whatever language it's asked in.
     static func relatedTerms(for query: String) async -> [String] {

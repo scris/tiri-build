@@ -75,12 +75,12 @@ You've got two buttons of your own beside the address. A count appears when the 
 
 The clock in the toolbar lists your Claude Code, Codex and Grok conversations, this workspace's first. So do ⇧⌘H, **Past Conversations…** in the **+** menu and in an empty tab, and the clock in the Agents section. Click one, or press Return, and you're back in it: in a terminal, in the folder it was in, or in the terminal it's already running in. If it can't be carried on, because its folder has gone, you get to read it instead. **Read**, on the row you're on or pointing at, or ⌘↩, shows it as a document, with what was said and what was done in a line each, and **Hand To** there asks another agent to read it and carry on. Tiri only reads the agents' own files, and what it writes for reading stays private to you. `tiri conversations [words]`, `read`, `open`, `reopen` and `hand` do the same for agents.
 
-Each has a short title saying what it was about, with your first prompt on the line beneath it. Your Mac's own model writes them as they come into view, in under a second or so each, and keeps them. To have them all ready, turn on **Summarize all past conversations** in Settings: it runs only while plugged in, and only if you ask. Without Apple Intelligence, and on a server, titles come from your first prompt, with links and paths made short. A title is a good guess from what was said, so check before relying on one.
+Each has a short title saying what it was about, with your first prompt on the line beneath it. Your Mac's own model writes them as they come into view, in under a second or so each, and keeps them. To have them all ready, turn on **Title every conversation in advance** in Settings, under Agents: it runs only while plugged in, and only if you ask. Without Apple Intelligence, and on a server, titles come from your first prompt, with links and paths made short. A title is a good guess from what was said, so check before relying on one.
 
 To find one, describe what you remember. Results appear as you type, each with what was said around the match.
 
 - **It looks at what was said.** Tiri keeps a private index of what you and your agents wrote and did, without tool output, which is most of the file and matches nearly everything. 7 GB of conversations came to an index of under 60 MB, built in a minute or two the first time, then only what's changed.
-- **It tries other words.** With Apple Intelligence on, your Mac's own model suggests other words for what you described, in English even if you asked in Chinese, and picks the likeliest when nothing has your exact words. It runs on your Mac and sends nothing anywhere. Without it, or with **Use this Mac's model for past conversations** off in Settings, search finds the words you type.
+- **It tries other words.** With Apple Intelligence on, your Mac's own model suggests other words for what you described, in English even if you asked in Chinese, and picks the likeliest when nothing has your exact words. It runs on your Mac and sends nothing anywhere. Without it, or with **Titles and search with Apple Intelligence** off in Settings, search finds the words you type. If your Mac can't use it, Settings says why, and takes you to where it's turned on if that's what it needs.
 - **For the hard ones, ask an agent.** **Ask Claude Code to find it**, at the end of the list, has your agent try other searches and read what it finds. This one uses your agent's tokens.
 
 On a server it searches that server's files for the same words, without an index, so results come more slowly and with no excerpt.
@@ -191,7 +191,7 @@ The first time you open a language with no server, Tiri asks once whether to add
 - A diff shows only the errors on lines it added, with **Quote in Agent** to hand them over.
 - Claude Code gets them through its editor protocol, so it can see what its own edit broke. Any agent can run `tiri diagnostics`, which checks the files changed since the last commit.
 
-A server starts once you've looked at one of its files for a moment, and stops after 10 minutes unused. They can use a lot of memory, and that's on top of Tiri's own. Some servers run a project's build scripts as they read it, the same as building it would. A server that's inside the project itself, like one in `node_modules/.bin`, is that project's code, so Tiri asks once before running it, and only when you've just asked for something it would answer. Turn all of this off in Settings, under Code.
+A server starts once you've looked at one of its files for a moment, and stops after 10 minutes unused. They can use a lot of memory, and that's on top of Tiri's own. Some servers run a project's build scripts as they read it, the same as building it would. A server that's inside the project itself, like one in `node_modules/.bin`, is that project's code, so Tiri asks once before running it, and only when you've just asked for something it would answer. Turn all of this off in Settings, under Languages.
 
 ## The bar along the bottom
 
@@ -288,7 +288,7 @@ tiri theme dark
 
 Run `tiri --help` for all commands, or `tiri --skill` for a guide written for agents. Terminals inside Tiri have `TIRI_SOCKET`, `TIRI_WORKSPACE` and `TIRI_ITEM_ID` set.
 
-`tiri` works in every terminal inside Tiri. To use it in your other terminals, go to Settings, Command Line, and press Install. That adds a link at `~/.local/bin/tiri`, which keeps working when the app updates. If your shell doesn't look there, Tiri gives you the line to add.
+`tiri` works in every terminal inside Tiri. To use it in your other terminals, go to Settings, General, and press Install. That adds a link at `~/.local/bin/tiri`, which keeps working when the app updates. If your shell doesn't look there, Tiri gives you the line to add.
 
 ## Show agent status
 
@@ -304,7 +304,7 @@ Outside Tiri these hooks do nothing and print nothing, so they're safe to leave 
 
 ## Your agents
 
-There's one list of agents, at the top of Settings, or through **Manage Agents…** in the + menu. Switch off the ones you don't use. If you only use Claude Code, only Claude Code appears in the + menu, on a new workspace, in the Ask buttons and in the command palette. Turn Grok on and it appears in all of them straight away, because they all read the one list. Your agent can do the same with `tiri agents off codex`.
+There's one list of agents, in Settings under Agents, or through **Manage Agents…** in the + menu. Switch off the ones you don't use. If you only use Claude Code, only Claude Code appears in the + menu, on a new workspace, in the Ask buttons and in the command palette. Turn Grok on and it appears in all of them straight away, because they all read the one list. Your agent can do the same with `tiri agents off codex`.
 
 Turning one off only stops Tiri offering it. Sessions already running carry on, and you can still hand them things.
 
@@ -324,16 +324,17 @@ Black artwork on a transparent background, in a PNG or SVG, gets a light plate b
 
 There are two ways to change a setting, and neither involves a file.
 
-**The screen:** ⌘, opens Settings as a tab, with every setting explained. Changes apply immediately. Right-click a setting to reset it.
+**The screen:** ⌘, opens Settings as a tab, with a list of panes down its side: General, Agents, Terminal, Editor, Languages, Files and Keyboard. ⌘F searches all of them at once, and you change what you find right there. Changes apply immediately. A setting you've changed has an arrow beside it that puts it back.
 
-**Your AI:** the top of that screen has a prompt ready to send. **Ask Claude Code** or **Ask Codex** hands it to your agent, which can then explain any setting in plain words and change it for you. Agents use `tiri settings`:
+**Your AI:** **Ask Claude Code** under that list hands your agent a prompt, and the arrow beside it offers your other agents or copies the prompt. It can then explain any setting in plain words and change it for you. Agents use `tiri settings`, and `tiri settings open` shows you a pane, a setting, a command or a search:
 
 ```sh
 tiri settings explain              # every setting, its value and what it does
 tiri settings set code.wordWrap on
+tiri settings open terminal.fontSize
 ```
 
-Keyboard shortcuts work the same way. They're on that screen, where you click a shortcut and press the keys, and your agent can change them with `tiri keys`.
+Keyboard shortcuts work the same way. Under Keyboard, commands are grouped by what they're for, and the list beside them jumps to any group. Click a shortcut and press the keys, or point at a command that has none and click **Add Shortcut**. If another command has that key, Tiri asks before taking it. **Find by Key** tells you what a key does, or that it's free. **Changed** shows only the ones you've changed. Your agent can change them with `tiri keys`.
 
 ## Development
 

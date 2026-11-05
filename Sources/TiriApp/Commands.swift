@@ -15,68 +15,111 @@ struct AppCommand: Identifiable {
 extension AppModel {
     static let staticCommands: [AppCommand] = {
         var list: [AppCommand] = [
-            AppCommand(id: "quickOpen", title: "Go to File…", category: "Go") { $0.openPalette(.files) },
-            AppCommand(id: "commandPalette", title: "Show All Commands", category: "Go") { $0.openPalette(.commands) },
-            AppCommand(id: "nextTab", title: "Next Tab", category: "Go") { model in
+            AppCommand(id: "quickOpen", title: "Go to File…", category: "Navigation") { $0.openPalette(.files) },
+            AppCommand(id: "commandPalette", title: "Show All Commands", category: "Navigation") { $0.openPalette(.commands) },
+            AppCommand(id: "searchInFiles", title: "Search in Files", category: "Navigation") { $0.openSearch() },
+            AppCommand(id: "goToLine", title: "Go to Line…", category: "Navigation") { $0.openPalette(typing: ":") },
+            AppCommand(id: "symbolsInFile", title: "Go to Symbol in File…", category: "Navigation") { $0.openPalette(typing: "@") },
+            AppCommand(id: "symbolsInWorkspace", title: "Go to Symbol in Workspace…", category: "Navigation") { $0.openPalette(typing: "#") },
+            AppCommand(id: "goToDefinition", title: "Go to Definition", category: "Navigation") { $0.goToDefinition() },
+            AppCommand(id: "findReferences", title: "Find References", category: "Navigation") { $0.findReferences() },
+            AppCommand(id: "showHover", title: "Show What This Name Is", category: "Navigation") { $0.showHover() },
+            AppCommand(id: "goBack", title: "Go Back", category: "Navigation") { $0.goBack() },
+            AppCommand(id: "nextChange", title: "Go to Next Change", category: "Navigation") { $0.goToChange(forward: true) },
+            AppCommand(id: "previousChange", title: "Go to Previous Change", category: "Navigation") { $0.goToChange(forward: false) },
+            AppCommand(id: "nextAttention", title: "Go to Next Terminal Needing Attention", category: "Navigation") { $0.nextAttention() },
+            AppCommand(id: "nextTab", title: "Next Tab", category: "Tabs and Splits") { model in
                 model.updateActive { $0.cycleTab(by: 1) }
                 model.requestFocus()
             },
-            AppCommand(id: "previousTab", title: "Previous Tab", category: "Go") { model in
+            AppCommand(id: "previousTab", title: "Previous Tab", category: "Tabs and Splits") { model in
                 model.updateActive { $0.cycleTab(by: -1) }
                 model.requestFocus()
             },
-            AppCommand(id: "nextAttention", title: "Go to Next Terminal Needing Attention", category: "Go") { $0.nextAttention() },
-            AppCommand(id: "toggleSidebar", title: "Toggle Sidebar", category: "View") { model in
+            AppCommand(id: "closeItem", title: "Close Item", category: "Tabs and Splits") { $0.closeActive() },
+            AppCommand(id: "reopenClosed", title: "Reopen Closed Item", category: "Tabs and Splits") { $0.reopenClosed() },
+            AppCommand(id: "pinTab", title: "Keep Open (Pin Preview Tab)", category: "Tabs and Splits") { model in
+                if let id = model.active.focused.active { model.updateActive { $0.pin(id) } }
+            },
+            AppCommand(id: "splitRight", title: "Split Right", category: "Tabs and Splits") { $0.splitActive(.right) },
+            AppCommand(id: "splitDown", title: "Split Down", category: "Tabs and Splits") { $0.splitActive(.down) },
+            AppCommand(id: "moveToNewWindow", title: "Move to New Window", category: "Tabs and Splits") { model in
+                if let id = model.active.focused.active { model.moveToNewWindow(id) }
+            },
+            AppCommand(id: "bringBackFromWindow", title: "Bring Back from Its Window", category: "Tabs and Splits") { model in
+                if let id = model.active.focused.active { model.bringBack(id) }
+            },
+            AppCommand(id: "promotePeek", title: "Peek: Open as Tab", category: "Tabs and Splits") { $0.promotePeek() },
+            AppCommand(id: "promotePeekToSide", title: "Peek: Open to the Side", category: "Tabs and Splits") { $0.promotePeek(split: .right) },
+            AppCommand(id: "dismissPeek", title: "Peek: Close", category: "Tabs and Splits") { $0.dismissPeek() },
+            AppCommand(id: "toggleSidebar", title: "Toggle Sidebar", category: "Window") { model in
                 model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
             },
-            AppCommand(id: "focusExplorer", title: "Focus on Explorer", category: "View") { model in
+            AppCommand(id: "focusExplorer", title: "Focus on Explorer", category: "Window") { model in
                 if model.sidebarVisibility == .detailOnly { model.sidebarVisibility = .all }
                 SidebarSection.explorer.open()
                 model.fileTree.focus()
             },
-            AppCommand(id: "revealActive", title: "Reveal Active Item in Explorer", category: "View") { model in
+            AppCommand(id: "revealActive", title: "Reveal Active Item in Explorer", category: "Window") { model in
                 if let path = model.activeFilePath { model.revealInTree(path) }
             },
+            AppCommand(id: "foldExplorer", title: "Fold or Unfold Explorer", category: "Window") { _ in SidebarSection.explorer.toggle() },
+            AppCommand(id: "foldChanges", title: "Fold or Unfold Changes", category: "Window") { _ in SidebarSection.changes.toggle() },
+            AppCommand(id: "foldReview", title: "Fold or Unfold Review", category: "Window") { _ in SidebarSection.review.toggle() },
+            AppCommand(id: "foldOpenItems", title: "Fold or Unfold Open Items", category: "Window") { _ in SidebarSection.items.toggle() },
+            AppCommand(id: "zoomIn", title: "Zoom In", category: "Window") { $0.zoom(by: 1) },
+            AppCommand(id: "zoomOut", title: "Zoom Out", category: "Window") { $0.zoom(by: -1) },
+            AppCommand(id: "zoomReset", title: "Reset Zoom", category: "Window") { $0.zoomReset() },
+            AppCommand(id: "saveFile", title: "Save", category: "Editing") { $0.saveFront() },
+            AppCommand(id: "find", title: "Find", category: "Editing") { $0.openFind() },
+            AppCommand(id: "findReplace", title: "Replace", category: "Editing") { $0.openFind(replace: true) },
+            AppCommand(id: "toggleWordWrap", title: "Toggle Word Wrap", category: "Editing") { $0.frontEditor?.toggleWordWrap() },
+            AppCommand(id: "toggleMarkdownSource", title: "Markdown or Notebook: Toggle Source", category: "Editing") { $0.toggleMarkdownSource() },
+            AppCommand(id: "openInExternalEditor", title: "Open in External Editor", category: "Editing") { model in
+                let item = model.active.peek ?? model.active.activeItem
+                if let path = item?.filePath { model.openExternally(path: path) }
+            },
             AppCommand(id: "newTerminal", title: "New Terminal", category: "Terminal") { $0.startTerminal() },
-            AppCommand(id: "connectToServer", title: "Connect to Server…", category: "File") { $0.connectToServerInteractive() },
             AppCommand(id: "restartTerminal", title: "Restart Exited Terminal", category: "Terminal") { model in
                 if let id = model.active.focused.active {
                     (model.existingController(for: id) as? TerminalController)?.restart()
                 }
             },
-            AppCommand(id: "splitRight", title: "Split Right", category: "View") { $0.splitActive(.right) },
-            AppCommand(id: "splitDown", title: "Split Down", category: "View") { $0.splitActive(.down) },
-            AppCommand(id: "closeItem", title: "Close Item", category: "File") { $0.closeActive() },
-            AppCommand(id: "reopenClosed", title: "Reopen Closed Item", category: "File") { $0.reopenClosed() },
-            AppCommand(id: "pinTab", title: "Keep Open (Pin Preview Tab)", category: "View") { model in
-                if let id = model.active.focused.active { model.updateActive { $0.pin(id) } }
-            },
-            AppCommand(id: "find", title: "Find", category: "Edit") { $0.openFind() },
-            AppCommand(id: "findReplace", title: "Replace", category: "Edit") { $0.openFind(replace: true) },
-            AppCommand(id: "toggleWordWrap", title: "Toggle Word Wrap", category: "View") { $0.frontEditor?.toggleWordWrap() },
-            AppCommand(id: "goToLine", title: "Go to Line…", category: "Go") { $0.openPalette(typing: ":") },
-            AppCommand(id: "symbolsInFile", title: "Go to Symbol in File…", category: "Go") { $0.openPalette(typing: "@") },
-            AppCommand(id: "symbolsInWorkspace", title: "Go to Symbol in Workspace…", category: "Go") { $0.openPalette(typing: "#") },
-            AppCommand(id: "zoomIn", title: "Zoom In", category: "View") { $0.zoom(by: 1) },
-            AppCommand(id: "zoomOut", title: "Zoom Out", category: "View") { $0.zoom(by: -1) },
-            AppCommand(id: "zoomReset", title: "Reset Zoom", category: "View") { $0.zoomReset() },
             AppCommand(id: "clearTerminal", title: "Clear", category: "Terminal") { $0.frontTerminal?.clearScreen() },
             AppCommand(id: "terminalLineStart", title: "Go to Start of Line", category: "Terminal") { $0.frontTerminal?.sendLineStart() },
             AppCommand(id: "terminalLineEnd", title: "Go to End of Line", category: "Terminal") { $0.frontTerminal?.sendLineEnd() },
             AppCommand(id: "terminalDeleteToLineStart", title: "Delete to Start of Line", category: "Terminal") { $0.frontTerminal?.sendDeleteToLineStart() },
-            AppCommand(id: "openSettings", title: "Open Settings…", category: "Preferences") { $0.openSettings() },
-            AppCommand(id: "openKeybindings", title: "Open Keyboard Shortcuts", category: "Preferences") { $0.openKeyboardShortcuts() },
-            AppCommand(id: "themeSystem", title: "Theme: Follow System", category: "Preferences") { $0.setTheme(.system) },
-            AppCommand(id: "themeLight", title: "Theme: Light", category: "Preferences") { $0.setTheme(.light) },
-            AppCommand(id: "themeDark", title: "Theme: Dark", category: "Preferences") { $0.setTheme(.dark) },
-            AppCommand(id: "installCommandLine", title: "Install tiri Command for Other Terminals…", category: "Preferences") {
-                $0.confirmCommandLineTool(install: true)
+            AppCommand(id: "addToAgent", title: "Add to Agent", category: "Agents") { $0.addFrontToAgent() },
+            AppCommand(id: "attachToAgent", title: "Add Files or Images to Agent…", category: "Agents") { $0.chooseFilesForAgent() },
+            AppCommand(id: "addReviewComment", title: "Review: Add Comment", category: "Agents") { $0.beginReviewComment() },
+            AppCommand(id: "sendReview", title: "Review: Send Comments to Agent", category: "Agents") { $0.sendReview() },
+            AppCommand(id: "conversations", title: "Past Conversations…", category: "Agents") { $0.openConversationPicker() },
+            AppCommand(id: "pickOnPage", title: "Web: Pick Something on the Page", category: "Agents") { $0.frontWebController?.startPicking() },
+            AppCommand(id: "manageAgents", title: "Manage Agents…", category: "Agents") { $0.openAgentSettings() },
+            AppCommand(id: "showChanges", title: "Show Changes in This File", category: "Changes and Git") { $0.toggleChangesForFront() },
+            AppCommand(id: "toggleDiffSideBySide", title: "Diff: Side by Side", category: "Changes and Git") { model in
+                _ = model.setSetting("diff.sideBySide", to: .bool(!model.settings.diffSideBySide))
             },
-            AppCommand(id: "newWorkspace", title: "New Workspace…", category: "Workspace") { $0.newWorkspaceInteractive() },
-            AppCommand(id: "addFolder", title: "Add Folder to Workspace…", category: "Workspace") { $0.addFolderInteractive() },
-            AppCommand(id: "importWorkspace", title: "Import .code-workspace…", category: "Workspace") { $0.importWorkspaceInteractive() },
-            AppCommand(id: "renameWorkspace", title: "Rename Workspace…", category: "Workspace") { $0.promptRenameWorkspace($0.activeID) },
-            AppCommand(id: "deleteWorkspace", title: "Delete Workspace…", category: "Workspace") { $0.confirmDeleteWorkspace($0.activeID) },
+            AppCommand(id: "changesSinceCommit", title: "Changes: Since Last Commit", category: "Changes and Git") { $0.setChangesScope(.sinceCommit) },
+            AppCommand(id: "changesLatestTurn", title: "Changes: Latest Turn", category: "Changes and Git") { $0.setChangesScope(.latestTurn) },
+            AppCommand(id: "changesBranch", title: "Changes: This Branch", category: "Changes and Git") { $0.setChangesScope(.branch) },
+            AppCommand(id: "changesRecentCommits", title: "Changes: Recent Commits", category: "Changes and Git") { $0.setChangesScope(.recentCommits) },
+            AppCommand(id: "changesOtherWork", title: "Changes: Other Work", category: "Changes and Git") { $0.setChangesScope(.otherWork) },
+            AppCommand(id: "gitFetch", title: "Git: Fetch", category: "Changes and Git") { model in
+                if let repository = model.frontRepository { model.fetch(repository) }
+            },
+            AppCommand(id: "gitPull", title: "Git: Pull", category: "Changes and Git") { model in
+                if let repository = model.frontRepository { model.pull(repository) }
+            },
+            AppCommand(id: "gitPush", title: "Git: Push…", category: "Changes and Git") { model in
+                if let repository = model.frontRepository { model.confirmPush(repository) }
+            },
+            AppCommand(id: "newWorkspace", title: "New Workspace…", category: "Workspaces") { $0.newWorkspaceInteractive() },
+            AppCommand(id: "addFolder", title: "Add Folder to Workspace…", category: "Workspaces") { $0.addFolderInteractive() },
+            AppCommand(id: "connectToServer", title: "Connect to Server…", category: "Workspaces") { $0.connectToServerInteractive() },
+            AppCommand(id: "importWorkspace", title: "Import .code-workspace…", category: "Workspaces") { $0.importWorkspaceInteractive() },
+            AppCommand(id: "renameWorkspace", title: "Rename Workspace…", category: "Workspaces") { $0.promptRenameWorkspace($0.activeID) },
+            AppCommand(id: "deleteWorkspace", title: "Delete Workspace…", category: "Workspaces") { $0.confirmDeleteWorkspace($0.activeID) },
             AppCommand(id: "notebookRunCell", title: "Notebook: Run Cell", category: "Notebook") { $0.notebookCommand("notebookRunCell") },
             AppCommand(id: "notebookRunAll", title: "Notebook: Run All", category: "Notebook") { $0.notebookCommand("notebookRunAll") },
             AppCommand(id: "notebookInterrupt", title: "Notebook: Interrupt", category: "Notebook") { $0.notebookCommand("notebookInterrupt") },
@@ -87,77 +130,34 @@ extension AppModel {
             AppCommand(id: "notebookAddCode", title: "Notebook: Add Code Cell", category: "Notebook") { $0.notebookCommand("notebookAddCode") },
             AppCommand(id: "notebookAddMarkdown", title: "Notebook: Add Markdown Cell", category: "Notebook") { $0.notebookCommand("notebookAddMarkdown") },
             AppCommand(id: "notebookDeleteCell", title: "Notebook: Delete Cell", category: "Notebook") { $0.notebookCommand("notebookDeleteCell") },
-            AppCommand(id: "toggleMarkdownSource", title: "Markdown or Notebook: Toggle Source", category: "View") { $0.toggleMarkdownSource() },
-            AppCommand(id: "openInExternalEditor", title: "Open in External Editor", category: "File") { model in
-                let item = model.active.peek ?? model.active.activeItem
-                if let path = item?.filePath { model.openExternally(path: path) }
-            },
-            AppCommand(id: "promotePeek", title: "Peek: Open as Tab", category: "View") { $0.promotePeek() },
-            AppCommand(id: "promotePeekToSide", title: "Peek: Open to the Side", category: "View") { $0.promotePeek(split: .right) },
-            AppCommand(id: "dismissPeek", title: "Peek: Close", category: "View") { $0.dismissPeek() },
-            AppCommand(id: "webDarkOn", title: "View: Force Dark On", category: "View") { model in
-                model.setForceDark(true, item: model.active.focused.active)
-            },
-            AppCommand(id: "webDarkOff", title: "View: Force Dark Off", category: "View") { model in
-                model.setForceDark(false, item: model.active.focused.active)
-            },
-            AppCommand(id: "moveToNewWindow", title: "Move to New Window", category: "View") { model in
-                if let id = model.active.focused.active { model.moveToNewWindow(id) }
-            },
-            AppCommand(id: "bringBackFromWindow", title: "Bring Back from Its Window", category: "View") { model in
-                if let id = model.active.focused.active { model.bringBack(id) }
-            },
-            AppCommand(id: "saveFile", title: "Save", category: "File") { $0.saveFront() },
-            AppCommand(id: "manageLanguageServers", title: "Language Servers…", category: "Code") { $0.openLanguageServerSettings() },
-            AppCommand(id: "manageAgents", title: "Manage Agents…", category: "Agent") { $0.openAgentSettings() },
-            AppCommand(id: "addToAgent", title: "Add to Agent", category: "Agent") { $0.addFrontToAgent() },
-            AppCommand(id: "attachToAgent", title: "Add Files or Images to Agent…", category: "Agent") { $0.chooseFilesForAgent() },
-            AppCommand(id: "addReviewComment", title: "Review: Add Comment", category: "Agent") { $0.beginReviewComment() },
-            AppCommand(id: "sendReview", title: "Review: Send Comments to Agent", category: "Agent") { $0.sendReview() },
-            AppCommand(id: "foldReview", title: "Fold or Unfold Review", category: "View") { _ in SidebarSection.review.toggle() },
-            AppCommand(id: "foldExplorer", title: "Fold or Unfold Explorer", category: "View") { _ in SidebarSection.explorer.toggle() },
-            AppCommand(id: "foldChanges", title: "Fold or Unfold Changes", category: "View") { _ in SidebarSection.changes.toggle() },
-            AppCommand(id: "foldOpenItems", title: "Fold or Unfold Open Items", category: "View") { _ in SidebarSection.items.toggle() },
-            AppCommand(id: "goToDefinition", title: "Go to Definition", category: "Go") { $0.goToDefinition() },
-            AppCommand(id: "findReferences", title: "Find References", category: "Go") { $0.findReferences() },
-            AppCommand(id: "showHover", title: "Show What This Name Is", category: "Go") { $0.showHover() },
-            AppCommand(id: "goBack", title: "Go Back", category: "Go") { $0.goBack() },
-            AppCommand(id: "searchInFiles", title: "Search in Files", category: "Go") { $0.openSearch() },
-            AppCommand(id: "gitFetch", title: "Git: Fetch", category: "Git") { model in
-                if let repository = model.frontRepository { model.fetch(repository) }
-            },
-            AppCommand(id: "gitPull", title: "Git: Pull", category: "Git") { model in
-                if let repository = model.frontRepository { model.pull(repository) }
-            },
-            AppCommand(id: "gitPush", title: "Git: Push…", category: "Git") { model in
-                if let repository = model.frontRepository { model.confirmPush(repository) }
-            },
-            AppCommand(id: "showChanges", title: "Show Changes in This File", category: "View") { $0.toggleChangesForFront() },
-            AppCommand(id: "changesSinceCommit", title: "Changes: Since Last Commit", category: "View") { $0.setChangesScope(.sinceCommit) },
-            AppCommand(id: "changesLatestTurn", title: "Changes: Latest Turn", category: "View") { $0.setChangesScope(.latestTurn) },
-            AppCommand(id: "changesBranch", title: "Changes: This Branch", category: "View") { $0.setChangesScope(.branch) },
-            AppCommand(id: "pickOnPage", title: "Web: Pick Something on the Page", category: "Agent") { $0.frontWebController?.startPicking() },
-            AppCommand(id: "conversations", title: "Past Conversations…", category: "Agent") { $0.openConversationPicker() },
-            AppCommand(id: "changesRecentCommits", title: "Changes: Recent Commits", category: "View") { $0.setChangesScope(.recentCommits) },
-            AppCommand(id: "changesOtherWork", title: "Changes: Other Work", category: "View") { $0.setChangesScope(.otherWork) },
-            AppCommand(id: "nextChange", title: "Go to Next Change", category: "Go") { $0.goToChange(forward: true) },
-            AppCommand(id: "previousChange", title: "Go to Previous Change", category: "Go") { $0.goToChange(forward: false) },
-            AppCommand(id: "toggleDiffSideBySide", title: "Diff: Side by Side", category: "View") { model in
-                _ = model.setSetting("diff.sideBySide", to: .bool(!model.settings.diffSideBySide))
-            },
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 model.frontWebController?.reload()
             },
+            AppCommand(id: "webDarkOn", title: "Force Dark On", category: "Web") { model in
+                model.setForceDark(true, item: model.active.focused.active)
+            },
+            AppCommand(id: "webDarkOff", title: "Force Dark Off", category: "Web") { model in
+                model.setForceDark(false, item: model.active.focused.active)
+            },
+            AppCommand(id: "openSettings", title: "Open Settings…", category: "Settings") { $0.openSettings() },
+            AppCommand(id: "openKeybindings", title: "Open Keyboard Shortcuts", category: "Settings") { $0.openKeyboardShortcuts() },
+            AppCommand(id: "themeSystem", title: "Theme: Follow System", category: "Settings") { $0.setTheme(.system) },
+            AppCommand(id: "themeLight", title: "Theme: Light", category: "Settings") { $0.setTheme(.light) },
+            AppCommand(id: "themeDark", title: "Theme: Dark", category: "Settings") { $0.setTheme(.dark) },
+            AppCommand(id: "manageLanguageServers", title: "Language Servers…", category: "Settings") { $0.openLanguageServerSettings() },
+            AppCommand(id: "installCommandLine", title: "Install tiri Command for Other Terminals…", category: "Settings") {
+                $0.confirmCommandLineTool(install: true)
+            },
         ]
         for command in EditorCommand.allCases {
-            list.append(AppCommand(id: command.rawValue, title: command.title, category: "Edit") { $0.frontEditor?.run(command) })
+            list.append(AppCommand(id: command.rawValue, title: command.title, category: "Editing") { $0.frontEditor?.run(command) })
         }
         for number in 1...9 {
-            list.append(AppCommand(id: "focusGroup\(number)", title: "Focus Group \(number)", category: "View") { model in
+            list.append(AppCommand(id: "focusGroup\(number)", title: "Focus Group \(number)", category: "Tabs and Splits") { model in
                 model.updateActive { $0.focusGroup(index: number - 1) }
                 model.requestFocus()
             })
-            list.append(AppCommand(id: "switchWorkspace\(number)", title: "Switch to Workspace \(number)", category: "Workspace") {
+            list.append(AppCommand(id: "switchWorkspace\(number)", title: "Switch to Workspace \(number)", category: "Workspaces") {
                 $0.switchWorkspace(index: number - 1)
             })
         }
@@ -168,6 +168,25 @@ extension AppModel {
 
     func command(_ id: String) -> AppCommand? { Self.commandsByID[id] }
 
+    /// Everything that can have a shortcut, as Settings lists it: the same rows whatever's going
+    /// on, with the words a heading already says left out.
+    var shortcutCommands: [ShortcutCommand] {
+        var seen = Set<String>()
+        var list: [ShortcutCommand] = []
+        for command in allCommands where seen.insert(command.id).inserted {
+            var title = command.title
+            if title.hasPrefix(command.category + ": ") { title.removeFirst(command.category.count + 2) }
+            if let entry = agentEntries.first(where: { "agent:\($0.id)" == command.id }) { title = "Turn \(entry.name) On or Off" }
+            list.append(ShortcutCommand(id: command.id, title: title, group: command.category))
+        }
+        // The one you're in isn't offered as somewhere to go, but it can still have a key.
+        let own = "workspace:\(active.name)"
+        if seen.insert(own).inserted {
+            list.append(ShortcutCommand(id: own, title: "Switch to Workspace: \(active.name)", group: "Workspaces"))
+        }
+        return list
+    }
+
     /// Static commands plus the ones that depend on what's in the app right now.
     var allCommands: [AppCommand] {
         var list = Self.staticCommands
@@ -177,12 +196,12 @@ extension AppModel {
             })
         }
         for entry in agentEntries {
-            list.append(AppCommand(id: "agent:\(entry.id)", title: "Agents: Turn \(entry.isEnabled ? "Off" : "On") \(entry.name)", category: "Agent") {
+            list.append(AppCommand(id: "agent:\(entry.id)", title: "Agents: Turn \(entry.isEnabled ? "Off" : "On") \(entry.name)", category: "Agents") {
                 $0.setAgent(entry.id, enabled: !entry.isEnabled)
             })
         }
         for workspace in workspaces where workspace.id != activeID {
-            list.append(AppCommand(id: "workspace:\(workspace.name)", title: "Switch to Workspace: \(workspace.name)", category: "Workspace") {
+            list.append(AppCommand(id: "workspace:\(workspace.name)", title: "Switch to Workspace: \(workspace.name)", category: "Workspaces") {
                 $0.switchWorkspace(workspace.id)
             })
         }
@@ -820,9 +839,14 @@ enum ControlHandler {
 
         case "settings.list", "settings.explain":
             let settings = model.settings
+            // An agent asked about these should say what's really going on, as the screen does.
+            func explanation(of definition: SettingDefinition) -> String {
+                guard definition.key.hasPrefix("conversations."), let why = ConversationAssistant.state.message else { return definition.fullExplanation }
+                return why + " " + definition.fullExplanation
+            }
             func entry(_ definition: SettingDefinition) -> JSONValue {
                 .object(["key": .string(definition.key), "section": .string(definition.section), "title": .string(definition.title),
-                         "explanation": .string(definition.explanation), "accepts": .string(SettingsSchema.allowedValues(definition.kind)),
+                         "explanation": .string(explanation(of: definition)), "accepts": .string(SettingsSchema.allowedValues(definition.kind)),
                          "value": definition.value(settings), "display": .string(SettingsSchema.display(definition.value(settings))),
                          "defaultDisplay": .string(SettingsSchema.display(definition.value(TiriSettings())))])
             }
@@ -864,8 +888,45 @@ enum ControlHandler {
             return .object(["key": .string(key), "value": now, "display": .string(SettingsSchema.display(now))])
 
         case "settings.open":
-            model.openSettings()
+            guard let what = request.args["what"]?.stringValue, !what.isEmpty else {
+                model.openSettings()
+                return .object([:])
+            }
+            // A command, for someone looking at its shortcut.
+            if model.shortcutCommands.contains(where: { $0.id == what }) {
+                model.openSettings(pane: .keyboard, reveal: what)
+                return .object([:])
+            }
+            switch SettingsSchema.openTarget(what) {
+            case .pane(let pane): model.openSettings(pane: pane)
+            case .setting(let key): model.openSettings(pane: SettingsSchema.definition(for: key)?.pane, reveal: key)
+            case .search(let words): model.openSettings(search: words)
+            }
             return .object([:])
+
+        case "dev.settings":
+            guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1" else { throw ControlFailure("Only for a test copy.") }
+            switch request.args["action"]?.stringValue {
+            case "record": model.beginRecordingShortcut(for: try string(request, "command"))
+            case "key":
+                guard let strokes = Keymap.parseStrokes(try string(request, "key")) else { throw ControlFailure("Can't read that key.") }
+                for stroke in strokes { model.recordKey(stroke) }
+            case "find-key": model.beginFindingShortcutKey()
+            case "filter": model.settingsUI.shortcutFilter = ShortcutFilter(rawValue: try string(request, "value")) ?? .all
+            case "confirm": model.confirmShortcutConflict()
+            case "reveal": model.settingsUI.reveal = try string(request, "value")
+            case "jump": model.settingsUI.jump(to: try string(request, "value"))
+            case "where": break
+            case "ai":
+                ConversationAssistant.pretending = MacModelState(rawValue: try string(request, "value"))
+                model.settingsUI.macModelChanges += 1
+                model.updateSummarizingAll()
+            case "expand": model.settingsUI.expandedAgent = try string(request, "value")
+            default: throw ControlFailure("Unknown action.")
+            }
+            return .object(["section": .string(model.settingsUI.currentSection ?? ""),
+                            "recording": .string(model.recordingShortcutFor ?? ""),
+                            "notice": .string(model.shortcutNotice.map(String.init(describing:)) ?? "")])
 
         case "hooks.install", "hooks.remove":
             guard let tool = AgentHooks.Tool(rawValue: try string(request, "tool")) else { throw ControlFailure("Unknown tool") }

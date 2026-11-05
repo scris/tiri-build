@@ -1028,10 +1028,7 @@ final class LanguageServerTrust {
 }
 
 extension AppModel {
-    func openLanguageServerSettings() {
-        openSettings()
-        settingsAnchor = LanguageServersSection.anchor
-    }
+    func openLanguageServerSettings() { openSettings(pane: .languages) }
 
     /// Asked only when someone has just asked for something a server would answer.
     func confirmRunningLocalServer(_ executable: String, language: String) async -> Bool {
@@ -1087,52 +1084,52 @@ extension LanguageServerHub.Availability {
 // MARK: - The settings section
 
 struct LanguageServersSection: View {
-    static let anchor = "language-servers"
+    /// Just these, for a search. Otherwise all of them, sorted by what you can do about each.
+    var only: [LanguageServerDefinition]?
 
     @Environment(AppModel.self) private var model
-    @State private var showsAll = false
+    @State private var showsMore = false
+
+    private typealias Entry = (definition: LanguageServerDefinition, availability: LanguageServerHub.Availability)
+
+    private func canAdd(_ definition: LanguageServerDefinition) -> Bool {
+        definition.managed.map { model.languageServers.toolPath($0.tool) != nil } ?? false
+    }
+
+    private func line(_ definition: LanguageServerDefinition, _ rest: String) -> String {
+        [definition.filesLine, rest].compactMap { $0 }.joined(separator: " ")
+    }
 
     private func status(_ definition: LanguageServerDefinition, _ availability: LanguageServerHub.Availability) -> String {
-        if model.languageServers.isRunning(definition) { return "Running." }
+        if model.languageServers.isRunning(definition) { return line(definition, "Running now.") }
         if model.languageServers.isStarting(definition) { return "Starting…" }
         switch availability {
         case .looking: return "Looking…"
-        case .found(let path): return "Found at \((path as NSString).abbreviatingWithTildeInPath). Starts when you open one of these files."
-        case .needsTrust: return "Only inside this project. Tiri asks before running it."
-        case .wontStart(let path): return "\((path as NSString).abbreviatingWithTildeInPath) is there, but stopped without answering. It may not be fully installed."
+        case .found(let path): return line(definition, "Uses \((path as NSString).abbreviatingWithTildeInPath).")
+        case .needsTrust: return line(definition, "Only inside this project. Tiri asks before running it.")
+        case .wontStart(let path): return "\((path as NSString).abbreviatingWithTildeInPath) stopped without answering. It may not be fully installed."
         case .installing: return "Adding it…"
         case .missing:
-            // "Not installed" read as if the language itself were missing.
-            if let managed = definition.managed, model.languageServers.toolPath(managed.tool) != nil {
-                return "No language server yet. Add installs \(managed.title), \(managed.megabytes) MB."
-            }
-            return "No language server yet. Install: \(definition.installHint)"
+            if canAdd(definition), let add = definition.addLine { return line(definition, add) }
+            return line(definition, "To install it: \(definition.installHint)")
         }
     }
 
-    /// Whether there's something here worth seeing without asking for the whole list.
-    private func isUsual(_ definition: LanguageServerDefinition, _ availability: LanguageServerHub.Availability) -> Bool {
-        if case .missing = availability {
-            return definition.managed != nil && model.languageServers.toolPath(definition.managed!.tool) != nil
-        }
-        return true
-    }
-
-    @ViewBuilder
-    private func row(_ definition: LanguageServerDefinition, _ availability: LanguageServerHub.Availability) -> some View {
-        HStack(spacing: 16) {
+    @ViewBuilder private func row(_ entry: Entry) -> some View {
+        let definition = entry.definition
+        HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(definition.language)
-                Text(status(definition, availability))
+                Text(status(definition, entry.availability))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if case .installing = availability {
+            if case .installing = entry.availability {
                 ProgressView().controlSize(.small)
-            } else if availability.canBeInstalled {
-                if let managed = definition.managed, model.languageServers.toolPath(managed.tool) != nil {
+            } else if entry.availability.canBeInstalled {
+                if let managed = definition.managed, canAdd(definition) {
                     Button("Add") { Task { await model.languageServers.add(definition) } }
                         .help("Installs \(managed.title) \(managed.version) into Tiri's own folder, about \(managed.megabytes) MB. Nothing outside it changes.")
                 } else if let preset = model.runnableAgentPresets().first {
@@ -1143,38 +1140,84 @@ struct LanguageServersSection: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
+        .modifier(RevealableRow(id: "language:\(definition.id)"))
+    }
+
+    private func card(_ entries: [Entry]) -> some View {
+        SettingsCard {
+            ForEach(Array(entries.enumerated()), id: \.element.definition.id) { index, entry in
+                if index > 0 { SettingsRowDivider() }
+                row(entry)
+            }
+        }
     }
 
     var body: some View {
         let _ = model.languageRevision
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Language Servers").font(.headline)
-                Spacer()
-                Button("Look Again") { model.languageServers.refreshLocations() }
-                    .controlSize(.small)
-            }
-            let roots = model.active.folders.map(Git.real)
-            let rows = LanguageServerCatalog.all.map { ($0, model.languageServers.availability(of: $0, roots: roots)) }
-            let usual = rows.filter { isUsual($0.0, $0.1) }
-            let others = rows.filter { !isUsual($0.0, $0.1) }
-            let shown = showsAll ? usual + others : usual
-            VStack(spacing: 0) {
-                ForEach(Array(shown.enumerated()), id: \.element.0.id) { index, entry in
-                    row(entry.0, entry.1)
-                    if index < shown.count - 1 { Divider().padding(.leading, 12) }
+        let roots = model.active.folders.map(Git.real)
+        let entries: [Entry] = (only ?? LanguageServerCatalog.all).map { ($0, model.languageServers.availability(of: $0, roots: roots)) }
+        Group {
+            if only != nil {
+                card(entries)
+            } else {
+                let isMissing: (Entry) -> Bool = { if case .missing = $0.availability { true } else { false } }
+                let isLooking: (Entry) -> Bool = { if case .looking = $0.availability { true } else { false } }
+                let ready = entries.filter { !isMissing($0) && !isLooking($0) }
+                let addable = entries.filter { isMissing($0) && canAdd($0.definition) }
+                let others = entries.filter { isMissing($0) && !canAdd($0.definition) }
+                VStack(alignment: .leading, spacing: 24) {
+                    // Nothing is called installed or missing on a guess.
+                    if entries.contains(where: isLooking) {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Looking for language servers on this Mac…")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if !ready.isEmpty {
+                        SettingsGroup("On This Mac", caption: "Already installed. Each starts by itself when you open one of its files.") {
+                            Button("Look Again") { model.languageServers.refreshLocations() }
+                                .controlSize(.small)
+                                .help("Look for language servers again, after installing one yourself")
+                        } content: {
+                            card(ready)
+                        }
+                    }
+                    if !addable.isEmpty {
+                        SettingsGroup("Ready to Add", caption: "Adding one gives that language Go to Definition, errors and suggestions. It goes in Tiri's own folder and changes nothing else.") {
+                            card(addable)
+                        }
+                    }
+                    if !others.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Button {
+                                withAnimation(.smooth(duration: 0.15)) { showsMore.toggle() }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                        .rotationEffect(.degrees(showsMore ? 90 : 0))
+                                        .frame(width: 12)
+                                    Text("\(others.count) More Languages")
+                                        .font(.headline)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            if showsMore {
+                                Text("Tiri can't install these itself, but your agent can.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                card(others)
+                            }
+                        }
+                    }
                 }
             }
-            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
-            .disabled(!model.settings.languageServers)
-            .opacity(model.settings.languageServers ? 1 : 0.5)
-            if !others.isEmpty {
-                Button(showsAll ? "Show Fewer" : "Show \(others.count) More Languages") { showsAll.toggle() }
-                    .buttonStyle(.link)
-                    .font(.caption)
-            }
         }
-        .id(Self.anchor)
+        .disabled(!model.settings.languageServers)
+        .opacity(model.settings.languageServers ? 1 : 0.5)
     }
 }
 

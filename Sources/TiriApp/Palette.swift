@@ -432,7 +432,7 @@ final class PaletteModel {
         let commands = model.allCommands
         var scored: [(Int, Row)] = []
         for (order, command) in commands.enumerated() {
-            let label = "\(command.category): \(command.title)"
+            let label = command.title.hasPrefix(command.category + ":") ? command.title : "\(command.category): \(command.title)"
             let row = { [model] (positions: [Int]) in
                 Row(id: command.id, title: label, positions: positions,
                     shortcut: model.shortcutSymbol(for: command.id)) { _ in

@@ -175,6 +175,10 @@ expect "settings reset restores it" "off" "$CLI" settings reset editor.wordWrap
 refuses "settings set checks the value" "$CLI" settings set editor.wordWrap maybe
 refuses "settings set checks the key" "$CLI" settings set no.such on
 check "settings open" "$CLI" settings open
+check "settings open a pane" "$CLI" settings open keyboard
+check "settings open a setting" "$CLI" settings open terminal.fontSize
+check "settings open a command" "$CLI" settings open toggleSidebar
+check "settings open a search" "$CLI" settings open font size
 expect "settings is a tab" "settings" "$CLI" items
 SETTINGS_ID=$("$CLI" items | grep -m1 '	settings	' | cut -f1)
 check "close settings" "$CLI" close "$SETTINGS_ID"

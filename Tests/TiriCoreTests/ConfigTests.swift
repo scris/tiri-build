@@ -354,12 +354,82 @@ import Testing
 }
 
 @Suite struct SettingsSchemaTests {
-    @Test func everySettingBelongsToASectionAndHasWords() {
+    @Test func everySettingHasWords() {
         for definition in SettingsSchema.all {
-            #expect(SettingsSchema.sections.contains(definition.section), "\(definition.key)")
             #expect(!definition.title.isEmpty && !definition.explanation.isEmpty, "\(definition.key)")
         }
         #expect(Set(SettingsSchema.all.map(\.key)).count == SettingsSchema.all.count)
+    }
+
+    @Test func everySettingOnTheScreenHasAHeadingOrStandsFirst() {
+        for pane in SettingsPane.allCases {
+            let groups = SettingsSchema.groups(in: pane)
+            #expect(groups.dropFirst().allSatisfy { !$0.name.isEmpty }, "\(pane)")
+        }
+        // Two lists elsewhere on the screen, and no row of their own.
+        #expect(Set(SettingsSchema.all.filter(\.shownElsewhere).map(\.key)) == ["terminal.presets", "terminal.resume"])
+    }
+
+    /// One line under each title. Anything longer belongs in its note.
+    @Test func explanationsStayShort() {
+        for definition in SettingsSchema.all where !definition.shownElsewhere {
+            #expect(definition.explanation.count <= 100, "\(definition.key): \(definition.explanation.count)")
+        }
+    }
+
+    @Test func searchNeedsEveryWordButNotInOnePlace() throws {
+        let font = try #require(SettingsSchema.definition(for: "terminal.fontFamily"))
+        #expect(SettingsSchema.matches("terminal font", font))
+        #expect(SettingsSchema.matches("  FONT  ", font))
+        #expect(!SettingsSchema.matches("editor font", font))
+        #expect(SettingsSchema.matches("", font))
+    }
+
+    @Test func notesAreSearchedAndExplained() throws {
+        let zoom = try #require(SettingsSchema.definition(for: "window.zoomLevel"))
+        #expect(SettingsSchema.matches("markdown", zoom))
+        #expect(zoom.fullExplanation.contains(zoom.explanation) && zoom.fullExplanation.contains("markdown"))
+    }
+
+    @Test func openTakesAPaneASettingOrWords() {
+        #expect(SettingsSchema.openTarget("keyboard") == .pane(.keyboard))
+        #expect(SettingsSchema.openTarget("Terminal") == .pane(.terminal))
+        #expect(SettingsSchema.openTarget("terminal.fontSize") == .setting("terminal.fontSize"))
+        #expect(SettingsSchema.openTarget("font size") == .search("font size"))
+    }
+
+    @Test func aLanguageSaysWhatItsForAndWhatAddingDoes() throws {
+        let python = try #require(LanguageServerCatalog.all.first { $0.id == "python" })
+        #expect(python.filesLine?.hasPrefix("For .py") == true)
+        let typescript = try #require(LanguageServerCatalog.all.first { $0.id == "typescript" })
+        #expect(typescript.filesLine?.contains(".ts") == true && typescript.filesLine?.contains(".cy") == false)
+        #expect(python.addLine == "Installs basedpyright, 283 MB.")
+        let json = try #require(LanguageServerCatalog.all.first { $0.id == "json" })
+        #expect(json.addLine == "Installs VS Code's web language servers, 94 MB. Also covers HTML and CSS.")
+        #expect(json.sharesInstallWith.map(\.id) == ["html", "css"])
+        // A server with no extensions of its own still reads as a sentence.
+        for definition in LanguageServerCatalog.all {
+            #expect(definition.filesLine?.hasPrefix("For .") ?? true, "\(definition.id)")
+        }
+    }
+
+    /// Whatever the reason, it says what's wrong and what you get instead.
+    @Test func withoutAppleIntelligenceItSaysWhyAndWhatStillWorks() {
+        #expect(MacModelState.ready.message == nil)
+        for state in MacModelState.allCases where state != .ready {
+            let message = state.message ?? ""
+            #expect(message.contains("Apple Intelligence"), "\(state)")
+            #expect(message.contains("first prompt") && message.contains("words you type"), "\(state)")
+        }
+        #expect(Set(MacModelState.allCases.compactMap(\.message)).count == MacModelState.allCases.count - 1)
+    }
+
+    @Test func aSettingThatDoesNothingYetKnows() throws {
+        var settings = TiriSettings()
+        let column = try #require(SettingsSchema.definition(for: "editor.wordWrapColumn")?.applies)
+        #expect(!column(settings))
+        settings.editorWordWrap = .bounded
+        #expect(column(settings))
     }
 
     /// A setting whose key doesn't match the parser would look fine and silently do nothing.

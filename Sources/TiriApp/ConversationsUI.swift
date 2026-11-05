@@ -269,7 +269,8 @@ extension AppModel {
         conversationSummarizing = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                if Self.isPluggedIn, self.active.remote == nil {
+                // Nothing to do without the model, and reading every conversation again isn't free.
+                if Self.isPluggedIn, self.mayLabelConversations, self.active.remote == nil {
                     self.conversationsLoaded = await self.loadConversations()
                     self.runConversationLabeler()
                 }

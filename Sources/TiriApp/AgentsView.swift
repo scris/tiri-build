@@ -62,10 +62,7 @@ extension AppModel {
         _ = setSetting("terminal.resume", to: .object(map.mapValues(JSONValue.string)))
     }
 
-    func openAgentSettings() {
-        openSettings()
-        settingsAnchor = AgentsSection.anchor
-    }
+    func openAgentSettings() { openSettings(pane: .agents) }
 
     func isAgentEnabled(_ agent: AgentIdentity) -> Bool {
         agentEntries.first { $0.agent == agent }?.isEnabled ?? false
@@ -74,51 +71,40 @@ extension AppModel {
 
 /// Every agent in one place: whether it's on, how it runs, how it reports and how it comes back.
 struct AgentsSection: View {
-    static let anchor = "agents"
     @Environment(AppModel.self) private var model
+    @Environment(\.settingsRowsStack) private var rowsStack
     @State private var newName = ""
     @State private var newCommand = ""
     @State private var problem: String?
     @State private var adding = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Your Agents").font(.headline)
-                Text("Only the ones that are on appear in the + menu, on a new workspace and everywhere else Tiri offers them.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            VStack(spacing: 0) {
+        SettingsGroup("Your Agents", caption: "Tiri only offers the ones that are on, in the + menu and everywhere else.") {
+            SettingsCard {
                 let entries = model.agentEntries
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                    if index > 0 { Divider() }
+                    if index > 0 { SettingsRowDivider() }
                     AgentRow(entry: entry)
                 }
-                Divider()
+                SettingsRowDivider()
                 addRow
             }
-            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 10))
         }
-        .id(Self.anchor)
         .onAppear { model.refreshAvailableCommands() }
     }
 
     @ViewBuilder private var addRow: some View {
         if adding {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    TextField("Name", text: $newName)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 150)
-                    TextField("Command, like aider", text: $newCommand)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(add)
-                    Button("Add", action: add)
-                        .disabled(newCommand.trimmingCharacters(in: .whitespaces).isEmpty)
-                    Button("Cancel") {
-                        adding = false
-                        problem = nil
+                if rowsStack {
+                    newNameField
+                    newCommandField
+                    HStack(spacing: 8) { addButtons }
+                } else {
+                    HStack(spacing: 8) {
+                        newNameField.frame(maxWidth: 150)
+                        newCommandField
+                        addButtons
                     }
                 }
                 if let problem {
@@ -144,6 +130,26 @@ struct AgentsSection: View {
         }
     }
 
+    private var newNameField: some View {
+        TextField("Name", text: $newName)
+            .textFieldStyle(.roundedBorder)
+    }
+
+    private var newCommandField: some View {
+        TextField("Command, like aider", text: $newCommand)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit(add)
+    }
+
+    @ViewBuilder private var addButtons: some View {
+        Button("Add", action: add)
+            .disabled(newCommand.trimmingCharacters(in: .whitespaces).isEmpty)
+        Button("Cancel") {
+            adding = false
+            problem = nil
+        }
+    }
+
     private func add() {
         problem = model.addAgent(name: newName, command: newCommand)
         guard problem == nil else { return }
@@ -156,8 +162,10 @@ struct AgentsSection: View {
 struct AgentRow: View {
     let entry: AgentEntry
     @Environment(AppModel.self) private var model
-    @State private var expanded = false
+    @Environment(\.settingsRowsStack) private var rowsStack
     @State private var problem: String?
+
+    private var expanded: Bool { model.settingsUI.expandedAgent == entry.id }
 
     /// Nil until the shell has answered, so nothing is called missing on a guess.
     private var isFound: Bool? {
@@ -166,64 +174,49 @@ struct AgentRow: View {
     }
 
     private var detail: String {
-        guard entry.isEnabled else { return "Off. Tiri won't offer it. Sessions already running carry on." }
+        guard entry.isEnabled else { return "Off. Any session already running carries on." }
         if isFound == false { return "On, but your shell can't find \(entry.id)." }
         guard let agent = entry.agent, agent.profile?.hookInstall != nil else {
-            return "Runs \(entry.command). Takes files and lines as plain text. Tiri estimates its status."
+            return "Runs \(entry.command). Tiri guesses when it's working from terminal activity."
         }
-        if model.hooksInstalled(agent) { return "Reports exactly when it's working, waiting for you or done, and resumes the right conversation." }
-        if let other = model.hooksCoverage(agent) { return "Reports through your \(other.title) hooks, which it runs too. It asks you to trust a folder before they do." }
-        return "Tiri is estimating its status from terminal activity. A hook makes it exact."
+        if model.hooksInstalled(agent) { return "Hooks tell Tiri exactly when it's working, waiting or done." }
+        if let other = model.hooksCoverage(agent) { return "Tells Tiri when it's working through your \(other.title) hooks, once you trust a folder." }
+        return "Tiri guesses when it's working from terminal activity. Hooks tell it exactly."
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                Image(systemName: entry.profile?.symbol ?? "terminal")
-                    .foregroundStyle(entry.isEnabled ? .secondary : .tertiary)
-                    .frame(width: 18)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.name)
-                        .foregroundStyle(entry.isEnabled ? .primary : .secondary)
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if entry.isEnabled, isFound == false, let website = entry.profile?.website, let url = URL(string: website) {
-                    Link("Get It", destination: url)
-                        .font(.caption)
-                }
-                if entry.isEnabled, isFound != false, let agent = entry.agent, agent.profile?.hookInstall != nil {
-                    let installed = model.hooksInstalled(agent)
-                    Button(installed ? "Remove Hooks" : "Install…") { model.confirmHooks(agent, install: !installed) }
-                        .controlSize(.small)
-                }
                 Button {
-                    withAnimation(.smooth(duration: 0.15)) { expanded.toggle() }
+                    withAnimation(.smooth(duration: 0.15)) {
+                        model.settingsUI.expandedAgent = expanded ? nil : entry.id
+                    }
                 } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
-                        .frame(width: 16, height: 16)
-                        .contentShape(Rectangle())
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                            .frame(width: 12)
+                        Image(systemName: entry.profile?.symbol ?? "terminal")
+                            .foregroundStyle(entry.isEnabled ? .secondary : .tertiary)
+                            .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(entry.name)
+                                .foregroundStyle(entry.isEnabled ? .primary : .secondary)
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
                 .help(expanded ? "Hide its commands" : "Its name and commands")
                 .accessibilityLabel(expanded ? "Hide details for \(entry.name)" : "Show details for \(entry.name)")
-                if entry.isCustom {
-                    Button {
-                        model.removeAgent(entry.id)
-                    } label: {
-                        Image(systemName: "minus.circle")
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Delete \(entry.name)")
-                    .accessibilityLabel("Delete \(entry.name)")
-                }
+                if !rowsStack { actions }
                 Toggle("", isOn: Binding(get: { entry.isEnabled }, set: { model.setAgent(entry.id, enabled: $0) }))
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -231,10 +224,23 @@ struct AgentRow: View {
                     .help(entry.isEnabled ? "Turn \(entry.name) off" : "Turn \(entry.name) on")
                     .accessibilityLabel("Use \(entry.name)")
             }
+            if rowsStack { actions.padding(.leading, 38) }
             if expanded { details }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
+    }
+
+    /// What it's missing, if anything.
+    @ViewBuilder private var actions: some View {
+        if entry.isEnabled, isFound == false, let website = entry.profile?.website, let url = URL(string: website) {
+            Link("Get It", destination: url)
+                .font(.caption)
+        }
+        if entry.isEnabled, isFound != false, let agent = entry.agent, agent.profile?.hookInstall != nil, !model.hooksInstalled(agent) {
+            Button("Install Hooks…") { model.confirmHooks(agent, install: true) }
+                .controlSize(.small)
+        }
     }
 
     private var details: some View {
@@ -249,8 +255,22 @@ struct AgentRow: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
+            let removesHooks = entry.agent.map { model.hooksInstalled($0) } ?? false
+            if removesHooks || entry.isCustom {
+                HStack(spacing: 8) {
+                    if removesHooks, let agent = entry.agent {
+                        Button("Remove Hooks…") { model.confirmHooks(agent, install: false) }
+                    }
+                    if entry.isCustom {
+                        Button("Delete \(entry.name)") { model.removeAgent(entry.id) }
+                    }
+                }
+                .controlSize(.small)
+                .padding(.leading, 70)
+                .padding(.top, 2)
+            }
         }
-        .padding(.leading, 28)
+        .padding(.leading, rowsStack ? 0 : 38)
     }
 
     private func field(_ label: String, value: String, placeholder: String, commit: @escaping (String) -> Void) -> some View {
@@ -260,6 +280,7 @@ struct AgentRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 62, alignment: .trailing)
             CommitField(placeholder: placeholder, text: value, commit: commit)
+                .accessibilityLabel(label)
         }
     }
 }

@@ -108,6 +108,17 @@ public enum CLIParser {
             if args.count > 1 { payload["action"] = .string(args[1]) }
             return request("dev.change", payload)
 
+        case "dev-settings":
+            guard args.count >= 1 else { throw UsageError("usage: tiri dev-settings <action> [<value>]   (test copies only)") }
+            var payload: [String: JSONValue] = ["action": .string(args[0])]
+            if args.count > 1 {
+                let value = args[1...].joined(separator: " ")
+                payload["value"] = .string(value)
+                payload["command"] = .string(value)
+                payload["key"] = .string(value)
+            }
+            return request("dev.settings", payload)
+
         case "dev-notification":
             guard args.count == 1 else { throw UsageError("usage: tiri dev-notification <item>   (test copies only)") }
             return request("dev.notification", ["item": .string(args[0])])
@@ -523,7 +534,7 @@ public enum CLIParser {
             return request("follow", ["item": .string(args[0]), "row": .int(row), "col": .int(col)])
 
         case "settings":
-            let usage = "usage: tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open]"
+            let usage = "usage: tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open [<pane, setting, command or words>]]"
             switch args.first {
             case nil:
                 return request("settings.list")
@@ -540,8 +551,7 @@ public enum CLIParser {
                 guard args.count == 2 else { throw UsageError(usage) }
                 return request("settings.reset", ["key": .string(args[1])])
             case "open":
-                guard args.count == 1 else { throw UsageError(usage) }
-                return request("settings.open")
+                return request("settings.open", args.count > 1 ? ["what": .string(args[1...].joined(separator: " "))] : [:])
             default:
                 throw UsageError(usage)
             }
@@ -622,7 +632,7 @@ public enum CLIParser {
       tiri follow <item-id> <row> <col>   (what ⌘-click does, on a terminal's path or a file's name)
       tiri quit                    (terminals keep running, and Tiri comes back to them)
       tiri keys [set <command> <key> | unset <command> | reset <command>]
-      tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open]
+      tiri settings [explain [<key>] | get <key> | set <key> <value> | reset <key> | open [<what>]]
       tiri send <item-id> <text> [--enter]
       tiri read <item-id> [--lines N]
       tiri layout | tree | commands | run <command-id> | perf
@@ -929,7 +939,7 @@ public enum AgentGuide {
     tiri settings get <key>
     tiri settings set <key> <value>       # for example: tiri settings set code.wordWrap on
     tiri settings reset <key>
-    tiri settings open                    # open the settings screen for the user
+    tiri settings open [<what>]           # show the user: a pane (general, agents, terminal, editor, languages, files, keyboard), a setting, a command, or words to search
     ```
 
     Which agents Tiri offers is one list, used everywhere it offers them:

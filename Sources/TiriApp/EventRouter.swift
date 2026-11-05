@@ -81,6 +81,10 @@ final class EventRouter {
             if let stroke = Self.stroke(from: event) { model.recordKey(stroke) }
             return nil
         }
+        if let model, model.isFindingShortcutKey {
+            if let stroke = Self.stroke(from: event) { model.findShortcutKey(stroke) }
+            return nil
+        }
         // A tab in its own window keeps its keyboard. Only closing and saving mean something different there.
         if let model, let window = event.window, let item = model.detachedItem(of: window), let stroke = Self.stroke(from: event) {
             if stroke.modifiers == .command, stroke.key == "w" {

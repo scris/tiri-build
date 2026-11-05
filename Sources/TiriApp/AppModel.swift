@@ -186,8 +186,13 @@ final class AppModel {
     @ObservationIgnored private var changesAgain = false
     var recordingShortcutFor: String?
     var hooksRevision = 0
-    var settingsAnchor: String?
-    @ObservationIgnored private var recordedStrokes: [KeyStroke] = []
+    let settingsUI = SettingsNavigation()
+    /// What's been pressed so far, for the row to show.
+    private(set) var recordedStrokes: [KeyStroke] = []
+    /// What came of a recording that didn't simply work, shown on the command's own row.
+    var shortcutNotice: ShortcutNotice?
+    /// The next key press is what to look for in the list of shortcuts.
+    private(set) var isFindingShortcutKey = false
     @ObservationIgnored private var recordingWork: DispatchWorkItem?
     @ObservationIgnored var skipQuitConfirmation = false
     @ObservationIgnored var launchMilliseconds: Double?
@@ -622,6 +627,10 @@ final class AppModel {
     }
 
     func handleEscape() -> Bool {
+        if shortcutNotice != nil {
+            shortcutNotice = nil
+            return true
+        }
         if palette != nil {
             closePalette()
             return true
@@ -1766,6 +1775,10 @@ final class AppModel {
 
     func openFind(replace: Bool = false) {
         guard let target = (peekHasKeyboard ? active.peek?.id : nil) ?? active.focused.active else { return }
+        if existingController(for: target) is SettingsController {
+            settingsUI.searchFocusRequests += 1
+            return
+        }
         guard let controller = existingController(for: target), controller.supportsFind else { return }
         var state = find ?? FindState(targetItem: target)
         state.targetItem = target
@@ -1833,7 +1846,11 @@ final class AppModel {
     // MARK: Settings
 
     /// One Settings tab per workspace. Asking again goes back to it.
-    func openSettings() {
+    func openSettings(pane: SettingsPane? = nil, reveal: String? = nil, search: String? = nil) {
+        cancelRecordingShortcut()
+        if pane != nil || search != nil { settingsUI.query = search ?? "" }
+        if let pane { settingsUI.pane = pane }
+        settingsUI.reveal = reveal
         if let existing = active.items.first(where: { $0.content == .settings }) {
             focusItem(existing.id)
             return
@@ -1884,10 +1901,7 @@ final class AppModel {
         startTerminal(command: preset.command + " " + ShellQuote.quote(prompt), named: preset.name)
     }
 
-    func openKeyboardShortcuts() {
-        openSettings()
-        settingsAnchor = SettingsView.shortcutsAnchor
-    }
+    func openKeyboardShortcuts() { openSettings(pane: .keyboard) }
 
     /// The web page you're looking at: in the Peek if there is one, or else the focused tab.
     var frontWebController: WebController? {
@@ -2512,7 +2526,7 @@ final class AppModel {
 
     /// Saves a shortcut, or removes it if the key is nil. Returns why it couldn't, if it couldn't.
     @discardableResult
-    func setShortcut(_ command: String, key: String?) -> String? {
+    func setShortcut(_ command: String, key: String?, announcing: Bool = true) -> String? {
         if let key, let problem = Keymap.problem(with: key, command: command, bindings: keybindings) {
             showToast(title: "That shortcut won't work", detail: problem, symbol: "keyboard", tint: .orange)
             return problem
@@ -2524,7 +2538,7 @@ final class AppModel {
         } catch {
             return "\(error)"
         }
-        if let previous {
+        if announcing, let previous {
             let title = allCommands.first { $0.id == previous.command }?.title ?? previous.command
             showToast(title: "\(previous.symbol) was \(title)", detail: "That command has no shortcut on this key now.", symbol: "keyboard", tint: .secondary)
         }
@@ -2549,7 +2563,36 @@ final class AppModel {
         recordingWork?.cancel()
         recordedStrokes = []
         keyResolver.reset()
+        shortcutNotice = nil
+        isFindingShortcutKey = false
         recordingShortcutFor = command
+    }
+
+    /// Asks for one key press, then lists what that key does.
+    func beginFindingShortcutKey() {
+        cancelRecordingShortcut()
+        shortcutNotice = nil
+        settingsUI.shortcutKeys = []
+        isFindingShortcutKey = true
+    }
+
+    func cancelFindingShortcutKey() { isFindingShortcutKey = false }
+
+    func findShortcutKey(_ stroke: KeyStroke) {
+        isFindingShortcutKey = false
+        guard !(stroke.modifiers.isEmpty && stroke.key == "escape") else { return }
+        settingsUI.shortcutKeys = [stroke]
+    }
+
+    func confirmShortcutConflict() {
+        guard case .conflict(let command, let key, _) = shortcutNotice else { return }
+        shortcutNotice = nil
+        // You've seen who loses it, so there's nothing to announce.
+        setShortcut(command, key: key, announcing: false)
+    }
+
+    private var shortcutTitles: [String: String] {
+        Dictionary(shortcutCommands.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first })
     }
 
     func cancelRecordingShortcut() {
@@ -2585,7 +2628,18 @@ final class AppModel {
         guard let command = recordingShortcutFor else { return }
         let key = recordedStrokes.map(\.description).joined(separator: " ")
         cancelRecordingShortcut()
-        if !key.isEmpty { setShortcut(command, key: key) }
+        guard !key.isEmpty else { return }
+        if let problem = Keymap.problem(with: key, command: command, bindings: keybindings) {
+            shortcutNotice = .problem(command: command, message: problem)
+            return
+        }
+        let holders = ShortcutIndex.holders(of: key, except: command, in: keybindings)
+        guard holders.isEmpty else {
+            let titles = shortcutTitles
+            shortcutNotice = .conflict(command: command, key: key, holders: holders.map { titles[$0] ?? $0 })
+            return
+        }
+        setShortcut(command, key: key, announcing: false)
     }
 
     private func applySettings() {
@@ -2748,6 +2802,8 @@ final class AppModel {
     func shortcutSymbol(for id: String) -> String? {
         keybindings.first { $0.command == id }?.symbol
     }
+
+    var changedShortcuts: Set<String> { ShortcutIndex.changedCommands(user: settingsStore.userKeybindings) }
 }
 
 enum ProcessClock {

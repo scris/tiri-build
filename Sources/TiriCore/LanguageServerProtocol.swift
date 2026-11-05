@@ -65,6 +65,44 @@ public struct LanguageServerDefinition: Sendable, Identifiable, Equatable {
     }
 }
 
+extension LanguageServerDefinition {
+    /// The files it answers for, like "For .py and .pyi files." Only the ones Tiri lists by hand:
+    /// grammars claim plenty of extensions nobody would recognize here.
+    public var filesLine: String? {
+        let entries = LanguageCatalog.curated.filter { $0.server == id }.map { $0.extensions.split(separator: " ").map(String.init) }
+        var seen = Set<String>()
+        // The main one of each language first, then the rest.
+        let found = (entries.compactMap(\.first) + entries.flatMap { $0 }).filter { seen.insert($0).inserted }.map { "." + $0 }
+        switch found.count {
+        case 0: return nil
+        case 1: return "For \(found[0]) files."
+        case 2: return "For \(found[0]) and \(found[1]) files."
+        case 3: return "For \(found[0]), \(found[1]) and \(found[2]) files."
+        case 4: return "For \(found[0]), \(found[1]), \(found[2]) and \(found[3]) files."
+        default: return "For \(found[0]), \(found[1]), \(found[2]), \(found[3]) and more."
+        }
+    }
+
+    /// The others that one install brings, since they share it.
+    public var sharesInstallWith: [LanguageServerDefinition] {
+        guard let managed, !managed.lock.isEmpty else { return [] }
+        return LanguageServerCatalog.all.filter { $0.id != id && $0.managed?.lock == managed.lock }
+    }
+
+    /// What pressing Add does, in words.
+    public var addLine: String? {
+        guard let managed else { return nil }
+        var line = "Installs \(managed.title), \(managed.megabytes) MB."
+        // Its first name is enough here: "CSS", not "CSS, SCSS and Less".
+        let others = sharesInstallWith.map { $0.language.split(separator: ",").first.map(String.init) ?? $0.language }
+        if let last = others.last {
+            let names = others.count == 1 ? last : others.dropLast().joined(separator: ", ") + " and " + last
+            line += " Also covers \(names)."
+        }
+        return line
+    }
+}
+
 public enum LanguageServerCatalog {
     private static let builtIn: [LanguageServerDefinition] = [
         .init(id: "typescript", language: "TypeScript and JavaScript",
