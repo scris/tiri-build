@@ -417,17 +417,12 @@ struct EmptyGroupView: View {
                 start
             } else {
                 VStack(spacing: 22) {
-                    VStack(spacing: 12) {
-                        agentButtons
-                        Button("Past Conversations…") { model.openConversationPicker() }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                    }
-                    VStack(spacing: 8) {
-                        row("Open a file", "quickOpen")
-                        row("New terminal", "newTerminal")
-                        row("All commands", "commandPalette")
-                        row("Toggle sidebar", "toggleSidebar")
+                    agentTiles
+                    StartList {
+                        StartRow(title: "Past Conversations", symbol: "clock.arrow.circlepath", shortcut: model.shortcutSymbol(for: "conversations")) { model.openConversationPicker() }
+                        StartRow(title: "Open a File", symbol: "doc", shortcut: model.shortcutSymbol(for: "quickOpen")) { model.run("quickOpen") }
+                        StartRow(title: "New Terminal", symbol: "terminal", shortcut: model.shortcutSymbol(for: "newTerminal")) { model.run("newTerminal") }
+                        StartRow(title: "All Commands", symbol: "command", shortcut: model.shortcutSymbol(for: "commandPalette")) { model.run("commandPalette") }
                     }
                 }
             }
@@ -444,37 +439,56 @@ struct EmptyGroupView: View {
         }
     }
 
-    /// One folder or none: the button starts the agent, asking for a folder first if it has to.
+    /// One folder or none: the tile starts the agent, asking for a folder first if it has to.
     /// Several: it asks which, as the toolbar's + does.
     @ViewBuilder
-    private var agentButtons: some View {
+    private var agentTiles: some View {
         let presets = model.runnableAgentPresets()
         if !presets.isEmpty {
-            HStack(spacing: 10) {
-                ForEach(presets) { preset in
-                    if model.active.folders.count > 1 {
-                        Menu(preset.name) {
-                            ForEach(model.active.folders, id: \.self) { folder in
-                                Button((folder as NSString).lastPathComponent) { model.newTerminal(command: preset.command, cwd: folder) }
-                            }
+            VStack(spacing: 10) {
+                // Four to a row keeps them all the same size, however many agents you've added.
+                ForEach(Array(stride(from: 0, to: presets.count, by: 4)), id: \.self) { start in
+                    HStack(spacing: 10) {
+                        ForEach(presets[start..<min(start + 4, presets.count)]) { preset in
+                            agentTile(preset)
                         }
-                        .fixedSize()
-                    } else {
-                        Button(model.active.folders.isEmpty ? preset.name + "…" : preset.name) {
-                            model.startTerminal(command: preset.command)
-                        }
-                        .buttonStyle(.glassProminent)
                     }
                 }
             }
-            .controlSize(.large)
+        }
+    }
+
+    @ViewBuilder
+    private func agentTile(_ preset: TerminalPreset) -> some View {
+        let symbol = AgentCatalog.profile(executable: AppModel.tool(of: preset))?.symbol ?? "terminal"
+        if model.active.folders.count > 1 {
+            Menu {
+                ForEach(model.active.folders, id: \.self) { folder in
+                    Button((folder as NSString).lastPathComponent) { model.newTerminal(command: preset.command, cwd: folder) }
+                }
+            } label: {
+                AgentTileLabel(name: preset.name, symbol: symbol)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Start \(preset.name) in one of this workspace's folders")
+        } else {
+            Button {
+                model.startTerminal(command: preset.command)
+            } label: {
+                AgentTileLabel(name: preset.name, symbol: symbol)
+            }
+            .buttonStyle(.plain)
+            .help(model.active.folders.isEmpty ? "Choose a folder, then start \(preset.name) there" : "Start \(preset.name)")
         }
     }
 
     private var start: some View {
         let noneOn = model.agentPresets().isEmpty
         let noAgents = model.availableCommands != nil && model.runnableAgentPresets().isEmpty
-        return VStack(spacing: 16) {
+        return VStack(spacing: 22) {
             VStack(spacing: 4) {
                 Text(noneOn ? "No agents are on" : (noAgents ? "No agents found" : "Start an agent"))
                     .font(.title3.weight(.semibold))
@@ -489,7 +503,6 @@ struct EmptyGroupView: View {
             }
             if noneOn {
                 Button("Choose Agents…") { model.openAgentSettings() }
-                    .buttonStyle(.glassProminent)
                     .controlSize(.large)
             } else if noAgents {
                 // Only the ones you've kept on are worth pointing you at.
@@ -501,18 +514,88 @@ struct EmptyGroupView: View {
                     }
                 }
             } else {
-                agentButtons
+                agentTiles
             }
-            HStack(spacing: 18) {
-                Button("Past Conversations…") { model.openConversationPicker() }
-                Button("Shell…") { model.startTerminal() }
-                Button("Just Open a Folder…") {
-                    model.chooseFolderForActiveWorkspace { _ in }
-                }
-                Button("Connect to a Server…") { model.connectToServerInteractive() }
+            StartList {
+                StartRow(title: "Past Conversations", symbol: "clock.arrow.circlepath", shortcut: model.shortcutSymbol(for: "conversations")) { model.openConversationPicker() }
+                StartRow(title: "Shell", symbol: "terminal", shortcut: model.shortcutSymbol(for: "newTerminal")) { model.startTerminal() }
+                StartRow(title: "Open a Folder", symbol: "folder", shortcut: nil) { model.chooseFolderForActiveWorkspace { _ in } }
+                StartRow(title: "Connect to a Server", symbol: "server.rack", shortcut: nil) { model.connectToServerInteractive() }
             }
-            .buttonStyle(.link)
         }
+    }
+}
+
+/// An agent to start: all of them the same size and weight, since none of them is the default.
+private struct AgentTileLabel: View {
+    let name: String
+    let symbol: String
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(hovering ? .primary : .secondary)
+                .frame(height: 24)
+            Text(name)
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .frame(width: 112, height: 78)
+        .background(Color.primary.opacity(hovering ? 0.1 : 0.05), in: .rect(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.primary.opacity(hovering ? 0.14 : 0.07))
+        }
+        .contentShape(.rect(cornerRadius: 12))
+        .onHover { hovering = $0 }
+        .animation(.smooth(duration: 0.12), value: hovering)
+    }
+}
+
+/// Everything else you might have come for, quietly.
+private struct StartList<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 1) { content }
+            .frame(width: 356)
+    }
+}
+
+private struct StartRow: View {
+    let title: String
+    let symbol: String
+    let shortcut: String?
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 18)
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundStyle(hovering ? .primary : .secondary)
+                Spacer(minLength: 8)
+                if let shortcut {
+                    Text(shortcut)
+                        .font(.system(size: 12).monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(Color.primary.opacity(hovering ? 0.06 : 0), in: .rect(cornerRadius: 7))
+            .contentShape(.rect(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
