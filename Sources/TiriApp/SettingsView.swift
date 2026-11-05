@@ -69,11 +69,21 @@ struct SectionPositions: PreferenceKey {
     }
 }
 
+// Written out rather than with `@Entry`, whose macro plugin ships only inside Xcode. See scripts/swift-setup.sh.
+private struct SettingsRowsStackKey: EnvironmentKey { static let defaultValue = false }
+private struct SettingsIsTightKey: EnvironmentKey { static let defaultValue = false }
+
 extension EnvironmentValues {
     /// Too narrow for a control beside its words, so it goes beneath them.
-    @Entry var settingsRowsStack = false
+    var settingsRowsStack: Bool {
+        get { self[SettingsRowsStackKey.self] }
+        set { self[SettingsRowsStackKey.self] = newValue }
+    }
     /// The panes are in a menu, which already says which one this is.
-    @Entry var settingsIsTight = false
+    var settingsIsTight: Bool {
+        get { self[SettingsIsTightKey.self] }
+        set { self[SettingsIsTightKey.self] = newValue }
+    }
 }
 
 struct SettingsView: View {
