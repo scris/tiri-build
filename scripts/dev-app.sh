@@ -75,7 +75,7 @@ start)
   rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin" "$TIRI_HOME" "$TIRI_CONFIG_HOME"
   cp "$BIN/TiriApp" "$APP/Contents/MacOS/Tiri"
   cp "$BIN/tiri" "$BIN/tiri-session" "$APP/Contents/Resources/bin/"
-  cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+  cp Resources/AppIcon.icns Resources/Assets.car "$APP/Contents/Resources/"
   for extra in Resources/remote Resources/web Resources/textmate Resources/grammars Resources/language-servers; do [ -e "$extra" ] && cp -R "$extra" "$APP/Contents/Resources/"; done
   sed "s/dev.tiri.app/dev.tiri.test.$NAME/" Resources/Info.plist > "$APP/Contents/Info.plist"
   # TIRI_DEV_SIGN_IDENTITY tries it as a release runs: signed, under the hardened runtime.
