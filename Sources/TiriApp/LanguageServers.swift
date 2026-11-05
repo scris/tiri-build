@@ -1113,6 +1113,7 @@ struct LanguageServersSection: View {
 
     @Environment(AppModel.self) private var model
     @State private var showsMore = false
+    @State private var showingWhere: Set<String> = []
 
     private typealias Entry = (definition: LanguageServerDefinition, availability: LanguageServerHub.Availability)
 
@@ -1129,9 +1130,9 @@ struct LanguageServersSection: View {
         if model.languageServers.isStarting(definition) { return "Starting…" }
         switch availability {
         case .looking: return "Looking…"
-        case .found(let path): return line(definition, "Uses \((path as NSString).abbreviatingWithTildeInPath).")
+        case .found: return definition.filesLine ?? "Ready when you open one of its files."
         case .needsTrust: return line(definition, "Only inside this project. Tiri asks before running it.")
-        case .wontStart(let path): return "\((path as NSString).abbreviatingWithTildeInPath) stopped without answering. It may not be fully installed."
+        case .wontStart: return "It stopped without answering. It may not be fully installed."
         case .installing: return "Adding it…"
         case .missing:
             if canAdd(definition), let add = definition.addLine { return line(definition, add) }
@@ -1139,8 +1140,18 @@ struct LanguageServersSection: View {
         }
     }
 
+    /// Where it is on this Mac, when that's known.
+    private func location(_ availability: LanguageServerHub.Availability) -> String? {
+        switch availability {
+        case .found(let path), .needsTrust(let path), .wontStart(let path): (path as NSString).abbreviatingWithTildeInPath
+        default: nil
+        }
+    }
+
     @ViewBuilder private func row(_ entry: Entry) -> some View {
         let definition = entry.definition
+        let place = location(entry.availability)
+        let isShowing = showingWhere.contains(definition.id)
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(definition.language)
@@ -1148,8 +1159,27 @@ struct LanguageServersSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if isShowing, let place {
+                    Text(place)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            if place != nil {
+                Button {
+                    if isShowing { showingWhere.remove(definition.id) } else { showingWhere.insert(definition.id) }
+                } label: {
+                    Image(systemName: isShowing ? "chevron.up" : "info.circle")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(isShowing ? "Hide" : "Where it is on this Mac")
+                .accessibilityLabel(isShowing ? "Hide where it is" : "Where it is on this Mac")
+            }
             if case .installing = entry.availability {
                 ProgressView().controlSize(.small)
             } else if entry.availability.canBeInstalled {
