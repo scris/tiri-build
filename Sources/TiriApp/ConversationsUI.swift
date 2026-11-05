@@ -194,6 +194,75 @@ extension AppModel {
         return Conversations.readableTitle(conversation.title)
     }
 
+    // MARK: Conversations still going
+
+    private func agentSession(_ item: Item) -> String? {
+        if case .terminal(let spec) = item.content { return spec.sessionID }
+        return nil
+    }
+
+    /// What's been asked in this terminal, oldest first.
+    private func agentPrompts(_ id: ItemID) -> [String] {
+        var prompts = turns.filter { $0.item == id }.sorted { $0.started < $1.started }.compactMap(\.prompt)
+        if prompts.isEmpty, let latest = runtimes[id]?.prompt { prompts = [latest] }
+        return prompts
+    }
+
+    /// The same title a past conversation has, once this one has one. Until then, what was last asked.
+    func agentConversationName(_ item: Item) -> String {
+        if let asked = agentAsked[item.id], agentPrompts(item.id).count <= 1 { return asked }
+        if let session = agentSession(item), let found = conversationsLoaded?.first(where: { $0.session == session }),
+           let label = conversationLabels?[found.file]?.label, !label.isEmpty {
+            return label
+        }
+        if let title = agentTitles[item.id] { return title }
+        if let asked = runtimes[item.id]?.prompt ?? agentPrompts(item.id).last { return Conversations.readableTitle(asked) }
+        return Self.unnamedConversation
+    }
+
+    /// Worth asking about once it's said something, and again as there's more of it to go on.
+    func wantAgentTitles(_ rows: [AgentOverviewRow]) {
+        guard mayLabelConversations else { return }
+        for row in rows {
+            guard let item = anyItem(row.item) else { continue }
+            let said = agentPrompts(row.item).count
+            guard said > 0 || agentSession(item) != nil else { continue }
+            if let asked = agentTitlesAsked[row.item], said < max(asked, 1) * 3 { continue }
+            agentTitlesAsked[row.item] = said
+            agentTitlesWanted.append(row.item)
+        }
+        guard agentTitler == nil, !agentTitlesWanted.isEmpty else { return }
+        agentTitler = Task { [weak self] in
+            while let self, !self.agentTitlesWanted.isEmpty {
+                let id = self.agentTitlesWanted.removeFirst()
+                await self.titleAgent(id)
+                self.agentRowsChanged()
+            }
+            self?.agentTitler = nil
+        }
+    }
+
+    private func titleAgent(_ id: ItemID) async {
+        guard let item = anyItem(id) else { return }
+        // With a file to read, and on this Mac: the very title it'll have among past conversations.
+        if active.remote == nil, let session = agentSession(item) {
+            if conversationsLoaded?.contains(where: { $0.session == session }) != true,
+               ProcessClock.now() - lastAgentConversationLook > 60_000 {
+                lastAgentConversationLook = ProcessClock.now()
+                conversationsLoaded = await loadConversations()
+            }
+            _ = conversationLabelsLoaded()
+            if let found = conversationsLoaded?.first(where: { $0.session == session }) {
+                await label(found)
+                return
+            }
+        }
+        // Otherwise it's only just begun, or it's on a server: what's been asked is enough.
+        guard let digest = Conversations.labelDigest(agentPrompts(id).map { (you: $0, agent: "") }) else { return }
+        let title = await Task.detached(priority: .utility) { await ConversationAssistant.label(digest: digest) }.value
+        if let title, !title.isEmpty { agentTitles[id] = title }
+    }
+
     private func conversationLabelsLoaded() -> [String: (label: String, seconds: Int)]? {
         if conversationLabels == nil, let index = openConversationIndex() { conversationLabels = index.labels() }
         return conversationLabels

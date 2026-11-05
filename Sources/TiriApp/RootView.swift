@@ -316,6 +316,9 @@ struct ItemHost: NSViewRepresentable {
         private static var created = 0
         let serial: Int
         var ownsInstalledItem: (() -> Bool)?
+        /// While the sidebar moves, see `holdItemSizes`.
+        static var holdsSizes = false
+        static let sizesReleased = Notification.Name("TiriItemSizesReleased")
 
         override init(frame: NSRect) {
             Self.created += 1
@@ -324,6 +327,13 @@ struct ItemHost: NSViewRepresentable {
             wantsLayer = true
             layer?.masksToBounds = true
             autoresizesSubviews = false
+            NotificationCenter.default.addObserver(self, selector: #selector(takeNewSize), name: Self.sizesReleased, object: nil)
+        }
+
+        /// Right now, rather than whenever the window next lays out: the size is all that's been waiting.
+        @objc private func takeNewSize() {
+            layer?.backgroundColor = nil
+            installed?.frame = bounds
         }
 
         required init?(coder: NSCoder) { fatalError("unused") }
@@ -357,6 +367,13 @@ struct ItemHost: NSViewRepresentable {
 
         override func layout() {
             super.layout()
+            // Only its width: what's anything else is a real change, like a pane being rearranged.
+            if Self.holdsSizes, let installed, installed.frame.width > 0, abs(installed.frame.height - bounds.height) < 1 {
+                // What it uncovers on the way, until it fills the new width, matches a terminal.
+                layer?.backgroundColor = TerminalTheme.background(dark: AppModel.shared.effectiveDark).cgColor
+                return
+            }
+            layer?.backgroundColor = nil
             installed?.frame = bounds
         }
     }

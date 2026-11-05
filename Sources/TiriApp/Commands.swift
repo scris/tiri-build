@@ -53,10 +53,10 @@ extension AppModel {
             AppCommand(id: "promotePeekToSide", title: "Peek: Open to the Side", category: "Tabs and Splits") { $0.promotePeek(split: .right) },
             AppCommand(id: "dismissPeek", title: "Peek: Close", category: "Tabs and Splits") { $0.dismissPeek() },
             AppCommand(id: "toggleSidebar", title: "Toggle Sidebar", category: "Window") { model in
-                model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
+                model.setSidebar(visible: model.sidebarVisibility == .detailOnly)
             },
             AppCommand(id: "focusExplorer", title: "Focus on Explorer", category: "Window") { model in
-                if model.sidebarVisibility == .detailOnly { model.sidebarVisibility = .all }
+                model.setSidebar(visible: true)
                 SidebarSection.explorer.open()
                 model.fileTree.focus()
             },
@@ -669,7 +669,7 @@ enum ControlHandler {
 
         case "activity":
             return .array(model.agentOverview.map { row in
-                var entry: [String: JSONValue] = ["item": .string(row.item), "agent": .string(row.agent), "status": .string(row.status.rawValue),
+                var entry: [String: JSONValue] = ["item": .string(row.item), "agent": .string(row.agent), "name": .string(row.name), "status": .string(row.status.rawValue),
                                                   "workspace": .string(row.workspace), "files": .array(row.files.map(JSONValue.string))]
                 if let prompt = row.prompt { entry["prompt"] = .string(prompt) }
                 if let doing = row.doing { entry["doing"] = .string(doing) }
@@ -1248,6 +1248,7 @@ enum ControlHandler {
 
         case "perf":
             var object: [String: JSONValue] = ["footprintMB": .double(ProcessClock.footprintMegabytes())]
+            if let switching = model.lastSwitchMilliseconds { object["lastSwitchMs"] = .double(switching) }
             object["plugins"] = .int(model.plugins.plugins.count)
             object["pluginsOn"] = .int(model.plugins.enabled.count)
             object["pluginProcesses"] = .int(model.plugins.processes.runningCount)

@@ -107,7 +107,11 @@ final class AppModel {
     var find: FindState?
     var tabDrag: TabDragState?
     var palette: PaletteModel?
-    var sidebarVisibility: NavigationSplitViewVisibility = .all
+    var sidebarVisibility: NavigationSplitViewVisibility = .all {
+        didSet { if oldValue != sidebarVisibility { holdItemSizes() } }
+    }
+    @ObservationIgnored var lastSwitchMilliseconds: Double?
+    @ObservationIgnored private var itemSizesHeld = 0
     var peekHasKeyboard = false
     @ObservationIgnored lazy var notebookKernels = NotebookKernels(model: self)
     /// False while a privacy check for the active workspace's paths is outstanding.
@@ -142,6 +146,13 @@ final class AppModel {
     @ObservationIgnored var conversationIndexing: Task<Void, Never>?
     /// Titles the Mac's model has written, by file.
     @ObservationIgnored var conversationLabels: [String: (label: String, seconds: Int)]?
+    @ObservationIgnored var agentTitles: [ItemID: String] = [:]
+    /// What a person typed to start it, which says it better than a summary of those words, until it's moved on.
+    @ObservationIgnored var agentAsked: [ItemID: String] = [:]
+    @ObservationIgnored var agentTitlesAsked: [ItemID: Int] = [:]
+    @ObservationIgnored var agentTitlesWanted: [ItemID] = []
+    @ObservationIgnored var agentTitler: Task<Void, Never>?
+    @ObservationIgnored var lastAgentConversationLook = 0.0
     @ObservationIgnored var conversationsWantingLabels: [ConversationSummary] = []
     @ObservationIgnored var conversationLabeler: Task<Void, Never>?
     @ObservationIgnored var conversationSummarizing: Task<Void, Never>?
@@ -1043,7 +1054,7 @@ final class AppModel {
     }
 
     func revealInTree(_ path: String) {
-        if sidebarVisibility == .detailOnly { sidebarVisibility = .all }
+        setSidebar(visible: true)
         fileTree.reveal(path: path, expand: true)
     }
 
@@ -1227,8 +1238,11 @@ final class AppModel {
             self.agentRowsPending = false
             let rows = self.agentOverview
             if rows != self.agentRows { self.agentRows = rows }
+            self.wantAgentTitles(rows)
         }
     }
+
+    func agentRowsChanged() { scheduleAgentRows() }
 
     /// An agent can start or end with no report at all, like one typed at a shell without hooks.
     func startWatchingAgents() {
@@ -1386,6 +1400,8 @@ final class AppModel {
     func title(for item: Item) -> String {
         switch item.content {
         case .terminal(let spec):
+            // An agent has one name, wherever it's listed.
+            if let row = agentRows.first(where: { $0.item == item.id }) { return row.name == Self.unnamedConversation ? row.agent : row.name }
             if let title = runtimes[item.id]?.title, !title.isEmpty { return title }
             return spec.isShell ? item.defaultTitle : (spec.title ?? spec.command ?? item.defaultTitle)
         case .web:
@@ -1561,8 +1577,50 @@ final class AppModel {
 
     // MARK: Workspaces
 
+    // MARK: Moving between things
+
+    private static var motionIsWelcome: Bool { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+    func setSidebar(visible: Bool) {
+        let wanted: NavigationSplitViewVisibility = visible ? .all : .detailOnly
+        guard wanted != sidebarVisibility else { return }
+        withAnimation(Self.motionIsWelcome ? .smooth(duration: 0.22) : nil) { sidebarVisibility = wanted }
+    }
+
+    /// Terminals, editors and pages keep their size while the sidebar moves, and take the new one when
+    /// it's stopped. Resizing a terminal on every frame reflows it and signals what's running each time.
+    private func holdItemSizes() {
+        itemSizesHeld += 1
+        ItemHost.Host.holdsSizes = true
+        let held = itemSizesHeld
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak self] in
+            guard let self, self.itemSizesHeld == held else { return }
+            ItemHost.Host.holdsSizes = false
+            NotificationCenter.default.post(name: ItemHost.Host.sizesReleased, object: nil)
+        }
+    }
+
+    /// What's on screen now fades into whatever's there after this turn of the run loop, however
+    /// much of the window that changes, and whatever is rebuilt on the way there.
+    func crossfade() {
+        guard Self.motionIsWelcome, let layer = window?.contentView?.layer else { return }
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = 0.14
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(fade, forKey: "tiri.crossfade")
+    }
+
     func switchWorkspace(_ id: WorkspaceID) {
         guard id != activeID, workspaces.contains(where: { $0.id == id }) else { return }
+        let started = ProcessClock.now()
+        crossfade()
+        // Through to what's redrawn, which happens after this returns.
+        defer {
+            DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in self?.lastSwitchMilliseconds = ProcessClock.now() - started }
+            }
+        }
         // A Peek is a glance at what's in front of you. It doesn't follow you elsewhere.
         peekHasKeyboard = false
         layoutRegistry.peekFrame = nil
@@ -2001,7 +2059,11 @@ final class AppModel {
     }
 
     /// Into a running session of that agent, or a new one.
-    func askAgent(preset: TerminalPreset, prompt: String) {
+    static let unnamedConversation = "New conversation"
+
+    /// Which terminal has it, if that's known already.
+    @discardableResult
+    func askAgent(preset: TerminalPreset, prompt: String, about: String? = nil) -> ItemID? {
         let tool = preset.command.split(separator: " ").first.map(String.init) ?? preset.command
         let running = active.items.first { item in
             guard case .terminal(let spec) = item.content else { return false }
@@ -2013,9 +2075,13 @@ final class AppModel {
         if let running, let terminal = existingController(for: running.id) as? TerminalController {
             focusItem(running.id)
             terminal.send(text: prompt)
-            return
+            return running.id
         }
+        let before = Set(active.items.map(\.id))
         startTerminal(command: preset.command + " " + ShellQuote.quote(prompt), named: preset.name)
+        let started = active.items.first { !before.contains($0.id) }?.id
+        if let about, let started { agentAsked[started] = about }
+        return started
     }
 
     func openKeyboardShortcuts() { openSettings(pane: .keyboard) }

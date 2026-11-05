@@ -293,7 +293,12 @@ extension Conversations {
     /// A first prompt made fit for a list, for when there's no summary: what a URL or path points at is
     /// shorter and clearer than all of it, and people often start by pasting one.
     public static func readableTitle(_ prompt: String) -> String {
-        let line = AgentHookEvent.promptLine(prompt) ?? prompt
+        // What an agent writes for something pasted says nothing about what was asked.
+        let attachment = #"\[(Image|Pasted text|Pasted image|File)[^\]]*\]"#
+        let asked = (AgentHookEvent.promptLine(prompt) ?? prompt)
+        let line = asked.replacingOccurrences(of: attachment, with: "", options: [.regularExpression, .caseInsensitive])
+            .trimmingCharacters(in: .whitespaces)
+        if line.isEmpty, !asked.isEmpty { return asked.lowercased().contains("image") ? "Shared an image" : "Pasted something" }
         let words = line.split(whereSeparator: \.isWhitespace).map { word -> String in
             let bare = word.trimmingCharacters(in: CharacterSet(charactersIn: "'\"`‘’“”,()[]<>"))
             if bare.hasPrefix("http://") || bare.hasPrefix("https://"), let url = URL(string: bare), let host = url.host() {

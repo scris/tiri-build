@@ -448,13 +448,18 @@ struct AgentOverviewRowView: View {
     @Environment(AppModel.self) private var model
     @State private var hovering = false
 
-    /// What it just did, or what it said when it stopped, and where.
+    /// Always which agent and which workspace, in that order, and then what's happening if anything is.
     private var detail: String {
-        var parts: [String] = []
-        if !row.isInActiveWorkspace { parts.append(row.workspace) }
-        if let doing = row.doing, row.status == .working || row.message == nil { parts.append(doing) } else if let message = row.message { parts.append(message) }
-        if !row.files.isEmpty { parts.append(row.files.count == 1 ? "1 file" : "\(row.files.count) files") }
-        return parts.isEmpty ? row.agent : parts.joined(separator: " · ")
+        var parts = [row.agent, row.workspace]
+        switch row.status {
+        case .working:
+            if let doing = row.doing { parts.append(doing) }
+        case .needsInput, .done:
+            if let message = row.message { parts.append(message) }
+        default:
+            break
+        }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder private var statusIcon: some View {
@@ -473,7 +478,7 @@ struct AgentOverviewRowView: View {
                 .font(.system(size: 11))
                 .frame(width: 16, height: 16)
             VStack(alignment: .leading, spacing: 0) {
-                Text(row.prompt ?? row.title)
+                Text(row.name)
                     .font(.system(size: 12.5))
                     .lineLimit(1)
                 Text(detail)
@@ -491,7 +496,10 @@ struct AgentOverviewRowView: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { model.focusItem(row.item) }
+        .onTapGesture {
+            model.crossfade()
+            model.focusItem(row.item)
+        }
         .help(row.agent + (row.files.isEmpty ? "" : ": " + row.files.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")))
     }
 }

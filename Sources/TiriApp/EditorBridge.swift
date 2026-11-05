@@ -355,6 +355,8 @@ extension AppModel {
         var agent: String
         var symbol: String
         var title: String
+        /// What it's working on, in the same words wherever a conversation is listed.
+        var name: String
         var workspace: String
         var workspaceID: WorkspaceID
         var isInActiveWorkspace: Bool
@@ -374,7 +376,8 @@ extension AppModel {
         return sessions.sorted { (order[$0.workspace.id] ?? 0, $0.item.id) < (order[$1.workspace.id] ?? 0, $1.item.id) }.map { session in
             let runtime = runtimes[session.item.id]
             return AgentOverviewRow(item: session.item.id, agent: session.agent.title, symbol: session.agent.profile?.symbol ?? "terminal",
-                                    title: title(for: session.item), workspace: session.workspace.name, workspaceID: session.workspace.id,
+                                    title: title(for: session.item), name: agentConversationName(session.item),
+                                    workspace: session.workspace.name, workspaceID: session.workspace.id,
                                     isInActiveWorkspace: session.workspace.id == activeID, status: runtime?.status ?? .idle,
                                     prompt: runtime?.prompt ?? AgentHookEvent.promptLine(turns.last { $0.item == session.item.id }?.prompt), doing: runtime?.activity, message: runtime?.message, files: runtime?.touched ?? [],
                                     directory: EditorBridge.realPath(session.terminal.currentDirectory))

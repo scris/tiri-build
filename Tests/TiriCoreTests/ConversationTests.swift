@@ -325,4 +325,12 @@ import Testing
         index.remove(files: ["/a"])
         #expect(index.labels()["/a"] == nil)
     }
+
+    @Test func whatsPastedIsntATitle() {
+        #expect(Conversations.readableTitle("[Image #4] are these all my duty?") == "are these all my duty?")
+        #expect(Conversations.readableTitle("Look at [Pasted text #1 +20 lines] please") == "Look at please")
+        #expect(Conversations.readableTitle("[Image #1]") == "Shared an image")
+        #expect(Conversations.readableTitle("[Pasted text #1 +20 lines]") == "Pasted something")
+        #expect(Conversations.readableTitle("fix array[0] please") == "fix array[0] please")
+    }
 }
