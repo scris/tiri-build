@@ -3,6 +3,7 @@ import Observation
 import SwiftUI
 import TiriCore
 import TiriHighlight
+import UniformTypeIdentifiers
 
 /// Every action, built-in or from a plugin, in one table. Palette, shortcuts, menus and `tiri run`
 /// all read this, so a plugin's command takes the same road Tiri's own do.
@@ -28,6 +29,15 @@ final class CommandRegistry {
 
 /// What's loaded right now. Everything here comes from plugins you turned on, and all of it
 /// goes when they go.
+struct PluginBuild: Identifiable, Equatable {
+    let item: ItemID
+    var request: String?
+    var plugin: String?
+    let started: Date
+    var sawWork = false
+    var id: ItemID { item }
+}
+
 @Observable
 final class PluginHost {
     @ObservationIgnored unowned let model: AppModel
@@ -47,6 +57,12 @@ final class PluginHost {
 
     @ObservationIgnored var scanMilliseconds: Double?
     @ObservationIgnored private var pendingAlert: (alert: NSAlert, name: String)?
+    /// What an agent is writing right now. It isn't ready to be turned on, whatever's in its folder so far.
+    var builds: [PluginBuild] = []
+    /// Being imported, so not something an agent is building.
+    @ObservationIgnored private var arriving: String?
+    /// How the last import or export ended, for a test copy to read.
+    @ObservationIgnored var lastShare = ""
     @ObservationIgnored private var folderToken: FileWatchHub.Token?
     @ObservationIgnored private var rescanWork: DispatchWorkItem?
     @ObservationIgnored private var refreshTimer: Timer?
@@ -112,6 +128,13 @@ final class PluginHost {
     /// Everything plugins add is replaced in one go, so nothing's left behind when one goes.
     private func apply(_ found: [InstalledPlugin]) {
         let before = plugins
+        // A folder turning up while one build has nothing to its name yet is that build's, however it
+        // got there: an agent can make one without `tiri plugin new`, or with a `tiri` from elsewhere.
+        let newcomers = Set(found.map(\.name)).subtracting(before.map(\.name))
+        let unnamed = builds.indices.filter { builds[$0].plugin == nil }
+        if isLoaded, newcomers.count == 1, let name = newcomers.first, name != arriving, unnamed.count == 1 {
+            builds[unnamed[0]].plugin = name
+        }
         let beforeOn = Dictionary(uniqueKeysWithValues: enabled.map { ($0.name, $0.hash) })
         let oldScopes = Dictionary(uniqueKeysWithValues: enabled.map { ($0.name, Set(($0.manifest?.grammars ?? []).flatMap { [$0.scope] + ($0.injectTo ?? []) })) })
         let oldServers = Set(enabled.flatMap { PluginLibrary.servers(of: $0).map(\.id) })
@@ -350,6 +373,7 @@ final class PluginHost {
     /// agent's question can land while you're typing to it.
     func askToEnable(_ name: String) {
         guard let plugin = plugin(named: name), let manifest = plugin.manifest else { return }
+        builds.removeAll { $0.plugin == name }
         if case .broken(let why) = plugin.state {
             model.showToast(title: "\(plugin.title) can't run", detail: why, symbol: "exclamationmark.triangle", tint: .orange)
             return
@@ -457,6 +481,180 @@ final class PluginHost {
         }
         // Once its panels have closed: storage that's in use can't be deleted.
         rescan { PluginPanelStorage.remove(plugin: plugin.name) }
+    }
+
+    // MARK: Being built
+
+    func building(item: ItemID, request: String?, plugin name: String? = nil) {
+        if let index = builds.firstIndex(where: { $0.item == item && ($0.plugin == nil || $0.plugin == name) }) {
+            if let name { builds[index].plugin = name }
+            if let request { builds[index].request = request }
+        } else {
+            builds.append(PluginBuild(item: item, request: request, plugin: name, started: Date()))
+        }
+    }
+
+    /// An agent can pause and carry on, so a build only ends with its terminal, or after a good long while.
+    func agentsChanged(_ rows: [AppModel.AgentOverviewRow]) {
+        guard !builds.isEmpty else { return }
+        var next = builds
+        for index in next.indices.reversed() {
+            let age = Date().timeIntervalSince(next[index].started)
+            guard let row = rows.first(where: { $0.item == next[index].item }), age < 7200 else {
+                // Starting takes a moment.
+                if age > 20 { next.remove(at: index) }
+                continue
+            }
+            if row.status == .working || row.status == .needsInput { next[index].sawWork = true }
+        }
+        if next != builds { builds = next }
+    }
+
+    /// What's being written right now, as opposed to waiting on somebody or finished.
+    var liveBuilds: [PluginBuild] {
+        builds.filter { build in
+            guard let row = model.agentRows.first(where: { $0.item == build.item }) else { return true }
+            return row.status == .working || row.status == .needsInput || !build.sawWork
+        }
+    }
+
+    func build(of plugin: String) -> PluginBuild? { liveBuilds.first { $0.plugin == plugin } }
+
+    // MARK: Sharing
+
+    static let importableTypes: [UTType] = [UTType(filenameExtension: PluginPackage.fileExtension), UTType(filenameExtension: "vsix"), .zip, .folder].compactMap { $0 }
+
+    func chooseFileToImport() {
+        guard let window = model.window, window.attachedSheet == nil else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = Self.importableTypes
+        panel.prompt = "Import"
+        panel.message = "A .tiriplugin file, a plugin's folder, a .zip of one, or a VS Code .vsix"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                if response == .OK, let url = panel.url { self?.importPlugin(at: url) }
+            }
+        }
+    }
+
+    /// It always arrives off, and then the usual question says what it adds and runs.
+    func importPlugin(at url: URL) {
+        Task {
+            let couldNot = "Couldn't import \(url.lastPathComponent)"
+            if url.pathExtension.lowercased() == "vsix" {
+                let result = await Task.detached(priority: .userInitiated) { () -> Result<String, Error> in
+                    Result { try VSIXImporter.importFile(url.path, into: PluginLibrary.folder).name }
+                }.value
+                switch result {
+                case .success(let name):
+                    arriving = name
+                    arrived(name)
+                case .failure(let error): shareFailed(couldNot, error)
+                }
+                return
+            }
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<PluginPackage.Opened, Error> in
+                Result { try PluginPackage.open(url) }
+            }.value
+            switch result {
+            case .failure(let error):
+                shareFailed(couldNot, error)
+            case .success(let opened):
+                if let existing = plugin(named: opened.name) {
+                    if existing.hash == opened.hash {
+                        opened.discard()
+                        lastShare = "same \(opened.name)"
+                        model.showToast(title: "You already have this", detail: "\(existing.title) \(opened.version) is the same, file for file.", symbol: "checkmark.circle", tint: .secondary)
+                        return
+                    }
+                    askToReplace(existing, with: opened)
+                } else {
+                    install(opened)
+                }
+            }
+        }
+    }
+
+    private func askToReplace(_ existing: InstalledPlugin, with opened: PluginPackage.Opened) {
+        guard let window = model.window, window.attachedSheet == nil else {
+            opened.discard()
+            return
+        }
+        let alert = NSAlert()
+        let from = existing.manifest?.version ?? ""
+        alert.messageText = "Replace \(existing.title) \(from) with \(opened.version)?"
+        alert.informativeText = "The one you have goes to the Trash. The new one stays off until you've seen what it adds and runs."
+        let replace = alert.addButton(withTitle: "Replace")
+        let cancel = alert.addButton(withTitle: "Cancel")
+        replace.keyEquivalent = ""
+        cancel.keyEquivalent = "\r"
+        pendingAlert = (alert, opened.name)
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                self?.pendingAlert = nil
+                if response == .alertFirstButtonReturn { self?.install(opened) } else { opened.discard() }
+            }
+        }
+    }
+
+    private func install(_ opened: PluginPackage.Opened) {
+        arriving = opened.name
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<String, Error> in
+                defer { opened.discard() }
+                return Result { try PluginTools.install(opened) }
+            }.value
+            switch result {
+            case .success: arrived(opened.name)
+            case .failure(let error): shareFailed("Couldn't import \(opened.title)", error)
+            }
+        }
+    }
+
+    private func arrived(_ name: String) {
+        lastShare = "imported \(name)"
+        rescan { [weak self] in self?.askToEnable(name) }
+    }
+
+    private func shareFailed(_ title: String, _ error: Error) {
+        lastShare = "failed: \(error)"
+        model.showToast(title: title, detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange, duration: 12)
+    }
+
+    func chooseWhereToExport(_ name: String) {
+        guard let plugin = plugin(named: name), let window = model.window, window.attachedSheet == nil else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = PluginPackage.defaultFileName(name: plugin.name, version: plugin.manifest?.version ?? "0.0.0")
+        panel.allowedContentTypes = [UTType(filenameExtension: PluginPackage.fileExtension) ?? .data]
+        panel.prompt = "Export"
+        panel.message = "One file to hand to someone. Its settings stay here."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                if response == .OK, let url = panel.url { self?.exportPlugin(name, to: url) }
+            }
+        }
+    }
+
+    func exportPlugin(_ name: String, to file: URL) {
+        guard let plugin = plugin(named: name) else { return }
+        let folder = plugin.folder
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<PluginPackage.Exported, Error> in
+                Result { try PluginPackage.export(folder, to: file) }
+            }.value
+            switch result {
+            case .failure(let error):
+                shareFailed("Couldn't export \(plugin.title)", error)
+            case .success(let exported):
+                lastShare = "exported \(name)"
+                let left = exported.leftOut.isEmpty ? "" : " Left out, in case they hold secrets: " + exported.leftOut.joined(separator: ", ") + "."
+                model.showToast(title: "Exported \(plugin.title)", detail: file.lastPathComponent + "." + left, symbol: "square.and.arrow.up", tint: .green,
+                                actionTitle: "Show in Finder", duration: 10) { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            }
+        }
     }
 
     /// What the buttons do, for a test copy. A real answer takes a real press.

@@ -533,7 +533,10 @@ struct PluginTests {
         #expect(try parse("plugin", "validate", "x") == .local(.validate("x")))
         #expect(try parse("plugin", "new", "x", "--dir", "/d") == .local(.new(name: "x", folder: "/d")))
         #expect(try parse("plugin", "verify", "--tests") == .local(.verify(name: nil, runTests: true)))
-        #expect(try parse("plugin", "import", "a.vsix") == .local(.importVSIX(file: "a.vsix", folder: nil)))
+        #expect(try parse("plugin", "import", "a.vsix") == .local(.importFile(file: "a.vsix", folder: nil)))
+        #expect(try parse("plugin", "install", "a.tiriplugin") == .local(.importFile(file: "a.tiriplugin", folder: nil)))
+        #expect(try parse("plugin", "export", "x") == .local(.export(target: "x", to: nil)))
+        #expect(try parse("plugin", "export", "x", "--to", "/d") == .local(.export(target: "x", to: "/d")))
         #expect(asked(try parse("plugin", "post", "x.main", "hi", "{\"a\":1}"))?.args == ["name": "x.main", "event": "hi", "data": .object(["a": 1])])
         #expect(throws: CLIParser.UsageError.self) { try parse("plugin", "nonsense") }
         #expect(throws: CLIParser.UsageError.self) { try parse("plugin", "update", "x", "sidebar", "id", "not json") }

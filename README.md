@@ -316,7 +316,7 @@ Supporting one fully takes one entry in `AgentCatalog` (`Sources/TiriCore/Agents
 
 A plugin adds what a terminal can't draw: panels, file viewers, sidebar sections, status bar items, buttons above files, settings, commands and languages. Skills, hooks and MCP stay with your agent, so a plugin doesn't rebuild them, though it can carry a part for Claude Code that loads only in Tiri's terminals.
 
-You don't write them by hand. Say what you want, your agent writes and tests it, and you see what it adds and runs before turning it on. Type it into **New plugin**, under Plugins in Settings, or run **New Plugin…** from the palette or the Plugins menu: "show my pull requests in the sidebar", "open .csv files as a chart", "add a Run button above test files". A file in a language nobody here knows has a button in the bottom bar that asks your agent to add it.
+You don't write them by hand. Say what you want, your agent writes and tests it, and you see what it adds and runs before turning it on. Type it into **New plugin**, under Plugins in Settings, or run **New Plugin…** from the palette or the Plugins menu: "show my pull requests in the sidebar", "open .csv files as a chart", or "port the VS Code extension Todo Tree". A file in a language nobody here knows has a button in the bottom bar that asks your agent to add it.
 
 Your agent can also do it from the command line:
 
@@ -327,11 +327,14 @@ tiri plugin test my-thing       # its own tests
 tiri plugin enable my-thing     # asks you, on screen
 tiri plugin reload              # reads the folder again, with no restart
 tiri plugin verify [--tests]    # every plugin against this build
-tiri plugin import some.vsix    # a VS Code extension's languages and grammars
+tiri plugin export my-thing     # my-thing-1.0.0.tiriplugin, one file to hand to someone
+tiri plugin import a.tiriplugin # or a .zip, a folder, or a VS Code .vsix: it arrives off
 tiri run my-thing.hello a=b     # a plugin's commands work like any other
 ```
 
-Its commands reach the palette, the Plugins menu, shortcuts and `tiri run` with no more work. Importing a `.vsix` runs none of its code and writes down everything that didn't come across. VS Code extensions with more to them get rewritten by an agent, which reports what it dropped: Tiri doesn't run them as they are.
+To hand a plugin to someone, use Export in its menu in Settings, or `tiri plugin export`. They double-click the `.tiriplugin` file, see what it adds and runs, and turn it on. Its settings don't go with it, and neither do `.env` files.
+
+Its commands reach the palette, the Plugins menu, shortcuts and `tiri run` with no more work. To bring over a VS Code extension, give your agent its name: it finds the extension, rewrites it for Tiri, and tells you what it dropped. Tiri doesn't run extensions as they are. Importing a `.vsix` directly runs none of its code, brings its languages and grammars, and writes down everything else.
 
 **What it can do:**
 

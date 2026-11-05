@@ -147,6 +147,10 @@ extension AppModel {
             AppCommand(id: "manageLanguageServers", title: "Language Servers…", category: "Settings") { $0.openLanguageServerSettings() },
             AppCommand(id: "newPlugin", title: "New Plugin…", category: "Settings") { $0.promptForNewPlugin() },
             AppCommand(id: "managePlugins", title: "Plugins…", category: "Settings") { $0.openPluginSettings() },
+            AppCommand(id: "importPlugin", title: "Import Plugin…", category: "Settings") {
+                $0.openPluginSettings()
+                $0.plugins.chooseFileToImport()
+            },
             AppCommand(id: "reloadPlugins", title: "Reload Plugins", category: "Settings") { $0.plugins.rescan() },
             AppCommand(id: "installCommandLine", title: "Install tiri Command for Other Terminals…", category: "Settings") {
                 $0.confirmCommandLineTool(install: true)
@@ -941,6 +945,11 @@ enum ControlHandler {
                 model.settingsUI.macModelChanges += 1
                 model.updateSummarizingAll()
             case "expand": model.settingsUI.expandedAgent = try string(request, "value")
+            case "plugin-request": model.settingsUI.newPluginRequest = try string(request, "value")
+            case "plugin-ask":
+                guard let preset = model.runnableAgentPresets().first else { throw ControlFailure("No agent can run here.") }
+                model.askAgentToBuildPlugin(preset: preset, request: model.settingsUI.newPluginRequest)
+                model.settingsUI.newPluginRequest = ""
             default: throw ControlFailure("Unknown action.")
             }
             return .object(["section": .string(model.settingsUI.currentSection ?? ""),
@@ -1106,6 +1115,10 @@ enum ControlHandler {
             let reached = model.plugins.post(plugin: name, panel: target.count > 1 ? target[1] : nil, event: try string(request, "event"), data: request.args["data"] ?? .null)
             return .object(["reached": .int(reached)])
 
+        case "plugin.building":
+            model.plugins.building(item: try string(request, "item"), request: nil, plugin: try string(request, "name"))
+            return .object([:])
+
         case "dev.plugin-answer":
             // What the buttons do. In a test copy only: a real yes takes a real press.
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
@@ -1124,7 +1137,20 @@ enum ControlHandler {
 
         case "dev.plugin-question":
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
-            return .object(["question": .string(model.plugins.pendingQuestion ?? "")])
+            return .object(["question": .string(model.plugins.pendingQuestion ?? ""), "lastShare": .string(model.plugins.lastShare),
+                            "building": .array(model.plugins.liveBuilds.compactMap(\.plugin).map(JSONValue.string))])
+
+        case "dev.plugin-import":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            model.plugins.lastShare = ""
+            model.plugins.importPlugin(at: URL(fileURLWithPath: try string(request, "path")))
+            return .object([:])
+
+        case "dev.plugin-export":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            model.plugins.lastShare = ""
+            model.plugins.exportPlugin(try string(request, "name"), to: URL(fileURLWithPath: try string(request, "path")))
+            return .object([:])
 
         case "languages":
             let roots = model.active.folders.map(Git.real)

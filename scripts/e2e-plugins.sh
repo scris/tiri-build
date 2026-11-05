@@ -823,6 +823,145 @@ expect "and answers" "served by a plugin" "$CLI" diagnostics "$PROJECT/x.tirisrv
 waits "turning it off stops its server, asking and then insisting" "0" SERVERS
 lacks "and it's out of the list" "Tiri Served" "$CLI" languages
 
+# ---------------------------------------------------------------- handing one to someone
+echo "== Export and import"
+OUT="$WORK/out"
+mkdir -p "$OUT"
+"$CLI" plugin new shared-one >/dev/null
+printf 'TOKEN=abc\n' > "$PLUGINS/shared-one/.env"
+"$CLI" plugin reload >/dev/null
+expect "export says what it wrote" "shared-one-0.1.0.tiriplugin" "$CLI" plugin export shared-one --to "$OUT"
+expect "and what stayed behind" ".env" "$CLI" plugin export shared-one --to "$OUT"
+FILE="$OUT/shared-one-0.1.0.tiriplugin"
+expect "it's our own format" "tiri-package.json" unzip -Z1 "$FILE"
+lacks "the secret isn't in it" ".env" unzip -Z1 "$FILE"
+rm "$PLUGINS/shared-one/.env"
+"$CLI" plugin reload >/dev/null
+"$CLI" dev-plugin-import "$FILE" >/dev/null
+waits "the very same file changes nothing" "same shared-one" "$CLI" dev-plugin-question
+"$CLI" plugin remove shared-one >/dev/null
+waits "removing it asks" "Remove" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer yes >/dev/null
+goes "and it's gone" "shared-one" "$CLI" plugin
+
+"$CLI" dev-plugin-import "$FILE" >/dev/null
+waits "importing asks to turn it on, with what it adds" "Turn on Shared One" "$CLI" dev-plugin-question
+expect "it arrived off" "shared-one	off" "$CLI" plugin
+if [ -x "$PLUGINS/shared-one/bin/hello" ]; then ok "its programs are still programs"; else no "bin/hello lost its execute bit"; fi
+"$CLI" dev-plugin-answer yes >/dev/null
+waits "yes turns it on" "shared-one	on" "$CLI" plugin
+expect "and it runs" "Hello from shared-one" "$CLI" run shared-one.hello
+
+# A double-click in Finder is an open event, sent here to this copy and nothing else.
+"$CLI" plugin disable shared-one >/dev/null
+"$CLI" plugin remove shared-one >/dev/null
+waits "removing it asks again" "Remove" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer yes >/dev/null
+goes "gone again" "shared-one" "$CLI" plugin
+open -g -a "$APP" "$FILE"
+waits "opening the file imports it" "Turn on Shared One" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer no >/dev/null
+expect "and no leaves it off" "shared-one	off" "$CLI" plugin
+
+# A new version of something you have.
+python3 - "$PLUGINS/shared-one/.tiri-plugin/plugin.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+manifest = json.load(open(path))
+manifest["version"] = "0.2.0"
+json.dump(manifest, open(path, "w"))
+PY
+"$CLI" plugin export shared-one --to "$OUT" >/dev/null
+python3 - "$PLUGINS/shared-one/.tiri-plugin/plugin.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+manifest = json.load(open(path))
+manifest["version"] = "0.1.0"
+json.dump(manifest, open(path, "w"))
+PY
+"$CLI" plugin reload >/dev/null
+"$CLI" dev-plugin-import "$OUT/shared-one-0.2.0.tiriplugin" >/dev/null
+waits "a new version asks first" "Replace Shared One 0.1.0 with 0.2.0" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer no >/dev/null
+sleep 0.5
+expect "no keeps what's there" "0.1.0" cat "$PLUGINS/shared-one/.tiri-plugin/plugin.json"
+"$CLI" dev-plugin-import "$OUT/shared-one-0.2.0.tiriplugin" >/dev/null
+waits "asked again" "Replace Shared One" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer yes >/dev/null
+waits "yes brings it in, and asks to turn it on" "Turn on Shared One" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer no >/dev/null
+expect "the new one is there" "0.2.0" cat "$PLUGINS/shared-one/.tiri-plugin/plugin.json"
+
+"$CLI" dev-plugin-export shared-one "$OUT/from-the-app.tiriplugin" >/dev/null
+waits "the app's Export button writes the same thing" "exported shared-one" "$CLI" dev-plugin-question
+expect "with the header in it" "tiri-package.json" unzip -Z1 "$OUT/from-the-app.tiriplugin"
+
+# What someone might hand you instead.
+mkdir -p "$WORK/github"
+cp -R "$PLUGINS/shared-one" "$WORK/github/shared-one-main"
+(cd "$WORK/github" && zip -q -r "$OUT/download.zip" shared-one-main)
+"$CLI" plugin remove shared-one >/dev/null
+waits "out of the way" "Remove" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer yes >/dev/null
+goes "gone once more" "shared-one" "$CLI" plugin
+"$CLI" dev-plugin-import "$OUT/download.zip" >/dev/null
+waits "a zip from GitHub works" "Turn on Shared One" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer no >/dev/null
+"$CLI" dev-plugin-import "$PLUGINS/shared-one" >/dev/null
+waits "its own folder isn't imported over itself" "same shared-one" "$CLI" dev-plugin-question
+mkdir -p "$WORK/vsix/extension"
+printf '{ "name": "shared-lang", "version": "1.0.0", "contributes": { "languages": [{ "id": "sharedlang", "extensions": [".sharedlang"] }] } }' > "$WORK/vsix/extension/package.json"
+(cd "$WORK/vsix" && zip -q -r "$OUT/shared-lang.vsix" extension)
+"$CLI" dev-plugin-import "$OUT/shared-lang.vsix" >/dev/null
+waits "a VS Code .vsix works from the same button" "Turn on shared-lang" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer no >/dev/null
+
+# What someone might hand you to do harm.
+refused() { # name, file, words
+  "$CLI" dev-plugin-import "$2" >/dev/null
+  waits "$1" "$3" "$CLI" dev-plugin-question
+}
+printf 'not a zip' > "$OUT/junk.tiriplugin"
+refused "junk is refused" "$OUT/junk.tiriplugin" "won't open"
+HARM="$WORK/tiri-climbed-out"
+python3 - "$OUT/climb.zip" "$HARM" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("../../../../../../../../../.." + sys.argv[2], "pwned")
+    z.writestr("x/.tiri-plugin/plugin.json", '{"name":"climb","version":"1.0.0","apiVersion":1}')
+PY
+refused "a file climbing out is refused" "$OUT/climb.zip" "outside itself"
+if [ -e "$HARM" ]; then no "it got out"; else ok "and nothing got out"; fi
+python3 - "$OUT/through.zip" "$WORK" <<'PY'
+import stat, sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    link = zipfile.ZipInfo("x/way")
+    link.create_system = 3
+    link.external_attr = (stat.S_IFLNK | 0o777) << 16
+    z.writestr(link, sys.argv[2])
+    z.writestr("x/way/written-through", "pwned")
+    z.writestr("x/.tiri-plugin/plugin.json", '{"name":"through","version":"1.0.0","apiVersion":1}')
+PY
+refused "writing through a link is refused" "$OUT/through.zip" "inside a link"
+if [ -e "$WORK/written-through" ]; then no "it wrote through"; else ok "and nothing was written"; fi
+mkdir -p "$WORK/tamper"
+(cd "$WORK/tamper" && unzip -q "$FILE" && printf '#!/bin/sh\necho changed\n' > plugin/bin/hello && zip -q -r "$OUT/tampered.tiriplugin" tiri-package.json plugin)
+refused "a file changed after export is refused" "$OUT/tampered.tiriplugin" "changed after it was exported"
+"$CLI" plugin disable shared-one >/dev/null 2>&1
+rm -rf "$PLUGINS/shared-one" "$PLUGINS/shared-lang"
+"$CLI" plugin reload >/dev/null
+
+# ---------------------------------------------------------------- being written
+echo "== Being built"
+"$CLI" term --cmd "'$CLI' plugin new built-one; sleep 30" >/dev/null
+waits "made from a terminal in Tiri, it's being built" "built-one" "$CLI" dev-plugin-question
+"$CLI" plugin enable built-one >/dev/null
+waits "asking to turn it on is the end of that" "Turn on" "$CLI" dev-plugin-question
+lacks "and it isn't being built any more" "\"built-one\"" "$CLI" dev-plugin-question
+"$CLI" dev-plugin-answer no >/dev/null
+rm -rf "$PLUGINS/built-one"
+"$CLI" plugin reload >/dev/null
+
 # ---------------------------------------------------------------- what can't happen at all
 echo "== What can't happen"
 mkdir -p "$PLUGINS/fromrepo/.tiri-plugin" "$PROJECT/.tiri-plugin"

@@ -3,12 +3,15 @@ import Foundation
 /// The parts of `tiri plugin` that work on files and need no app: an agent can write and check a
 /// plugin with Tiri closed, and none of this turns anything on.
 public enum PluginTools {
+    public static let placeholderDescription = "What this adds, in one line."
+
     public enum Action: Equatable, Sendable {
         case validate(String)
         case new(name: String, folder: String?)
         case test(String)
-        case importVSIX(file: String, folder: String?)
-        case install(String)
+        /// A `.tiriplugin`, a `.zip`, a folder or a `.vsix`.
+        case importFile(file: String, folder: String?)
+        case export(target: String, to: String?)
         case verify(name: String?, runTests: Bool)
     }
 
@@ -33,16 +36,32 @@ public enum PluginTools {
         case .test(let target):
             guard let folder = locate(target, cwd: cwd) else { return Outcome(errors: "No plugin at \(target).\n", code: 1) }
             return test(folder)
-        case .importVSIX(let file, let folder):
+        case .importFile(let file, let folder):
             let parent = folder.map { URL(fileURLWithPath: CLIParser.absolute($0, cwd: cwd)) } ?? PluginLibrary.folder
+            let path = CLIParser.absolute(file, cwd: cwd)
             do {
-                let report = try VSIXImporter.importFile(CLIParser.absolute(file, cwd: cwd), into: parent)
-                return Outcome(output: report.text + askAppToLookAgain())
+                if path.lowercased().hasSuffix(".vsix") {
+                    let report = try VSIXImporter.importFile(path, into: parent)
+                    return Outcome(output: report.text + askAppToLookAgain())
+                }
+                let opened = try PluginPackage.open(URL(fileURLWithPath: path))
+                defer { opened.discard() }
+                return Outcome(output: try install(opened, into: parent) + askAppToLookAgain())
             } catch {
                 return Outcome(errors: "\(error)\n", code: 1)
             }
-        case .install(let target):
-            return install(CLIParser.absolute(target, cwd: cwd))
+        case .export(let target, let to):
+            guard let folder = locate(target, cwd: cwd) else { return Outcome(errors: "No plugin at \(target).\n", code: 1) }
+            do {
+                guard let manifest = try? PluginManifest.load(from: folder) else { return validate(folder) }
+                let name = PluginPackage.defaultFileName(name: manifest.name, version: manifest.version)
+                var file = URL(fileURLWithPath: to.map { CLIParser.absolute($0, cwd: cwd) } ?? (cwd as NSString).appendingPathComponent(name))
+                var isFolder: ObjCBool = false
+                if FileManager.default.fileExists(atPath: file.path, isDirectory: &isFolder), isFolder.boolValue { file.appendPathComponent(name) }
+                return Outcome(output: try PluginPackage.export(folder, to: file).text)
+            } catch {
+                return Outcome(errors: "\(error)\n", code: 1)
+            }
         case .verify(let name, let runTests):
             return verify(name: name, runTests: runTests)
         }
@@ -147,7 +166,7 @@ public enum PluginTools {
           "version": "0.1.0",
           "apiVersion": \(PluginManifest.currentAPI),
           "tiri": ">=\(TiriCoreVersion.string)",
-          "description": "What this adds, in one line.",
+          "description": "\(placeholderDescription)",
           "test": ["bin/test"],
           "commands": [
             { "id": "hello", "title": "Say Hello", "category": "\(name)", "exec": ["bin/hello", "${file}"] },
@@ -215,35 +234,34 @@ public enum PluginTools {
         Edit it, then: tiri plugin validate \(name), tiri plugin test \(name), tiri plugin enable \(name)
         The manifest and panel API: tiri plugin api
 
-        """ + askAppToLookAgain())
+        """ + askAppToLookAgain() + sayItsBeingBuilt(name))
     }
 
     // MARK: Install
 
-    static func install(_ source: String) -> Outcome {
-        let from = URL(fileURLWithPath: source, isDirectory: true)
-        let checked = validate(from)
-        guard checked.code == 0, let manifest = try? PluginManifest.load(from: from) else { return checked }
-        let target = PluginLibrary.folder.appendingPathComponent(manifest.name, isDirectory: true)
+    /// Checked already, by `PluginPackage.open`. Says what happened, or throws with nothing changed.
+    public static func install(_ opened: PluginPackage.Opened, into parent: URL = PluginLibrary.folder) throws -> String {
+        let target = parent.appendingPathComponent(opened.name, isDirectory: true)
         let manager = FileManager.default
-        guard from.standardizedFileURL.resolvingSymlinksInPath().path != target.standardizedFileURL.resolvingSymlinksInPath().path else {
-            return Outcome(errors: "\(manifest.name) is already there.\n", code: 1)
+        guard opened.folder.standardizedFileURL.resolvingSymlinksInPath().path != target.standardizedFileURL.resolvingSymlinksInPath().path else {
+            throw PluginPackage.Failure("\(opened.name) is already there.")
         }
+        let replacing = manager.fileExists(atPath: target.path)
         do {
-            try manager.createDirectory(at: PluginLibrary.folder, withIntermediateDirectories: true)
+            try manager.createDirectory(at: parent, withIntermediateDirectories: true)
             // A new copy beside the old, so a failed copy leaves what's there alone. What it replaces
             // goes to the Trash, since it may be someone's work.
-            let incoming = PluginLibrary.folder.appendingPathComponent(".incoming-\(manifest.name)", isDirectory: true)
+            let incoming = parent.appendingPathComponent(".incoming-\(opened.name)", isDirectory: true)
             try? manager.removeItem(at: incoming)
-            try manager.copyItem(at: from, to: incoming)
-            if manager.fileExists(atPath: target.path) {
+            try manager.copyItem(at: opened.folder, to: incoming)
+            if replacing {
                 if ProcessInfo.processInfo.environment["TIRI_HOME"] != nil { try manager.removeItem(at: target) } else { try manager.trashItem(at: target, resultingItemURL: nil) }
             }
             try manager.moveItem(at: incoming, to: target)
         } catch {
-            return Outcome(errors: "Couldn't install it: \(error)\n", code: 1)
+            throw PluginPackage.Failure("Couldn't install it: \(error)")
         }
-        return Outcome(output: "Installed \(manifest.name), and it's off. tiri plugin enable \(manifest.name) asks the person using Tiri.\n" + askAppToLookAgain())
+        return "\(replacing ? "Replaced" : "Installed") \(opened.name) \(opened.version), and it's off. tiri plugin enable \(opened.name) asks the person using Tiri.\n"
     }
 
     // MARK: Verify
@@ -284,6 +302,14 @@ public enum PluginTools {
         lines.append(appAnswered ? "Checked against Tiri \(TiriCoreVersion.string), API \(PluginManifest.currentAPI), and the running app." :
             "Checked against Tiri \(TiriCoreVersion.string), API \(PluginManifest.currentAPI). Tiri isn't running, so grammars weren't compiled and the commands they name weren't looked up.")
         return Outcome(output: lines.joined(separator: "\n") + "\n", code: failed ? 1 : 0)
+    }
+
+    /// Made from a terminal in Tiri, the page can say who's writing it, and that it isn't ready.
+    private static func sayItsBeingBuilt(_ name: String) -> String {
+        guard let item = ProcessInfo.processInfo.environment["TIRI_ITEM_ID"],
+              let client = try? ControlClient(path: TiriPaths.socket, timeout: 3) else { return "" }
+        _ = try? client.send(ControlRequest(cmd: "plugin.building", args: ["name": .string(name), "item": .string(item)]))
+        return ""
     }
 
     /// If the app is open, the new folder shows up right away. If it isn't, there's nothing to tell.

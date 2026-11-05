@@ -296,6 +296,14 @@ public enum CLIParser {
         case "dev-plugin-question":
             return request("dev.plugin-question")
 
+        case "dev-plugin-import":
+            guard args.count == 1 else { throw UsageError("usage: tiri dev-plugin-import <path>   (test copies only)") }
+            return request("dev.plugin-import", ["path": .string(args[0])])
+
+        case "dev-plugin-export":
+            guard args.count == 2 else { throw UsageError("usage: tiri dev-plugin-export <name> <file>   (test copies only)") }
+            return request("dev.plugin-export", ["name": .string(args[0]), "path": .string(args[1])])
+
         case "dev-key":
             guard args.count == 1, let code = Int(args[0]) else { throw UsageError("usage: tiri dev-key <key code>   (test copies only)") }
             return request("dev.key", ["code": .int(code)])
@@ -591,8 +599,8 @@ public enum CLIParser {
                    tiri plugin new <name> [--dir DIR]
                    tiri plugin validate <folder|name>   (what it adds and runs, without running it)
                    tiri plugin test <folder|name>
-                   tiri plugin install <folder>   (copies it in, off)
-                   tiri plugin import <file.vsix> [--dir DIR]   (a VS Code extension's languages and grammars)
+                   tiri plugin import <file> [--dir DIR]   (a .tiriplugin, a .zip, a folder or a .vsix: it arrives off)
+                   tiri plugin export <name> [--to FILE|DIR]   (one .tiriplugin file, to hand to someone)
                    tiri plugin enable <name>      (asks the person using Tiri)
                    tiri plugin disable <name> | remove <name>
                    tiri plugin reload [<name>]    (reads the folder again, with no restart)
@@ -604,6 +612,7 @@ public enum CLIParser {
             """
             var options = Options(Array(args.dropFirst()))
             let directory = try options.value("--dir")
+            let exportTo = try options.value("--to")
             let tests = options.flag("--tests")
             let subcommand = args.first ?? "list"
             func onlyName() throws -> String {
@@ -624,10 +633,10 @@ public enum CLIParser {
                 return .local(.validate(try onlyName()))
             case "test":
                 return .local(.test(try onlyName()))
-            case "install":
-                return .local(.install(try onlyName()))
-            case "import":
-                return .local(.importVSIX(file: try onlyName(), folder: directory))
+            case "install", "import":
+                return .local(.importFile(file: try onlyName(), folder: directory))
+            case "export":
+                return .local(.export(target: try onlyName(), to: exportTo))
             case "verify":
                 let name = options.positional()
                 try options.finish()
@@ -1076,7 +1085,8 @@ public enum AgentGuide {
     tiri plugin test my-thing             # its own tests
     tiri plugin enable my-thing           # asks the person. You can't turn one on yourself
     tiri plugin reload                    # after editing. Any change needs their yes again
-    tiri plugin import some.vsix          # a VS Code extension's languages and grammars
+    tiri plugin import some.tiriplugin    # someone's plugin, or a .zip, a folder, or a VS Code .vsix
+    tiri plugin export my-thing           # my-thing-1.0.0.tiriplugin, to hand to someone
     tiri run my-thing.hello name=value    # a plugin's commands work like any other
     ```
 

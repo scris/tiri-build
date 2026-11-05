@@ -2,26 +2,63 @@ import AppKit
 import SwiftUI
 import TiriCore
 import TiriHighlight
+import UniformTypeIdentifiers
 
 // MARK: - In Settings
 
 /// How to get a plugin, and what you've got. Turning one on always asks.
 struct PluginsSection: View {
     @Environment(AppModel.self) private var model
+    @State private var isDropping = false
 
     var body: some View {
         let host = model.plugins
         let _ = host.revision
         VStack(alignment: .leading, spacing: 28) {
             NewPluginSection()
-            if !host.plugins.isEmpty {
-                SettingsGroup("Installed") {
-                    SettingsCard {
-                        ForEach(Array(host.plugins.enumerated()), id: \.element.id) { index, plugin in
-                            if index > 0 { SettingsRowDivider() }
+            SettingsGroup("Installed") {
+                Button("Import…") { host.chooseFileToImport() }
+                    .controlSize(.small)
+                    .help("A .tiriplugin file, a plugin's folder, a .zip of one, or a VS Code .vsix")
+            } content: {
+                SettingsCard {
+                    let waiting = host.liveBuilds.filter { build in build.plugin.map { host.plugin(named: $0) == nil } ?? true }
+                    ForEach(Array(waiting.enumerated()), id: \.element.id) { index, build in
+                        if index > 0 { SettingsRowDivider() }
+                        PluginBuildRow(title: build.request ?? build.plugin ?? "A new plugin", symbol: "puzzlepiece.extension", item: build.item)
+                    }
+                    if !waiting.isEmpty, !host.plugins.isEmpty { SettingsRowDivider() }
+                    if host.plugins.isEmpty, waiting.isEmpty {
+                        Text("None yet. Make one above, or drop a .tiriplugin file here.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 12)
+                    }
+                    ForEach(Array(host.plugins.enumerated()), id: \.element.id) { index, plugin in
+                        if index > 0 { SettingsRowDivider() }
+                        if let build = host.build(of: plugin.name) {
+                            PluginBuildRow(title: build.request ?? plugin.title, symbol: plugin.manifest?.panels?.first?.symbol ?? "puzzlepiece.extension", item: build.item)
+                        } else {
                             PluginRow(plugin: plugin)
                         }
                     }
+                }
+                .overlay {
+                    if isDropping {
+                        RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor, lineWidth: 2)
+                    }
+                }
+                .onDrop(of: [UTType.fileURL], isTargeted: $isDropping) { providers in
+                    guard let provider = providers.first else { return false }
+                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                        guard let url else { return }
+                        DispatchQueue.main.async {
+                            MainActor.assumeIsolated { AppModel.shared.plugins.importPlugin(at: url) }
+                        }
+                    }
+                    return true
                 }
             }
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -47,17 +84,20 @@ struct NewPluginSection: View {
 
     private struct Example: Identifiable {
         let kind: PluginMiniature.Kind
-        let request: String
-        var id: String { request }
+        let caption: String
+        /// What goes in the box. Without it, the caption's words do.
+        var start: String?
+        var request: String { start ?? caption }
+        var id: String { caption }
     }
 
     private static let examples = [
-        Example(kind: .sidebar, request: "Show my pull requests in the sidebar"),
-        Example(kind: .viewer, request: "Open .csv files as a chart"),
-        Example(kind: .panel, request: "Keep LeetCode problems beside my agent"),
-        Example(kind: .button, request: "Add a Run button above test files"),
-        Example(kind: .status, request: "Show today's token usage in the bottom bar"),
-        Example(kind: .language, request: "Add colors for a language Tiri doesn't know"),
+        Example(kind: .port, caption: "Port a VS Code extension by name", start: "Port the VS Code extension "),
+        Example(kind: .sidebar, caption: "Show my pull requests in the sidebar"),
+        Example(kind: .viewer, caption: "Open .csv files as a chart"),
+        Example(kind: .button, caption: "Add a Run button above test files"),
+        Example(kind: .status, caption: "Show today's token usage in the bottom bar"),
+        Example(kind: .language, caption: "Add colors for a language Tiri doesn't know"),
     ]
 
     private var trimmed: String { model.settingsUI.newPluginRequest.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -103,9 +143,14 @@ struct NewPluginSection: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 18, alignment: .top)], alignment: .leading, spacing: 18) {
                 ForEach(Self.examples) { example in
-                    MiniatureButton(kind: example.kind, request: example.request, isChosen: trimmed == example.request) {
+                    MiniatureButton(kind: example.kind, caption: example.caption, isChosen: trimmed == example.request.trimmingCharacters(in: .whitespaces)) {
                         ui.newPluginRequest = example.request
                         typing = true
+                        // Focus selects what's in a field, and the next key would replace it.
+                        DispatchQueue.main.async {
+                            guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return }
+                            editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+                        }
                     }
                 }
             }
@@ -140,7 +185,7 @@ struct NewPluginSection: View {
 
     private func ask(_ preset: TerminalPreset) {
         guard !trimmed.isEmpty else { return }
-        model.askAgent(preset: preset, prompt: AppModel.newPluginPrompt(trimmed))
+        model.askAgentToBuildPlugin(preset: preset, request: trimmed)
         model.settingsUI.newPluginRequest = ""
     }
 }
@@ -196,7 +241,7 @@ struct PluginSettingsGroup: View {
 /// A place a plugin can go, and the request that puts something there.
 private struct MiniatureButton: View {
     let kind: PluginMiniature.Kind
-    let request: String
+    let caption: String
     let isChosen: Bool
     let action: () -> Void
     @State private var hovering = false
@@ -209,7 +254,7 @@ private struct MiniatureButton: View {
                         RoundedRectangle(cornerRadius: 8)
                             .strokeBorder(isChosen ? Color.accentColor : Color.primary.opacity(hovering ? 0.32 : 0.13), lineWidth: isChosen ? 2 : 1)
                     }
-                Text(request)
+                Text(caption)
                     .font(.system(size: 12))
                     .foregroundStyle(hovering || isChosen ? .primary : .secondary)
                     .multilineTextAlignment(.leading)
@@ -227,7 +272,7 @@ private struct MiniatureButton: View {
 /// Tiri itself, very small, with what a plugin would add in your accent color. Its parts are where
 /// they are in the real window, so it says where a plugin goes without any words.
 struct PluginMiniature: View {
-    enum Kind { case sidebar, viewer, panel, button, status, language }
+    enum Kind { case port, sidebar, viewer, button, status, language }
     let kind: Kind
 
     private static let aspect: CGFloat = 1.6
@@ -298,15 +343,24 @@ struct PluginMiniature: View {
                 bar(x, floor - h * height, width, h * height, accent, radius: 1.5)
             }
             bar(main, floor + 1.5, room, 0.75, ink, radius: 0)
-        case .panel:
-            files(4)
+        case .port:
+            // A whole extension's worth: a list, a page and a status item, all arriving at once.
+            files(2)
             let split = side + (w - side) * 0.44
             text(from: top + h * 0.06, count: 6, x: side + w * 0.035, width: split - side - w * 0.06)
+            let start = bottom - gap * 3.6
+            bar(0, start - gap * 0.4, side, bottom - start + gap * 0.4, accent.opacity(0.16), radius: 0)
+            for index in 0..<3 {
+                bar(w * 0.04, start + CGFloat(index) * gap, side * [0.72, 0.58, 0.66][index], row, accent)
+            }
             let area = CGRect(x: split, y: top, width: w - split, height: bottom - top)
             c.fill(Path(area), with: .color(accent.opacity(0.16)))
             bar(split, top, 1, bottom - top, accent, radius: 0)
             bar(split + w * 0.035, top + h * 0.06, area.width * 0.55, row * 1.3, accent)
             text(from: top + h * 0.06 + gap * 1.25, count: 4, x: split + w * 0.035, width: area.width * 0.78, color: accent.opacity(0.55))
+            bar(side, bottom, w - side, h - bottom, accent.opacity(0.16), radius: 0)
+            let pill = CGRect(x: w * 0.72, y: bottom + (h - bottom) * 0.28, width: w * 0.23, height: (h - bottom) * 0.44)
+            c.fill(Path(roundedRect: pill, cornerRadius: pill.height / 2), with: .color(accent))
         case .button:
             files(4)
             let strip = top + h * 0.13
@@ -361,6 +415,12 @@ extension AppModel {
         "Write me a Tiri plugin: \(request). Read `tiri plugin api` first. Make it with `tiri plugin new`, check it with `tiri plugin validate` and `tiri plugin test`, and then ask me to turn it on with `tiri plugin enable`. Tell me plainly what it adds and what it runs."
     }
 
+    func askAgentToBuildPlugin(preset: TerminalPreset, request: String) {
+        if let item = askAgent(preset: preset, prompt: Self.newPluginPrompt(request), about: request) {
+            plugins.building(item: item, request: request)
+        }
+    }
+
     /// From the palette or the menu: one line, and it's with your agent.
     func promptForNewPlugin() {
         guard let preset = runnableAgentPresets().first ?? firstAgentPreset else {
@@ -370,8 +430,38 @@ extension AppModel {
         openPrompt(title: "What should the plugin do? \(preset.name) will write it, and you'll turn it on.", initial: "") { [weak self] text in
             let request = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !request.isEmpty else { return }
-            self?.askAgent(preset: preset, prompt: Self.newPluginPrompt(request))
+            self?.askAgentToBuildPlugin(preset: preset, request: request)
         }
+    }
+}
+
+/// Something an agent is still writing. There's nothing to turn on yet, only somewhere to go and watch.
+struct PluginBuildRow: View {
+    let title: String
+    let symbol: String
+    let item: ItemID
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let row = model.agentRows.first { $0.item == item }
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 26, height: 26)
+                .background(Color.accentColor.opacity(0.16), in: .rect(cornerRadius: 7))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .lineLimit(1)
+                Text(row?.status == .needsInput ? "\(row?.agent ?? "Your agent") needs you" : "\(row?.agent ?? "Your agent") is building this")
+                    .font(.caption)
+                    .foregroundStyle(row?.status == .needsInput ? Color.orange : .secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Show") { model.focusItem(item) }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
     }
 }
 
@@ -403,7 +493,7 @@ struct PluginRow: View {
                             Text(version).font(.caption).foregroundStyle(.tertiary)
                         }
                     }
-                    if let description = plugin.manifest?.description {
+                    if let description = plugin.manifest?.description, description != PluginTools.placeholderDescription {
                         Text(description)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -425,6 +515,18 @@ struct PluginRow: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help(showsDetail ? "Hide" : "What it adds and runs")
+                Menu {
+                    actions
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .foregroundStyle(.secondary)
+                .help("Export, Show in Finder, Show Log, Remove")
+                .accessibilityLabel("More for \(plugin.title)")
                 if case .changed = plugin.state {
                     Button("Review…") { model.plugins.askToEnable(plugin.name) }
                         .controlSize(.small)
@@ -465,12 +567,17 @@ struct PluginRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .contentShape(Rectangle())
-        .contextMenu {
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([plugin.folder]) }
-            Button("Show Log") { model.plugins.showLog(plugin.name) }
-            Divider()
-            Button("Remove…") { model.plugins.askToRemove(plugin.name) }
-        }
+        .contextMenu { actions }
+    }
+
+    @ViewBuilder private var actions: some View {
+        Button("Export…") { model.plugins.chooseWhereToExport(plugin.name) }
+            .disabled(isBroken)
+        Divider()
+        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([plugin.folder]) }
+        Button("Show Log") { model.plugins.showLog(plugin.name) }
+        Divider()
+        Button("Remove…", role: .destructive) { model.plugins.askToRemove(plugin.name) }
     }
 
     private var isBroken: Bool {

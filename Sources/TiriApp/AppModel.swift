@@ -1239,6 +1239,7 @@ final class AppModel {
             let rows = self.agentOverview
             if rows != self.agentRows { self.agentRows = rows }
             self.wantAgentTitles(rows)
+            self.plugins.agentsChanged(rows)
         }
     }
 
@@ -1843,6 +1844,11 @@ final class AppModel {
     func handleExternalOpen(_ url: URL) {
         if url.pathExtension == "code-workspace" {
             importWorkspace(url: url)
+            return
+        }
+        if url.pathExtension.lowercased() == PluginPackage.fileExtension {
+            openPluginSettings()
+            plugins.importPlugin(at: url)
             return
         }
         var isDirectory: ObjCBool = false

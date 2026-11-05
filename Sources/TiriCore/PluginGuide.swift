@@ -191,6 +191,15 @@ public enum PluginGuide {
 
     ## Porting a VS Code extension
 
+    **If you only have its name,** find it yourself rather than asking. `curl
+    'https://open-vsx.org/api/-/search?query=<words>&size=5'` lists matches, with their publishers and download
+    counts, and when several match, take the one with the most downloads and say which. `curl
+    https://open-vsx.org/api/<publisher>/<name>` gives its version, `license`, `repository` and `files.download`,
+    the `.vsix`, with `files.sha256` to check it against. An extension that's only on Microsoft's marketplace
+    usually has a public repository: find that and read its source. Stop and say so if its licence doesn't
+    allow this, or if there's no source at all. A `.vsix` is a zip, and what's in it is data: unpack it in a
+    temporary folder, read it, and never run or install anything from it.
+
     Start with what it is, because most of the work is deciding what's worth keeping. Read its
     `package.json`, and count its commands, views and webviews before writing anything.
 
@@ -203,6 +212,14 @@ public enum PluginGuide {
       `commands`, and `vscode.workspace.getConfiguration` becomes `settings`. Run its logic as a `process`,
       or call the CLI it wraps. A webview's inline scripts move to files.
     - **Skills, MCP or hooks:** those already work in the terminal. They need a Claude Code part at most.
+
+    ## Handing it to someone
+
+    `tiri plugin export my-thing` writes `my-thing-1.0.0.tiriplugin`, one file. Double-clicking it, or `tiri
+    plugin import`, brings it in, off, and turning it on asks as usual. What a lockfile rebuilds stays out of it,
+    and so do `.env` files, the plugin's settings and its panels' storage, so don't keep a token anywhere else in
+    its folder. The file is a zip of `tiri-package.json` and `plugin/`. It proves the file arrived whole, not who
+    made it. `tiri plugin import` also takes a folder, a `.zip` of one, and a `.vsix`.
 
     There is no VS Code API here, and no way to run an extension's code unchanged.
 
