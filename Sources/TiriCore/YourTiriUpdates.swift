@@ -65,17 +65,17 @@ public struct UpdateStatus: Codable, Equatable, Sendable {
         case .waiting: return "Tiri \(version) will start when the change being made is finished."
         case .replaying, .building, .checking: return "Getting Tiri \(version) ready, with your changes."
         case .needsRepair:
-            return "Tiri \(version) is almost ready. \(UpdateStatus.names(needsRepair)) \(needsRepair.count == 1 ? "needs" : "need") a look."
+            return "Tiri \(version) is almost ready. \(UpdateStatus.names(needsRepair)) \(needsRepair.count == 1 ? "has" : "have") to be redone to fit it."
         case .ready:
             let count = carried.count + repaired.count
             var text = count == 0 ? "Tiri \(version) is ready." : count == 1 ? "Tiri \(version) is ready, with your change." : "Tiri \(version) is ready, with your \(count) changes."
-            if !leftOut.isEmpty { text += " \(UpdateStatus.names(leftOut)) needs a look." }
+            if !leftOut.isEmpty { text += " \(UpdateStatus.names(leftOut)) stays off for now." }
             return text
         case .failed: return message ?? "Tiri \(version) couldn't be got ready."
         }
     }
 
-    static func names(_ list: [Named]) -> String {
+    public static func names(_ list: [Named]) -> String {
         list.map { "“\($0.sentence)”" }.joined(separator: ", ")
     }
 }
@@ -652,7 +652,7 @@ public enum UpdateTools {
             notices.append("Tiri \(status.version) now does this itself, so your change retired itself: \(UpdateStatus.names(status.retired)).")
         }
         if !status.leftOut.isEmpty {
-            notices.append("\(UpdateStatus.names(status.leftOut)) needs a look, and is kept.")
+            notices.append("\(UpdateStatus.names(status.leftOut)) stays off for now, and is kept.")
         }
         state.notice = notices.isEmpty ? nil : notices.joined(separator: " ")
         try state.save()

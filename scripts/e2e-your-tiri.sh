@@ -45,7 +45,7 @@ make_change() { # sentence, text the version line gains
 }
 
 echo "--- someone who has never used this"
-lacks "no pane in Settings" yourTiri where
+expect "Settings shows what this is" yourTiri where
 expect "the entries are there" '"offers" : true' where
 expect "it can tell this Mac has Swift" '"swiftTools" : true' where
 if [ ! -e "$Y/state.json" ]; then ok "no state file"; else no "a state file exists already"; fi

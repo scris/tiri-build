@@ -1295,7 +1295,7 @@ extension AppModel {
 
     var statusBarHasContent: Bool {
         _ = controllerRevision
-        return barHasRepositories || languageHasNews || active.remote != nil || !plugins.statusItems.isEmpty || unknownLanguageExtension != nil
+        return yourTiri.waiting != nil || barHasRepositories || languageHasNews || active.remote != nil || !plugins.statusItems.isEmpty || unknownLanguageExtension != nil
     }
 }
 

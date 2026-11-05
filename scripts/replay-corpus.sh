@@ -14,11 +14,15 @@ cleanup() { git -C "$REPO" worktree remove --force "$TREE" >/dev/null 2>&1 || tr
 trap cleanup EXIT
 git -C "$REPO" worktree add -q --detach "$TREE" "$COMMIT"
 cd "$TREE"
-git config user.name corpus; git config user.email corpus@localhost; git config commit.gpgsign false
+# In the environment, never with `git config`: a worktree shares its config with the repository it came from,
+# and that would put this name on someone's own commits from then on.
+export GIT_AUTHOR_NAME=corpus GIT_AUTHOR_EMAIL=corpus@localhost GIT_COMMITTER_NAME=corpus GIT_COMMITTER_EMAIL=corpus@localhost
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false
 if [ -n "${TIRI_MERGE_TOOL:-}" ]; then
-  git config merge.mergiraf.name mergiraf
-  git config merge.mergiraf.driver "\"$TIRI_MERGE_TOOL\" merge --git %O %A %B -s %S -x %X -y %Y -p %P -l %L"
-  echo '*.swift merge=mergiraf' >> .git/info/attributes 2>/dev/null || echo '*.swift merge=mergiraf' >> "$(git rev-parse --git-path info/attributes)"
+  export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_1=merge.mergiraf.driver
+  export GIT_CONFIG_VALUE_1="\"$TIRI_MERGE_TOOL\" merge --git %O %A %B -s %S -x %X -y %Y -p %P -l %L"
+  echo '*.swift merge=mergiraf' > "$WORK/attributes"
+  export GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_2=core.attributesFile GIT_CONFIG_VALUE_2="$WORK/attributes"
 fi
 failed=0
 for patch in "$REPO"/Tests/personal-changes/*.patch; do

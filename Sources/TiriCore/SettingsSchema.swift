@@ -135,7 +135,7 @@ public enum SettingsSchema {
               note: "Takes a snapshot when an agent starts and stops. They stay in Tiri's folder for a week, and nothing changes in your repository.",
               kind: .toggle, value: { .bool($0.perTurnDiffs) }),
         .init(key: "change.offer", pane: .general, group: "Your Tiri", title: "Offer to change Tiri",
-              explanation: "Change This… in right-click menus, and asking an agent when a search finds nothing.",
+              explanation: "Change Tiri in the menus and on the start screen, and asking an agent when a search finds nothing.",
               note: "Off, none of it appears anywhere, now or in later versions.",
               kind: .toggle, value: { .bool($0.changeEntries) }),
         .init(key: "terminal.keepRunning", pane: .agents, group: "When Tiri Quits", title: "Keep terminals running",

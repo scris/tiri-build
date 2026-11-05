@@ -199,7 +199,7 @@ extension AppModel {
         var list = commands.list
         // Off means nowhere, and these are only for people with something to change them with.
         if !yourTiri.entriesAreOn { list.removeAll { $0.id == "changeTiri" } }
-        if !yourTiri.isUsed { list.removeAll { $0.id == "showYourTiri" } }
+        if !yourTiri.isUsed && !yourTiri.entriesAreOn { list.removeAll { $0.id == "showYourTiri" } }
         for preset in settings.activePresets where !preset.command.isEmpty {
             list.append(AppCommand(id: "newTerminal:\(preset.name)", title: "New Terminal: \(preset.name)", category: "Terminal") {
                 $0.startTerminal(command: preset.command)
@@ -959,6 +959,11 @@ enum ControlHandler {
                 yours.setChange(change, on: !change.isOn)
             case "update": DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { yours.applyUpdate() }
             case "repairs": yours.answerRepairs(value == "yes")
+            case "marking": yours.beginMarking(query: value ?? "")
+            case "mark":
+                let numbers = (value ?? "").split(separator: ",").compactMap { Double($0) }
+                guard numbers.count == 4 else { throw ControlFailure("x,y,width,height") }
+                yours.finishMarking(CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3]))
             case "unfold": UserDefaults.standard.set(true, forKey: "YourTiri.open.\(value ?? "")")
             case "where": break
             default: throw ControlFailure("Unknown action.")

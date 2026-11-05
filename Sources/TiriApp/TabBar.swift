@@ -271,7 +271,6 @@ struct TabContextMenu: View {
             Divider()
             Button("Restart") { (model.existingController(for: item.id) as? TerminalController)?.restart() }
         }
-        ChangeThisItem(surface: "a tab in the tab bar (Sources/TiriApp/TabBar.swift)")
     }
 }
 

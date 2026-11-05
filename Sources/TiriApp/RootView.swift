@@ -440,6 +440,9 @@ struct EmptyGroupView: View {
                         StartRow(title: "Past Conversations", symbol: "clock.arrow.circlepath", shortcut: model.shortcutSymbol(for: "conversations")) { model.openConversationPicker() }
                         StartRow(title: "Open a File", symbol: "doc", shortcut: model.shortcutSymbol(for: "quickOpen")) { model.run("quickOpen") }
                         StartRow(title: "New Terminal", symbol: "terminal", shortcut: model.shortcutSymbol(for: "newTerminal")) { model.run("newTerminal") }
+                        if model.yourTiri.entriesAreOn {
+                            StartRow(title: "Change Tiri", symbol: "wand.and.stars", shortcut: nil) { model.yourTiri.beginChange(surface: nil) }
+                        }
                         StartRow(title: "All Commands", symbol: "command", shortcut: model.shortcutSymbol(for: "commandPalette")) { model.run("commandPalette") }
                     }
                 }
@@ -449,7 +452,6 @@ struct EmptyGroupView: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button("New Terminal") { model.startTerminal() }
-            ChangeThisItem(surface: "the start screen (Sources/TiriApp/RootView.swift)")
         }
         // Coming back from installing an agent should show it without a relaunch.
         .onAppear { model.refreshAvailableCommands() }
@@ -540,6 +542,9 @@ struct EmptyGroupView: View {
                 StartRow(title: "Shell", symbol: "terminal", shortcut: model.shortcutSymbol(for: "newTerminal")) { model.startTerminal() }
                 StartRow(title: "Open a Folder", symbol: "folder", shortcut: nil) { model.chooseFolderForActiveWorkspace { _ in } }
                 StartRow(title: "Connect to a Server", symbol: "server.rack", shortcut: nil) { model.connectToServerInteractive() }
+                if model.yourTiri.entriesAreOn {
+                    StartRow(title: "Change Tiri", symbol: "wand.and.stars", shortcut: nil) { model.yourTiri.beginChange(surface: nil) }
+                }
             }
         }
     }
@@ -1113,6 +1118,7 @@ struct ChromeOverlays: View {
         .padding(.top, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .overlay(alignment: .bottomTrailing) { ToastStack() }
+        .overlay { if model.yourTiri.isMarking { ChangeMarkingOverlay().ignoresSafeArea() } }
     }
 }
 

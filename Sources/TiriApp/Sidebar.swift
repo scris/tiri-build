@@ -319,7 +319,6 @@ struct WorkspaceRow: View {
             Button("Rename…") { model.promptRenameWorkspace(workspace.id) }
             Divider()
             Button("Delete…", role: .destructive) { model.confirmDeleteWorkspace(workspace.id) }
-            ChangeThisItem(surface: "a workspace in the sidebar (Sources/TiriApp/Sidebar.swift)")
         }
         .help(workspace.folders.map { model.prettyPath($0) }.joined(separator: "\n"))
     }

@@ -14,7 +14,7 @@ struct ReadyCard: View {
         case false?: parts.append("check failed")
         case nil: break
         }
-        return parts.joined(separator: ", ")
+        return parts.joined(separator: ", ") + ". Tiri reopens with this, and your agents keep running."
     }
 
     var body: some View {
@@ -22,7 +22,7 @@ struct ReadyCard: View {
             Button("Not Now") { model.yourTiri.notNow() }
                 .controlSize(.regular)
             if copy.change != nil, copy.kind == .change {
-                Button("Show Diff") { model.yourTiri.showDiff(of: copy) }
+                Button("See What Changed") { model.yourTiri.showDiff(of: copy) }
                     .controlSize(.regular)
             }
             Button("Try It") { model.yourTiri.tryReady() }
@@ -32,18 +32,35 @@ struct ReadyCard: View {
     }
 }
 
-/// For the ten minutes after a switch. Back loses nothing.
+/// While the agent works, because what's on this tab is otherwise a stranger's terminal.
+struct MakingCard: View {
+    let draft: ChangeDraft
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let row = draft.item.flatMap { item in model.agentRows.first { $0.item == item } }
+        let agent = row?.agent ?? "Your agent"
+        CardShell(symbol: "hammer", title: "\(agent) is rewriting Tiri", sentence: draft.sentence,
+                  detail: row?.status == .needsInput ? "It needs you, below." : "This takes a few minutes, and Tiri says when it's ready.") {
+            Button("Keep Working") { model.yourTiri.keepWorking() }
+                .controlSize(.regular)
+        }
+    }
+}
+
+/// For the ten minutes after a switch. Going back loses nothing.
 struct TrialCard: View {
     let trial: CopyState.Trial
     @Environment(AppModel.self) private var model
 
     private var detail: String {
-        trial.firstPersonal ? "macOS may ask about your folders once more, for this copy, and then not again." : "Keeps itself after ten minutes."
+        let keeps = "Keep it, or go back to how it was. It keeps itself after ten minutes."
+        return trial.firstPersonal ? keeps + " macOS may ask about your folders once more." : keeps
     }
 
     var body: some View {
         CardShell(symbol: "checkmark.circle", title: "You're trying this", sentence: trial.sentence, detail: detail) {
-            Button("Back") { model.yourTiri.back() }
+            Button("Go Back") { model.yourTiri.back() }
                 .controlSize(.regular)
             Button("Keep") { model.yourTiri.keep() }
                 .buttonStyle(.borderedProminent)
@@ -110,14 +127,15 @@ struct YourTiriPane: View {
                 EmptyYourTiri()
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(yours.changes.reversed().enumerated()), id: \.element.id) { index, change in
+                    // One waiting to be tried is the row above, and isn't on yet.
+                    ForEach(Array(yours.changes.reversed().filter { $0.id != yours.ready?.change }.enumerated()), id: \.element.id) { index, change in
                         if index > 0 { Divider().opacity(0.6) }
                         PersonalChangeRow(change: change)
                     }
                 }
             }
             if yours.entriesAreOn {
-                Button("Change Something…") { yours.beginChange(surface: nil) }
+                Button("Change Tiri…") { yours.beginChange(surface: nil) }
                     .controlSize(.large)
             }
             Divider()
@@ -129,11 +147,11 @@ struct YourTiriPane: View {
 }
 
 private struct EmptyYourTiri: View {
+    @Environment(AppModel.self) private var model
+
     var body: some View {
-        Text("Nothing here yet. Right-click anything in Tiri, and choose Change This.")
-            .font(.system(size: 17))
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        ChangeStory(agent: model.yourTiri.chosenAgent(from: model.runnableAgentPresets())?.name ?? "Your agent")
+            .frame(maxWidth: 620, alignment: .leading)
     }
 }
 
@@ -268,7 +286,7 @@ private struct TrialRow: View {
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Back") { model.yourTiri.back() }
+            Button("Go Back") { model.yourTiri.back() }
             Button("Keep") { model.yourTiri.keep() }
                 .buttonStyle(.borderedProminent)
         }
@@ -336,44 +354,15 @@ struct YourTiriCards: View {
                 TrialCard(trial: trial)
             } else if let copy = yours.cardForItem(item) {
                 ReadyCard(copy: copy)
+            } else if let draft = yours.makingForItem(item) {
+                MakingCard(draft: draft)
             }
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.smooth(duration: 0.25), value: yours.ready)
+        .animation(.smooth(duration: 0.25), value: yours.draft)
         .animation(.smooth(duration: 0.25), value: yours.state?.trial)
-    }
-}
-
-/// The last thing on a right-click menu. `surface` says where this was and which file it's in, for the agent.
-struct ChangeThisItem: View {
-    let surface: String
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        if model.yourTiri.entriesAreOn {
-            Divider()
-            Button("Change This…") { model.yourTiri.beginChange(surface: surface) }
-        }
-    }
-}
-
-/// For the menus that are made in AppKit, where a SwiftUI item can't go.
-@MainActor
-final class ChangeThisMenuTarget: NSObject {
-    static let shared = ChangeThisMenuTarget()
-
-    static func add(to menu: NSMenu, surface: String) {
-        guard AppModel.shared.yourTiri.entriesAreOn else { return }
-        menu.addItem(.separator())
-        let item = NSMenuItem(title: "Change This…", action: #selector(pressed), keyEquivalent: "")
-        item.target = shared
-        item.representedObject = surface
-        menu.addItem(item)
-    }
-
-    @objc private func pressed(_ sender: NSMenuItem) {
-        AppModel.shared.yourTiri.beginChange(surface: sender.representedObject as? String)
     }
 }
 
@@ -399,12 +388,12 @@ struct UpdateLine: View {
                 }
                 if update.phase == .needsRepair, yours.state?.repairsAllowed == nil, let preset = model.runnableAgentPresets().first {
                     HStack(spacing: 10) {
-                        Text("Let \(preset.name) mend your changes during updates?")
+                        Text("\(preset.name) can redo it for you, now and at future updates.")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Button("Leave Them Out") { yours.answerRepairs(false) }
-                        Button("Let It") { yours.answerRepairs(true) }
+                        Button("Skip It") { yours.answerRepairs(false) }
+                        Button("Redo It") { yours.answerRepairs(true) }
                             .buttonStyle(.borderedProminent)
                     }
                 }

@@ -17,7 +17,7 @@ different, and you're making it so. `tiri --skill` has the commands, under Chang
 
 ## What people call things
 
-These are the names a `Change This…` request uses, and the file to start from.
+These are the names people use when they ask for a change, and the file to start from.
 
 | They mean | File |
 |---|---|

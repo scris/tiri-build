@@ -177,7 +177,7 @@ final class AppModel {
     /// The app is about to come straight back, so no terminal ends, whatever the setting says.
     @ObservationIgnored var keepTerminalsThroughQuit = false
     /// Your Tiri has no place in Settings until someone has used it.
-    var settingsPanes: [SettingsPane] { SettingsPane.allCases.filter { $0 != .yourTiri || yourTiri.isUsed } }
+    var settingsPanes: [SettingsPane] { SettingsPane.allCases.filter { $0 != .yourTiri || yourTiri.isUsed || yourTiri.entriesAreOn } }
     @ObservationIgnored let commands = CommandRegistry(builtIn: AppModel.staticCommands)
     @ObservationIgnored let languageTrust = LanguageServerTrust()
     @ObservationIgnored var hoverPopover: NSPopover?

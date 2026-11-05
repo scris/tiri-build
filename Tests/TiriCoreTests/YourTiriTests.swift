@@ -302,7 +302,7 @@ import Testing
         status.carried = [.init(id: "a", sentence: "One"), .init(id: "b", sentence: "Two")]
         #expect(status.line == "Tiri 0.3 is ready, with your 2 changes.")
         status.leftOut = [.init(id: "c", sentence: "Timer on tabs")]
-        #expect(status.line.contains("“Timer on tabs” needs a look."))
+        #expect(status.line.contains("“Timer on tabs” stays off for now."))
         status.carried = []
         status.leftOut = []
         #expect(status.line == "Tiri 0.3 is ready.")

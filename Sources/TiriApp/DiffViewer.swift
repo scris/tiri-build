@@ -1388,7 +1388,6 @@ struct CommitRow: View {
         .help(commit.subject + "\n" + commit.author)
         .contextMenu {
             Button("Copy Hash") { Clipboard.copy(commit.oid) }
-            ChangeThisItem(surface: "the commit list in Changes (Sources/TiriApp/DiffViewer.swift)")
         }
     }
 }
@@ -1477,7 +1476,6 @@ struct ChangeRow: View {
             Button("Ask Agent to Undo") { model.tellAgentAboutChange(path: change.path, prompt: ChangeRequest.prompt(.undo, path: change.path, lines: nil)) }
             Divider()
             Button("Copy Path") { Clipboard.copy(change.path) }
-            ChangeThisItem(surface: "a file in the Changes list (Sources/TiriApp/DiffViewer.swift)")
         }
     }
 }

@@ -701,7 +701,6 @@ struct SettingRow: View {
         .contextMenu {
             Button("Copy Prompt About This Setting") { Clipboard.copy(SettingsSchema.agentPrompt(about: definition)) }
             Button("Reset to Default") { model.resetSetting(definition.key) }
-            ChangeThisItem(surface: "the setting \u{201C}\(definition.title)\u{201D} in Settings (Sources/TiriCore/SettingsSchema.swift)")
         }
     }
 

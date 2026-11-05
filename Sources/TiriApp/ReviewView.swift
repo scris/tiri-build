@@ -444,7 +444,6 @@ struct ReviewRow: View {
         .contextMenu {
             Button("Go to Comment") { model.openReviewComment(comment) }
             Button("Delete Comment") { model.removeReviewComment(comment.id) }
-            ChangeThisItem(surface: "a review comment in the sidebar (Sources/TiriApp/ReviewView.swift)")
         }
     }
 }

@@ -108,7 +108,10 @@ struct TiriMenus: Commands {
     }
 
     var body: some Commands {
-        CommandGroup(replacing: .appSettings) { item("openSettings") }
+        CommandGroup(replacing: .appSettings) {
+            item("openSettings")
+            if model.yourTiri.entriesAreOn { item("changeTiri") }
+        }
         CommandGroup(replacing: .newItem) {
             item("newTerminal")
             Menu("New Terminal Preset") {

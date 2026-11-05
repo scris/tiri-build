@@ -66,6 +66,10 @@ final class PaletteModel {
     var isIndexing = false
     /// Something to say instead of results.
     var note: String?
+    /// Asking for a change to Tiri: what that is, below the question.
+    var showsChangePanel = false
+    /// A prompt's rows, which never come from what's typed.
+    @ObservationIgnored private var promptRows: [Row] = []
 
     init(mode: Mode, model: AppModel, initialQuery: String = "") {
         self.mode = mode
@@ -115,7 +119,9 @@ final class PaletteModel {
         switch effectiveMode {
         case .files: refreshFiles()
         case .commands: refreshCommands()
-        case .prompt: rows = []
+        case .prompt:
+            rows = promptRows
+            selection = -1
         case .choices(_, let all): refreshChoices(all)
         case .search: refreshSearch()
         case .dynamic(_, let provider):
@@ -555,8 +561,30 @@ final class PaletteModel {
         rows[selection].preview?()
     }
 
+    func setPromptRows(_ found: [Row]) {
+        promptRows = found
+        rows = found
+        selection = -1
+    }
+
+    /// A click. In a prompt, a row is a thing of its own, and doesn't send what's been typed.
+    func activate(_ index: Int) {
+        guard rows.indices.contains(index) else { return }
+        selection = index
+        if case .prompt = mode {
+            rows[index].action(false)
+        } else {
+            submit(alternate: NSEvent.modifierFlags.contains(.command))
+        }
+    }
+
     func submit(alternate: Bool = false) {
         if case .prompt(_, let commit) = mode {
+            // Nothing typed, and arrowed down to a row.
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, rows.indices.contains(selection) {
+                rows[selection].action(alternate)
+                return
+            }
             let value = query
             model.closePalette()
             commit(value)
@@ -617,6 +645,11 @@ struct PaletteView: View {
             .padding(.horizontal, 14)
             .frame(height: 42)
 
+            if palette.showsChangePanel {
+                Divider()
+                ChangePanel(palette: palette)
+            }
+
             if palette.searchFoundNothing || palette.note != nil {
                 Divider()
                 Text(palette.note ?? "Nothing in this workspace matches.")
@@ -636,10 +669,7 @@ struct PaletteView: View {
                                     .id(row.id)
                                     .onAppear { row.appeared?() }
                                     .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        palette.selection = index
-                                        palette.submit(alternate: NSEvent.modifierFlags.contains(.command))
-                                    }
+                                    .onTapGesture { palette.activate(index) }
                             }
                         }
                         .padding(6)

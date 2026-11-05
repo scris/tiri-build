@@ -40,6 +40,7 @@ struct StatusBar: View {
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 HStack(spacing: 14) {
+                    YourTiriStatusItem()
                     PluginStatusItems()
                     UnknownLanguageStatusItem()
                     LanguageStatusItem()

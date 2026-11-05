@@ -939,7 +939,6 @@ final class TiriWebView: WKWebView, WKScriptMessageHandler {
 
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
-        ChangeThisMenuTarget.add(to: menu, surface: "the editor or a file's viewer (Sources/TiriApp/Viewers.swift, Sources/TiriApp/EditorBridge.swift)")
         guard selection != nil else { return }
         let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteFromMenu), keyEquivalent: "")
         item.target = self

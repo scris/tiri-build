@@ -4,7 +4,7 @@ A neutral, native macOS workspace for people who do their work through CLI agent
 
 Terminals, files and web previews are equal items in one tab and pane system, on this Mac or a server. Tiri has no chat, account or model of its own, and no bottom terminal panel. Your agents can drive the whole app through a local CLI.
 
-**Don't like something in Tiri? Say so. It stays yours through every update.** Right-click anything, choose Change This…, and say what you want instead. Your own agent changes Tiri's source, on your own subscription, and you try the result with one click. [More below](#your-tiri).
+**Don't like something in Tiri? Say so. It stays yours through every update.** Choose Change Tiri…, and say what you want instead. Your own agent changes Tiri's source, on your own subscription, and you try the result with one click. [More below](#your-tiri).
 
 ## Build and run
 
@@ -353,11 +353,11 @@ Its commands reach the palette, the Plugins menu, shortcuts and `tiri run` with 
 
 ## Your Tiri
 
-Tiri can be changed the way it was made: by asking. Right-click anything and choose **Change This…**, or ask when the command palette or a settings search finds nothing, or just tell any agent in a Tiri terminal. Say what you want different, press Return, and your agent starts in a tab of its own, in a workspace called Your Tiri holding the exact source of the version you're running. You watch it in Tiri's own file tree and Changes.
+Tiri can be changed the way it was made: by asking. Choose **Change Tiri…** from the Tiri menu, the command palette or the start screen, or ask when the palette or a settings search finds nothing, or just tell any agent in a Tiri terminal. You can drag a box around the part you mean, so your agent can see it. Say what you want different, press Return, and your agent starts in a tab of its own, in a workspace called Your Tiri holding the exact source of the version you're running. You watch it in Tiri's own file tree and Changes.
 
 When it's done, a card on its tab says what it did and how big it is, with **Try It**. Tiri closes and opens again in about half a second, with everything still running, including the agent that made the change, now running inside what it made. For ten minutes the card says **Keep** and **Back**, and Back is one click and loses nothing.
 
-Settings has a **Your Tiri** pane once you've used this: your changes as sentences in your own words, each with a switch and what it touched, and **Plain Tiri**, the app you installed. It's never altered, so it's always there. Hold ⌥ while opening Tiri to start it for one run. If a change stops Tiri from starting, Tiri goes back to the copy before it by itself, and says so.
+**Change Tiri…** also lists your changes in your own words, each with a switch, and **Plain Tiri**, the app you installed, and Settings has the same list with what each one touched. Whatever is waiting for you, like a change to try or an update, stays in the bar along the bottom. It's never altered, so it's always there. Hold ⌥ while opening Tiri to start it for one run. If a change stops Tiri from starting, Tiri goes back to the copy before it by itself, and says so.
 
 The first change takes about 1 GB of build files, in `~/Library/Application Support/Tiri/your-tiri`, and needs the Command Line Tools, which anyone running an agent already has. If you never use any of this you won't find it: there's no button, tip or tour, nothing runs, and nothing's on disk but the source inside the app, about 5 MB. **Offer to change Tiri** in Settings removes every entry.
 

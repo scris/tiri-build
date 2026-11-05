@@ -3,6 +3,28 @@ import IOKit.ps
 import SwiftUI
 import TiriCore
 
+/// Something about changes that's waiting for you, wherever you are.
+struct YourTiriWaiting {
+    struct Action: Identifiable {
+        var id: String { title }
+        let title: String
+        var isMain = false
+        let run: () -> Void
+    }
+
+    var text: String
+    var symbol = "sparkles"
+    var isBusy = false
+    var isTrouble = false
+    var actions: [Action] = []
+}
+
+/// The part of the window someone marked to say what they mean.
+struct ChangeMark {
+    let image: NSImage
+    let file: URL
+}
+
 /// Everything the app itself does about Your Tiri: pointing, the card, trying, keeping, going back.
 /// `tiri change` does the making. Switching is only here, behind a click, where an agent can't reach it.
 @Observable final class YourTiriModel {
@@ -16,6 +38,13 @@ import TiriCore
     private(set) var isUpdating = false
     /// A card you said Not now to, until another copy is ready.
     private var dismissedReady: Date?
+    /// Being dragged around right now, with the window dimmed.
+    private(set) var isMarking = false
+    private(set) var mark: ChangeMark?
+    private var chosenAgentName = UserDefaults.standard.string(forKey: "YourTiri.agent")
+    /// Where someone was when they asked, for Keep Working to go back to.
+    private var cameFrom: WorkspaceID?
+    private var hidMaking: String?
 
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var trialTimer: Timer?
@@ -23,6 +52,8 @@ import TiriCore
     @ObservationIgnored private var isResumingUpdate = false
     @ObservationIgnored private var resumedReleases: Set<String> = []
     @ObservationIgnored private var updateTimer: Timer?
+    @ObservationIgnored private var markingQuery = ""
+    @ObservationIgnored private var announcedUpdate: String?
 
     let isPersonalCopy = Bundle.main.object(forInfoDictionaryKey: YourTiri.copyKey) as? String == "personal"
 
@@ -61,6 +92,10 @@ import TiriCore
             model?.showToast(title: "Plain Tiri, for this run", detail: "Your changes are still yours. They'll be back next time.", symbol: "option", tint: .secondary,
                              actionTitle: "Back to Your Tiri", duration: 12) { [weak self] in self?.useYours() }
         }
+        if let trial = loaded.trial, model?.active.activeItem?.id != trial.item {
+            model?.showToast(title: "You're trying your change", detail: trial.sentence, symbol: "checkmark.circle", tint: .accentColor,
+                             actionTitle: "Go Back", duration: 15) { [weak self] in self?.back() }
+        }
         if let notice {
             model?.showToast(title: "Back to a copy that starts", detail: notice, symbol: "arrow.uturn.backward", tint: .orange, duration: 20)
         }
@@ -89,6 +124,7 @@ import TiriCore
                 let wasReady = self.ready
                 (self.state, self.ready, self.draft, self.changes, self.update) = read
                 if let ready = self.ready, ready != wasReady { self.announce(ready) }
+                self.announceUpdate()
                 self.startRepairIfAllowed()
                 self.resumeWaitingUpdate()
                 self.leaveOutIfRepairsAreOff()
@@ -96,27 +132,89 @@ import TiriCore
         }
     }
 
+    /// At the moment it's ready, with the button right there. An update has its own announcement.
     private func announce(_ ready: ReadyCopy) {
         dismissedReady = nil
-        guard let model, wasBuiltJustNow(ready) else { return }
+        guard let model, ready.kind != .update, wasBuiltJustNow(ready) else { return }
         if let item = ready.item, model.active.activeItem?.id == item { return }
-        model.showToast(title: ready.kind == .update ? "An update is ready" : "Ready to try", detail: ready.sentence, symbol: "sparkles", tint: .accentColor,
-                        actionTitle: "Show", duration: 12) { [weak self] in self?.showReady() }
+        model.showToast(title: "Ready to try", detail: ready.sentence, symbol: "sparkles", tint: .accentColor,
+                        actionTitle: "Try It", duration: 15) { [weak self] in self?.tryReady() }
     }
 
     private func wasBuiltJustNow(_ ready: ReadyCopy) -> Bool { Date().timeIntervalSince(ready.builtAt) < 60 }
 
-    func showReady() {
-        guard let model else { return }
-        if let item = ready?.item, model.anyItem(item) != nil {
-            model.focusItem(item)
-        } else {
-            model.openSettings(pane: .yourTiri)
+    /// Once for each thing an update comes to need. It stays in the bar along the bottom after this.
+    private func announceUpdate() {
+        guard let model, let update, entriesOrUsed else { return }
+        let key = "\(update.newRelease)-\(update.phase)"
+        guard key != announcedUpdate else { return }
+        announcedUpdate = key
+        switch update.phase {
+        case .ready:
+            let rest = update.line.replacingOccurrences(of: "Tiri \(update.version) is ready, with", with: "With").replacingOccurrences(of: "Tiri \(update.version) is ready.", with: "")
+            model.showToast(title: "Tiri \(update.version) is ready", detail: rest.isEmpty ? nil : rest.trimmingCharacters(in: .whitespaces), symbol: "arrow.down.circle", tint: .accentColor,
+                            actionTitle: "Update", duration: 20) { [weak self] in self?.applyUpdate() }
+        case .needsRepair where state?.repairsAllowed == nil && !update.needsRepair.isEmpty:
+            model.showToast(title: "Tiri \(update.version) is out", detail: Self.redoLine(update), symbol: "arrow.down.circle", tint: .accentColor,
+                            actionTitle: "Redo It", duration: 20) { [weak self] in self?.answerRepairs(true) }
+        default: break
         }
+    }
+
+    private var entriesOrUsed: Bool { entriesAreOn || isUsed }
+
+    private static func redoLine(_ update: UpdateStatus) -> String {
+        "\(UpdateStatus.names(update.needsRepair)) \(update.needsRepair.count == 1 ? "has" : "have") to be redone to fit it."
+    }
+
+    /// What the bar along the bottom says. Nothing at all when nothing's happening.
+    var waiting: YourTiriWaiting? {
+        if let trial = state?.trial {
+            return YourTiriWaiting(text: "Trying: \(trial.sentence)", symbol: "checkmark.circle", actions: [
+                .init(title: "Go Back") { [weak self] in self?.back() },
+                .init(title: "Keep", isMain: true) { [weak self] in self?.keep() },
+            ])
+        }
+        if let ready, ready.kind != .update {
+            return YourTiriWaiting(text: "Ready to try: \(ready.sentence)", actions: [.init(title: "Try It", isMain: true) { [weak self] in self?.tryReady() }])
+        }
+        if let draft {
+            let row = draft.item.flatMap { item in model?.agentRows.first { $0.item == item } }
+            let alive = draft.item.map { model?.anyItem($0) != nil } ?? false
+            let action: YourTiriWaiting.Action = alive
+                ? .init(title: "Show") { [weak self] in if let item = draft.item { self?.model?.focusItem(item) } }
+                : .init(title: "Give Up") { [weak self] in self?.giveUp() }
+            if row?.status == .needsInput {
+                return YourTiriWaiting(text: "\(row?.agent ?? "Your agent") needs you: \(draft.sentence)", symbol: "exclamationmark.circle", isTrouble: true, actions: [action])
+            }
+            return YourTiriWaiting(text: "Changing Tiri: \(draft.sentence)", isBusy: alive, actions: [action])
+        }
+        if let update {
+            switch update.phase {
+            case .ready:
+                return YourTiriWaiting(text: update.line, symbol: "arrow.down.circle", actions: [.init(title: "Update", isMain: true) { [weak self] in self?.applyUpdate() }])
+            case .needsRepair where state?.repairsAllowed == nil:
+                let which = update.needsRepair.count == 1 ? "your change" : "\(update.needsRepair.count) of your changes"
+                return YourTiriWaiting(text: "Tiri \(update.version) is out. Redo \(which) to fit it?", symbol: "arrow.down.circle", actions: [
+                    .init(title: "Skip It") { [weak self] in self?.answerRepairs(false) },
+                    .init(title: "Redo It", isMain: true) { [weak self] in self?.answerRepairs(true) },
+                ])
+            case .needsRepair:
+                return YourTiriWaiting(text: "Redoing your change for Tiri \(update.version)", isBusy: true)
+            case .failed:
+                return YourTiriWaiting(text: update.line, symbol: "exclamationmark.triangle", isTrouble: true)
+            case .replaying, .building, .checking, .waiting:
+                return YourTiriWaiting(text: update.line, isBusy: true)
+            }
+        }
+        if !toggling.isEmpty { return YourTiriWaiting(text: "Making a copy of Tiri with that change", isBusy: true) }
+        return nil
     }
 
     var isUsed: Bool { update != nil || !changes.isEmpty || draft != nil || ready != nil || state?.active == .personal || isPersonalCopy }
     var onChanges: [PersonalChange] { changes.filter(\.isOn) }
+    /// Who hasn't seen this happen yet, and so gets shown what it is.
+    var hasNeverChanged: Bool { changes.isEmpty && !isPersonalCopy && state?.active != .personal }
 
     /// Which copy is running, in the words the list uses.
     var runningLine: String {
@@ -148,18 +246,92 @@ import TiriCore
             }
             return
         }
-        model.openPrompt(title: "What should be different?", initial: initial) { [weak self] text in
+        model.openPrompt(title: "What do you want Tiri to do differently?", initial: initial) { [weak self] text in
             let sentence = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !sentence.isEmpty else { return }
-            self?.startChange(sentence: sentence, surface: surface, preset: preset)
+            guard !sentence.isEmpty, let self, let chosen = self.chosenAgent(from: model.runnableAgentPresets()) else { return }
+            self.startChange(sentence: sentence, surface: surface, preset: chosen)
         }
-        var note = "\(preset.name) changes Tiri, and you try it first."
-        if !SourceRepo().exists {
-            note += " The first time takes about 1 GB of build files."
-            if preset.command.contains("claude") { note += " If Claude Code asks about trusting the folder, choose Yes." }
-        }
-        model.palette?.note = note
+        model.palette?.showsChangePanel = true
+        model.palette?.setPromptRows(promptRows())
     }
+
+    /// Under the question: what it could be, for someone new, and what you've got, for everyone else.
+    /// All of it can be done from here, because nobody goes to Settings to look for it.
+    private func promptRows() -> [PaletteModel.Row] {
+        guard let model else { return [] }
+        if hasNeverChanged {
+            return ["Show how long each agent has been working", "Put Changes above Explorer in the sidebar"].map { example in
+                PaletteModel.Row(id: example, title: example, symbol: "text.quote") { [weak model] _ in model?.palette?.query = example }
+            }
+        }
+        var rows = changes.reversed().map { change in
+            PaletteModel.Row(id: change.id, title: change.sentence, detail: ready?.change == change.id ? "ready to try" : change.isOn ? "on" : "off",
+                             symbol: ready?.change == change.id ? "sparkles" : change.isOn ? "checkmark.circle.fill" : "circle",
+                             button: .init(title: change.isOn ? "Turn Off" : "Turn On") { [weak self, weak model] in
+                                 model?.closePalette()
+                                 self?.setChange(change, on: !change.isOn)
+                             }) { [weak self, weak model] _ in
+                model?.closePalette()
+                self?.showDiff(of: change)
+            }
+        }
+        if isPersonalCopy {
+            rows.append(PaletteModel.Row(id: "use-plain", title: "Use Plain Tiri", detail: "as you installed it. Your changes stay", symbol: "arrow.uturn.backward") { [weak self, weak model] _ in
+                model?.closePalette()
+                self?.usePlain()
+            })
+        } else if FileManager.default.fileExists(atPath: YourTiri.current.path) {
+            rows.append(PaletteModel.Row(id: "use-yours", title: "Back to Your Tiri", symbol: "arrow.uturn.forward") { [weak self, weak model] _ in
+                model?.closePalette()
+                self?.useYours()
+            })
+        }
+        return rows
+    }
+
+    func chosenAgent(from presets: [TerminalPreset]) -> TerminalPreset? {
+        presets.first { $0.name == chosenAgentName } ?? presets.first
+    }
+
+    func chooseAgent(_ preset: TerminalPreset) {
+        chosenAgentName = preset.name
+        UserDefaults.standard.set(preset.name, forKey: "YourTiri.agent")
+    }
+
+    // MARK: Marking what you mean
+
+    func beginMarking(query: String) {
+        markingQuery = query
+        model?.closePalette(restoreFocus: false)
+        isMarking = true
+    }
+
+    func cancelMarking() {
+        isMarking = false
+        beginChange(surface: nil, initial: markingQuery)
+    }
+
+    /// Back to the question, with the part they marked beside it. The dimming has to be gone from the picture first.
+    func finishMarking(_ box: CGRect) {
+        isMarking = false
+        guard let window = model?.window else { return }
+        let query = markingQuery
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self else { return }
+            WindowPicture.take(box, of: window) { [weak self] image in
+                guard let self else { return }
+                if let image, let tiff = image.tiffRepresentation,
+                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    let file = YourTiri.root.appendingPathComponent("mark.png")
+                    try? FileManager.default.createDirectory(at: YourTiri.root, withIntermediateDirectories: true)
+                    if (try? png.write(to: file)) != nil { self.mark = ChangeMark(image: image, file: file) }
+                }
+                self.beginChange(surface: nil, initial: query)
+            }
+        }
+    }
+
+    func clearMark() { mark = nil }
 
     /// Agents hit this every time otherwise, and on a first run it's the whole of what can go wrong.
     private func offerSwiftTools() {
@@ -176,10 +348,37 @@ import TiriCore
         return " Where it says `tiri`, use \"\(path)\"."
     }
 
-    static func prompt(sentence: String, surface: String?) -> String {
+    nonisolated static let briefFile = ".tiri-brief.md"
+    nonisolated static let markFile = ".tiri-mark.png"
+    nonisolated static let repairFile = ".tiri-repair.md"
+
+    /// What the person sees on the tab: what they asked for. The rest is for the agent, in a file beside it.
+    static func prompt(sentence: String) -> String {
+        "Change Tiri for me: \(sentence). Everything you need is in \(briefFile), so read that first."
+    }
+
+    static func brief(sentence: String, surface: String?, hasMark: Bool) -> String {
         let pointing = surface.map { " I was pointing at: \($0)." } ?? ""
+        let marked = hasMark ? " I marked the part I mean on screen, and that picture is \(markFile). Look at it." : ""
         let flag = surface.map { " --surface \(ShellQuote.quote($0))" } ?? ""
-        return "Change Tiri for me: \(sentence).\(pointing) This folder is Tiri's own source, for the version I'm running. Read the Change Tiri section of `tiri --skill` and CHANGING.md, then begin with `tiri change start \(ShellQuote.quote(sentence))\(flag)`. Open each file you edit with `tiri open <file>`, so I can watch. Build with `tiri change build`, write its check, and finish with `tiri change ready`, giving that a few minutes. I'll try it from the card on this tab. Don't ask me to run anything.\(cliNote)"
+        return "I asked: \(sentence).\(pointing)\(marked) This folder is Tiri's own source, for the version I'm running. Read the Change Tiri section of `tiri --skill` and CHANGING.md, then begin with `tiri change start \(ShellQuote.quote(sentence))\(flag)`. Open each file you edit with `tiri open <file>`, so I can watch. Build with `tiri change build`, write its check, and finish with `tiri change ready`, giving that a few minutes. I'll try it from the card on your tab. Don't ask me to run anything.\(cliNote)\n"
+    }
+
+    /// Git mustn't count these as part of anyone's change.
+    nonisolated static func leaveNote(_ text: String, named name: String, extra: (URL, String)? = nil) throws {
+        let folder = YourTiri.source
+        try text.write(to: folder.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        if let (file, target) = extra {
+            let destination = folder.appendingPathComponent(target)
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.copyItem(at: file, to: destination)
+        }
+        let exclude = folder.appendingPathComponent(".git/info/exclude")
+        let existing = (try? String(contentsOf: exclude, encoding: .utf8)) ?? ""
+        if !existing.contains(".tiri-") {
+            try FileManager.default.createDirectory(at: exclude.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try (existing + "\n.tiri-*\n").write(to: exclude, atomically: true, encoding: .utf8)
+        }
     }
 
     /// In a tab of its own, in Your Tiri. It never types into an agent that's working on something else.
@@ -188,10 +387,14 @@ import TiriCore
         recordFacts()
         let archive = URL(fileURLWithPath: state?.plainPath ?? Bundle.main.bundlePath).appendingPathComponent("Contents/Resources").appendingPathComponent(YourTiri.sourceArchive)
         let version = Self.version
+        let brief = Self.brief(sentence: sentence, surface: surface, hasMark: mark != nil)
+        let markFile = mark?.file
+        let isFirst = hasNeverChanged
         return Task { [weak self] in
             let failure: String? = await Task.detached {
                 do {
                     try SourceRepo().prepare(archive: archive, version: version)
+                    try Self.leaveNote(brief, named: Self.briefFile, extra: markFile.map { ($0, Self.markFile) })
                     return nil
                 } catch {
                     return "\(error)"
@@ -202,13 +405,31 @@ import TiriCore
                 model.showToast(title: "Can't change this copy", detail: failure, symbol: "exclamationmark.triangle", tint: .orange)
                 return
             }
+            self.mark = nil
+            self.cameFrom = model.activeID
             let workspace = model.yourTiriWorkspace()
-            let command = preset.command + " " + ShellQuote.quote(Self.prompt(sentence: sentence, surface: surface))
+            if self.cameFrom == workspace { self.cameFrom = nil }
+            let command = preset.command + " " + ShellQuote.quote(Self.prompt(sentence: sentence))
             // Its name is what was asked. It stays through the switch, where it's looked at hardest.
             let item = model.newTerminal(command: command, cwd: YourTiri.source.path, in: workspace, title: sentence)
             model.agentAsked[item] = sentence
+            if isFirst, preset.command.contains("claude") {
+                model.showToast(title: "Claude Code may ask about trust", detail: "Choose Yes. This is Tiri's own code.", symbol: "checkmark.shield", tint: .accentColor, duration: 25)
+            }
             self.refresh()
         }
+    }
+
+    /// On the agent's tab while it works, so that nobody is left wondering what they're looking at.
+    func makingForItem(_ item: ItemID) -> ChangeDraft? {
+        guard let draft, draft.item == item, hidMaking != draft.id else { return nil }
+        return draft
+    }
+
+    /// Back to what they were doing. Tiri says when it's ready, wherever they are.
+    func keepWorking() {
+        hidMaking = draft?.id
+        if let cameFrom, model?.workspaces.contains(where: { $0.id == cameFrom }) == true { model?.switchWorkspace(cameFrom) }
     }
 
     // MARK: The card
@@ -384,7 +605,12 @@ import TiriCore
         current.repairsAllowed = yes
         try? current.save()
         state = current
-        if yes { startRepairIfAllowed() } else { leaveOutIfRepairsAreOff() }
+        if yes {
+            startRepairIfAllowed()
+            model?.showToast(title: "\(model?.runnableAgentPresets().first?.name ?? "Your agent") is redoing it", detail: "It'll do this by itself at future updates.", symbol: "hammer", tint: .accentColor, duration: 10)
+        } else {
+            leaveOutIfRepairsAreOff()
+        }
     }
 
     /// One at a time, in a tab of its own, without coming to the front. Asked once, and never again after that.
@@ -393,7 +619,7 @@ import TiriCore
               repairing != entry.id, let preset = model.runnableAgentPresets().first else { return }
         repairing = entry.id
         let folder = YourTiri.source.path
-        let title = "Mend: \(entry.sentence)"
+        let title = "Redo: \(entry.sentence)"
         // One from before a relaunch is still at it.
         let already = model.workspaces.flatMap(\.items).contains { item in
             if case .terminal(let spec) = item.content { return spec.title == title }
@@ -402,9 +628,11 @@ import TiriCore
         if already { return }
         let workspace = model.workspaces.first { $0.folders == [folder] }?.id
             ?? model.createWorkspace(name: "Your Tiri", folders: [folder], activating: false, initialTerminal: false).id
-        let command = preset.command + " " + ShellQuote.quote(UpdateTools.repairPrompt(entry, status: update) + Self.cliNote)
-        let item = model.newTerminal(command: command, cwd: folder, in: workspace, title: "Mend: \(entry.sentence)")
-        model.agentAsked[item] = "Mend: \(entry.sentence)"
+        try? Self.leaveNote(UpdateTools.repairPrompt(entry, status: update) + Self.cliNote + "\n", named: Self.repairFile)
+        let asked = "Tiri \(update.version) is out, and my change “\(entry.sentence)” has to be redone to fit it. Everything you need is in \(Self.repairFile), so read that first."
+        let command = preset.command + " " + ShellQuote.quote(asked)
+        let item = model.newTerminal(command: command, cwd: folder, in: workspace, title: title)
+        model.agentAsked[item] = title
         // A tab in a workspace nobody's looking at would otherwise wait for someone to look.
         (model.controller(for: item) as? TerminalController)?.startIfNeeded(fallbackSize: true)
     }
