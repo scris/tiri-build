@@ -3,7 +3,6 @@ import SwiftUI
 import TiriCore
 import UserNotifications
 
-@main
 struct TiriApplication: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model = AppModel.shared
@@ -31,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         AppModel.shared.finishLaunching()
+        CopyHealth.startWatching()
         // After a crash or a force quit, SwiftUI can start without opening its window. Terminals have
         // reattached by then, but nothing shows until the Dock icon is clicked, so do that for it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -52,23 +52,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if let name = AppModel.shared.firstUnsavedFileName {
-            let alert = NSAlert()
-            alert.messageText = "Save your changes before quitting?"
-            alert.informativeText = "\(name) has unsaved changes."
-            alert.addButton(withTitle: "Save All")
-            alert.addButton(withTitle: "Don't Save")
-            alert.addButton(withTitle: "Cancel")
-            switch alert.runModal() {
-            case .alertFirstButtonReturn:
-                if !AppModel.shared.saveAllEdits() { return .terminateCancel }
-            case .alertSecondButtonReturn:
-                break
-            default:
-                return .terminateCancel
-            }
+    /// False if someone chose to stay. Also asked before a switch, since nothing should have moved by then.
+    static func settleUnsavedFiles() -> Bool {
+        guard let name = AppModel.shared.firstUnsavedFileName else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Save your changes before quitting?"
+        alert.informativeText = "\(name) has unsaved changes."
+        alert.addButton(withTitle: "Save All")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return AppModel.shared.saveAllEdits()
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // A switch has asked already, and has moved things since.
+        if !AppModel.shared.keepTerminalsThroughQuit, !Self.settleUnsavedFiles() { return .terminateCancel }
         let working = AppModel.shared.workingTerminalCount
         guard working > 0, !AppModel.shared.skipQuitConfirmation else { return .terminateNow }
         // They'll still be running when Tiri comes back.
@@ -82,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        CopyHealth.quitOnPurpose()
         AppModel.shared.prepareForTermination()
     }
 

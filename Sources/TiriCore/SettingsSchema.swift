@@ -20,7 +20,7 @@ public enum MacModelState: String, CaseIterable, Sendable {
 
 /// The parts of the settings screen, in the order it lists them.
 public enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
-    case general, agents, terminal, editor, languages, plugins, files, keyboard
+    case general, agents, terminal, editor, languages, plugins, yourTiri, files, keyboard
 
     public var id: String { rawValue }
 
@@ -32,6 +32,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
         case .editor: "Editor"
         case .languages: "Languages"
         case .plugins: "Plugins"
+        case .yourTiri: "Your Tiri"
         case .files: "Files"
         case .keyboard: "Keyboard"
         }
@@ -45,6 +46,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
         case .editor: "chevron.left.forwardslash.chevron.right"
         case .languages: "curlybraces"
         case .plugins: "puzzlepiece.extension"
+        case .yourTiri: "wand.and.stars"
         case .files: "folder"
         case .keyboard: "keyboard"
         }
@@ -132,6 +134,10 @@ public enum SettingsSchema {
               explanation: "Lets Changes show what one agent turn did, rather than everything since the last commit.",
               note: "Takes a snapshot when an agent starts and stops. They stay in Tiri's folder for a week, and nothing changes in your repository.",
               kind: .toggle, value: { .bool($0.perTurnDiffs) }),
+        .init(key: "change.offer", pane: .general, group: "Your Tiri", title: "Offer to change Tiri",
+              explanation: "Change This… in right-click menus, and asking an agent when a search finds nothing.",
+              note: "Off, none of it appears anywhere, now or in later versions.",
+              kind: .toggle, value: { .bool($0.changeEntries) }),
         .init(key: "terminal.keepRunning", pane: .agents, group: "When Tiri Quits", title: "Keep terminals running",
               explanation: "Agents carry on while Tiri is closed or updating, and Tiri comes back to them.",
               note: "They stop when you close their tab.",

@@ -1,0 +1,107 @@
+From: Your Tiri <your-tiri@localhost>
+Subject: show how long each agent has been working
+
+Tiri-Change: cc45ae55
+Tiri-Surface: sidebar
+
+
+diff --git a/Sources/TiriApp/AppModel.swift b/Sources/TiriApp/AppModel.swift
+index 1aa6dd2..c2f962d 100644
+--- a/Sources/TiriApp/AppModel.swift
++++ b/Sources/TiriApp/AppModel.swift
+@@ -21,6 +21,8 @@ struct TerminalRuntime: Equatable {
+     var prompt: String?
+     var activity: String?
+     var touched: [String] = []
++    /// When it last started working; nil whenever it isn't.
++    var workingSince: Date?
+ }
+ 
+ struct AppBanner: Identifiable, Equatable {
+@@ -1281,6 +1283,7 @@ final class AppModel {
+         let looking = isLookingAt(id)
+         updateRuntime(id) { runtime in
+             runtime.status = status
++            if status == .working { if previous != .working || runtime.workingSince == nil { runtime.workingSince = Date() } } else { runtime.workingSince = nil }
+             runtime.message = message ?? (status == previous ? runtime.message : nil)
+             if status == .needsInput || status == .done {
+                 if !looking { runtime.unseen = true }
+diff --git a/Sources/TiriApp/Sidebar.swift b/Sources/TiriApp/Sidebar.swift
+index 64c7cb6..61ad57f 100644
+--- a/Sources/TiriApp/Sidebar.swift
++++ b/Sources/TiriApp/Sidebar.swift
+@@ -488,6 +488,9 @@ struct AgentOverviewRowView: View {
+                     .lineLimit(1)
+             }
+             Spacer(minLength: 0)
++            if row.status == .working, let since = model.runtimes[row.item]?.workingSince {
++                WorkingTimer(since: since)
++            }
+         }
+         .padding(.horizontal, 7)
+         .padding(.vertical, 4)
+@@ -504,3 +507,17 @@ struct AgentOverviewRowView: View {
+         .help(row.agent + (row.files.isEmpty ? "" : ": " + row.files.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")))
+     }
+ }
++
++
++/// How long an agent has been working, ticking once a second.
++struct WorkingTimer: View {
++    let since: Date
++
++    var body: some View {
++        TimelineView(.periodic(from: since, by: 1)) { context in
++            Text(WorkingDuration.text(context.date.timeIntervalSince(since)))
++                .font(.system(size: 10.5).monospacedDigit())
++                .foregroundStyle(.secondary)
++        }
++    }
++}
+diff --git a/Sources/TiriCore/WorkingDuration.swift b/Sources/TiriCore/WorkingDuration.swift
+new file mode 100644
+index 0000000..df77395
+--- /dev/null
++++ b/Sources/TiriCore/WorkingDuration.swift
+@@ -0,0 +1,11 @@
++import Foundation
++
++/// How long an agent has been working, in the fewest words: "12s", "4m 05s", "1h 02m".
++public enum WorkingDuration {
++    public static func text(_ seconds: TimeInterval) -> String {
++        let total = max(0, Int(seconds))
++        if total < 60 { return "\(total)s" }
++        if total < 3600 { return "\(total / 60)m \(String(format: "%02d", total % 60))s" }
++        return "\(total / 3600)h \(String(format: "%02d", (total % 3600) / 60))m"
++    }
++}
+diff --git a/Tests/TiriCoreTests/WorkingDurationTests.swift b/Tests/TiriCoreTests/WorkingDurationTests.swift
+new file mode 100644
+index 0000000..40d9527
+--- /dev/null
++++ b/Tests/TiriCoreTests/WorkingDurationTests.swift
+@@ -0,0 +1,11 @@
++import Testing
++@testable import TiriCore
++
++struct WorkingDurationTests {
++    @Test func formats() {
++        #expect(WorkingDuration.text(-3) == "0s")
++        #expect(WorkingDuration.text(12.9) == "12s")
++        #expect(WorkingDuration.text(245) == "4m 05s")
++        #expect(WorkingDuration.text(3720) == "1h 02m")
++    }
++}
+diff --git a/checks/cc45ae55.sh b/checks/cc45ae55.sh
+new file mode 100755
+index 0000000..07b1111
+--- /dev/null
++++ b/checks/cc45ae55.sh
+@@ -0,0 +1,7 @@
++#!/bin/bash
++set -e
++# The duration wording is unit tested; the sidebar timer is judged by eye, so check that it's wired in.
++(cd "$TIRI_SOURCE" && swift test --filter WorkingDurationTests)
++grep -q 'WorkingTimer(since:' "$TIRI_SOURCE/Sources/TiriApp/Sidebar.swift"
++grep -q 'workingSince' "$TIRI_SOURCE/Sources/TiriApp/AppModel.swift"
++tiri ping >/dev/null

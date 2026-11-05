@@ -749,10 +749,18 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         menu.addItem(.separator())
         add("Add Folder to Workspace…", #selector(menuAddFolder))
         if node?.isRoot == true { add("Remove Folder from Workspace", #selector(menuRemoveFolder)) }
+        if AppModel.shared.yourTiri.entriesAreOn {
+            menu.addItem(.separator())
+            add("Change This…", #selector(menuChangeThis))
+        }
         return menu
     }
 
     private func menuNode(_ sender: NSMenuItem) -> FileNode? { sender.representedObject as? FileNode }
+
+    @objc private func menuChangeThis(_ sender: NSMenuItem) {
+        AppModel.shared.yourTiri.beginChange(surface: "the file tree in the sidebar (Sources/TiriApp/FileTree.swift)")
+    }
 
     @objc private func menuNewFile(_ sender: NSMenuItem) { beginCreating(.file, in: menuNode(sender)) }
     @objc private func menuNewFolder(_ sender: NSMenuItem) { beginCreating(.folder, in: menuNode(sender)) }

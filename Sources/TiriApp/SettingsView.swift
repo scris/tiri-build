@@ -171,7 +171,7 @@ struct SettingsNavigationColumn: View {
                 .padding(.bottom, 12)
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(SettingsPane.allCases) { pane in
+                    ForEach(model.settingsPanes) { pane in
                         SettingsNavigationRow(pane: pane, count: counts[pane])
                         if pane == .keyboard, ui.pane == .keyboard, !ui.isSearching {
                             ShortcutJumpList()
@@ -277,7 +277,7 @@ struct SettingsCompactBar: View {
     private var paneMenu: some View {
         let ui = model.settingsUI
         return Menu {
-            ForEach(SettingsPane.allCases) { pane in
+            ForEach(model.settingsPanes) { pane in
                 Button {
                     model.cancelRecordingShortcut()
                     ui.query = ""
@@ -455,6 +455,8 @@ struct SettingsContent: View {
             ForEach(SettingsSchema.groups(in: .plugins, from: SettingsSchema.fromPlugins), id: \.name) { group in
                 PluginSettingsGroup(name: group.name, settings: group.settings)
             }
+        case .yourTiri:
+            YourTiriPane()
         case .files:
             SchemaGroups(pane: .files)
         case .keyboard:
@@ -485,6 +487,11 @@ struct SettingsSearchResults: View {
         let counts = model.settingsMatchCounts
         if counts.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
+                if model.yourTiri.entriesAreOn, let preset = model.runnableAgentPresets().first {
+                    Button("Ask \(preset.name) to add this") {
+                        model.yourTiri.beginChange(surface: "Settings, searching for \u{201C}\(query)\u{201D}", initial: query)
+                    }
+                }
                 Text("Nothing here matches \u{201C}\(query)\u{201D}.")
                     .foregroundStyle(.secondary)
                 if let preset = model.runnableAgentPresets().first {
@@ -694,6 +701,7 @@ struct SettingRow: View {
         .contextMenu {
             Button("Copy Prompt About This Setting") { Clipboard.copy(SettingsSchema.agentPrompt(about: definition)) }
             Button("Reset to Default") { model.resetSetting(definition.key) }
+            ChangeThisItem(surface: "the setting \u{201C}\(definition.title)\u{201D} in Settings (Sources/TiriCore/SettingsSchema.swift)")
         }
     }
 

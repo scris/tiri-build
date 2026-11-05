@@ -4,9 +4,11 @@ A neutral, native macOS workspace for people who do their work through CLI agent
 
 Terminals, files and web previews are equal items in one tab and pane system, on this Mac or a server. Tiri has no chat, account or model of its own, and no bottom terminal panel. Your agents can drive the whole app through a local CLI.
 
+**Don't like something in Tiri? Say so. It stays yours through every update.** Right-click anything, choose Change This…, and say what you want instead. Your own agent changes Tiri's source, on your own subscription, and you try the result with one click. [More below](#your-tiri).
+
 ## Build and run
 
-Needs macOS 26 or later and Xcode 26 or later.
+Needs macOS 26 or later, and either Apple's free Command Line Tools (`xcode-select --install`) or Xcode 26.
 
 ```sh
 ./build.sh && open build/Tiri.app
@@ -348,6 +350,28 @@ Its commands reach the palette, the Plugins menu, shortcuts and `tiri run` with 
 - **Turning one off takes all of it away:** commands, keys, languages, sections, items, panels, processes and servers. Its settings stay until you remove it.
 
 **What this doesn't stop:** the approval record is a file in Tiri's own folder, and anything running as you could edit it. It stops an agent that's been tricked into asking, not a program already running with your access, which could as easily edit your shell's startup files. A panel's page can probably still leak a little through DNS lookups, which a content policy doesn't cover. And a plugin's process on a server is as trustworthy as that server.
+
+## Your Tiri
+
+Tiri can be changed the way it was made: by asking. Right-click anything and choose **Change This…**, or ask when the command palette or a settings search finds nothing, or just tell any agent in a Tiri terminal. Say what you want different, press Return, and your agent starts in a tab of its own, in a workspace called Your Tiri holding the exact source of the version you're running. You watch it in Tiri's own file tree and Changes.
+
+When it's done, a card on its tab says what it did and how big it is, with **Try It**. Tiri closes and opens again in about half a second, with everything still running, including the agent that made the change, now running inside what it made. For ten minutes the card says **Keep** and **Back**, and Back is one click and loses nothing.
+
+Settings has a **Your Tiri** pane once you've used this: your changes as sentences in your own words, each with a switch and what it touched, and **Plain Tiri**, the app you installed. It's never altered, so it's always there. Hold ⌥ while opening Tiri to start it for one run. If a change stops Tiri from starting, Tiri goes back to the copy before it by itself, and says so.
+
+The first change takes about 1 GB of build files, in `~/Library/Application Support/Tiri/your-tiri`, and needs the Command Line Tools, which anyone running an agent already has. If you never use any of this you won't find it: there's no button, tip or tour, nothing runs, and nothing's on disk but the source inside the app, about 5 MB. **Offer to change Tiri** in Settings removes every entry.
+
+**Updates keep your changes.** Each change is one commit on top of a release, and an update replays them onto the next release in the background: Git first, then a merge that understands Swift, then a build, then each change's own check. Only then does **Update** appear, one button, the same for everyone. A change that can't be replayed goes to your agent to mend, if you've said yes to that once, and one it can't mend is kept, named, and left out of that update. If Tiri learns to do the same thing itself, your change retires itself and tells you.
+
+What an agent can and can't do:
+
+- It can build a copy but can't switch to one. Switching takes your click, with no command for it. A program running as you could still write Tiri's files, as it could anything else of yours, so this is a line for agents, not a wall against malware.
+- A personal copy is signed on your Mac with its own certificate, in a keychain file of its own, and has its own bundle ID. So macOS asks once about your folders for it, and never again after rebuilds, and your answers for the app you installed are left as they were.
+- Nothing loads from anywhere else. There's no gallery and no way in from a link.
+- An update has to be a newer release of this app from whoever made yours, by Apple's chain, checked before it goes anywhere and again when you press Update. A feed has to be https, and its notes don't reach your agent.
+- A change's check is a script that runs at every update, with your access, so it's counted in the card's size and shown with its diff.
+
+For agents, `tiri --skill` has the commands and `CHANGING.md` in the source has the rest. Maintainers: `scripts/release.sh` refuses a release if the changes in `Tests/personal-changes` no longer go on (`scripts/replay-corpus.sh`), or if it stops building with the Command Line Tools (`scripts/check-free-tools.sh`), which is what using an Apple macro whose plugin is only in Xcode does. The syntax-aware merge is Mergiraf with a Swift profile, from `scripts/build-merge-tool.sh`. It's optional, and goes at `your-tiri/tools/mergiraf`.
 
 ## Dark mode
 

@@ -138,7 +138,21 @@ final class PaletteModel {
         }
         if !previews { endPreview() }
         // Nothing to show is still an answer.
-        if case .commands = effectiveMode, rows.isEmpty, !query.isEmpty { note = "No command matches." }
+        if case .commands = effectiveMode, rows.isEmpty, !query.isEmpty {
+            note = "No command matches."
+            offerToAdd()
+        }
+    }
+
+    /// The moment someone has shown they want something the app doesn't do, and no sooner.
+    private func offerToAdd() {
+        let asked = (query.hasPrefix(">") ? String(query.dropFirst()) : query).trimmingCharacters(in: .whitespaces)
+        guard !asked.isEmpty, model.yourTiri.entriesAreOn, let preset = model.runnableAgentPresets().first else { return }
+        rows = [Row(id: "ask-to-add", title: "Ask \(preset.name) to add this", positions: [], shortcut: nil) { [model] _ in
+            model.closePalette()
+            model.yourTiri.beginChange(surface: "the command palette, searching for \u{201C}\(asked)\u{201D}", initial: asked)
+        }]
+        selection = 0
     }
 
     private func noFileNote(for what: String) -> String {

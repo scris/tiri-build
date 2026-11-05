@@ -265,6 +265,7 @@ struct ShortcutRowView: View {
             }
             Button("Remove Shortcut") { model.setShortcut(command.id, key: nil) }
             Button("Reset to Default") { model.resetShortcut(command.id) }
+            ChangeThisItem(surface: "a shortcut in Keyboard settings (Sources/TiriApp/KeyboardSettings.swift)")
         }
     }
 

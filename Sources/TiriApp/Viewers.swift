@@ -2052,6 +2052,7 @@ final class TiriPDFView: PDFView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event)
+        if let menu { ChangeThisMenuTarget.add(to: menu, surface: "the PDF viewer (Sources/TiriApp/Viewers.swift)") }
         guard let menu, currentSelection?.string?.isEmpty == false else { return menu }
         let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteFromMenu), keyEquivalent: "")
         item.target = self

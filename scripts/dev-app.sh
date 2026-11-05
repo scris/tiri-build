@@ -32,12 +32,27 @@ raise() {
   osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $(cat "$DIR/pid")) to true" >/dev/null 2>&1 || true
   sleep 0.8
 }
+# Only ever what the pid file says if that's still a copy of this name. A pid outlives its process in that file,
+# and pids get used again: on 2026-11-05, a stale one killed the script that was running this.
+kill_recorded() { # signal
+  [ -f "$DIR/pid" ] || return 0
+  local recorded; recorded="$(cat "$DIR/pid")"
+  [ -n "$recorded" ] || return 0
+  case "$(ps -p "$recorded" -o command= 2>/dev/null)" in
+    *"$NAME/TiriDev.app/Contents/MacOS/Tiri"*|*"$NAME/home/your-tiri/copies/"*) kill "$1" "$recorded" 2>/dev/null || true ;;
+  esac
+}
+
+# The copy that's up: this one, or a personal copy it made and handed over to.
+running_pid() { pgrep -f "$NAME/(TiriDev.app|home/your-tiri/copies/[^/]+/Tiri.app)/Contents/MacOS/Tiri" | tail -1 || true; }
+
 # A test copy never comes forward by itself: someone may be working on this Mac.
 launch_in_background() {
   : >"$DIR/app.log"
   open -g -n -a "$APP" --stdout "$DIR/app.log" --stderr "$DIR/app.log" \
     --env TIRI_HOME="$TIRI_HOME" --env TIRI_CONFIG_HOME="$TIRI_CONFIG_HOME" --env TIRI_SOCKET="$TIRI_SOCKET" --env TIRI_DEV_OFFSCREEN=1 \
     ${TIRI_DEV_MAY_TAKE_FOCUS:+--env TIRI_DEV_VISIBLE=1} \
+    ${TIRI_DEV_OPTION:+--env TIRI_DEV_OPTION=1} \
     ${TIRI_SSH_CONFIG:+--env TIRI_SSH_CONFIG="$TIRI_SSH_CONFIG"} \
     ${TIRI_CONVERSATIONS_HOME:+--env TIRI_CONVERSATIONS_HOME="$TIRI_CONVERSATIONS_HOME"} \
     ${CODEX_HOME:+--env CODEX_HOME="$CODEX_HOME"} ${GROK_HOME:+--env GROK_HOME="$GROK_HOME"}
@@ -94,20 +109,24 @@ SWIFT
 
 case "$ACTION" in
 start)
-  swift build -c "${TIRI_DEV_CONFIG:-debug}" --product TiriApp 2>&1 | tail -1
-  swift build -c "${TIRI_DEV_CONFIG:-debug}" --product tiri 2>&1 | tail -1
-  swift build -c "${TIRI_DEV_CONFIG:-debug}" --product tiri-session 2>&1 | tail -1
-  BIN="$(swift build -c "${TIRI_DEV_CONFIG:-debug}" --show-bin-path)"
+  source scripts/swift-setup.sh
+  # TIRI_DEV_SWIFT_FLAGS: the fast build of a change, so a check doesn't build everything again.
+  # shellcheck disable=SC2086
+  swift build -c "${TIRI_DEV_CONFIG:-debug}" ${TIRI_DEV_SWIFT_FLAGS:-} --product TiriApp 2>&1 | tail -1
+  swift build -c "${TIRI_DEV_CONFIG:-debug}" ${TIRI_DEV_SWIFT_FLAGS:-} --product tiri 2>&1 | tail -1
+  swift build -c "${TIRI_DEV_CONFIG:-debug}" ${TIRI_DEV_SWIFT_FLAGS:-} --product tiri-session 2>&1 | tail -1
+  BIN="$(swift build -c "${TIRI_DEV_CONFIG:-debug}" ${TIRI_DEV_SWIFT_FLAGS:-} --show-bin-path)"
   "$CLI" quit >/dev/null 2>&1 || true; sleep 0.5
   # A dialog can hold up a quit, and two copies can't share a socket.
-  [ -f "$DIR/pid" ] && kill -9 "$(cat "$DIR/pid")" 2>/dev/null || true
-  pkill -9 -f "$NAME/TiriDev.app/Contents/MacOS/Tiri" 2>/dev/null || true
+  kill_recorded -9
+  pkill -9 -f "$NAME/(TiriDev.app|home/your-tiri/copies/[^/]+/Tiri.app)/Contents/MacOS/Tiri" 2>/dev/null || true
   rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin" "$TIRI_HOME" "$TIRI_CONFIG_HOME"
   cp "$BIN/TiriApp" "$APP/Contents/MacOS/Tiri"
   cp "$BIN/tiri" "$BIN/tiri-session" "$APP/Contents/Resources/bin/"
   cp Resources/AppIcon.icns Resources/Assets.car "$APP/Contents/Resources/"
   for extra in Resources/remote Resources/web Resources/textmate Resources/grammars Resources/language-servers; do [ -e "$extra" ] && cp -R "$extra" "$APP/Contents/Resources/"; done
   sed "s/dev.tiri.app/dev.tiri.test.$NAME/" Resources/Info.plist > "$APP/Contents/Info.plist"
+  scripts/stamp-bundle.sh "$APP" "$APP/Contents/Info.plist" >/dev/null
   # TIRI_DEV_SIGN_IDENTITY tries it as a release runs: signed, under the hardened runtime.
   if [ -n "${TIRI_DEV_SIGN_IDENTITY:-}" ]; then
     for program in "$APP/Contents/Resources/bin/tiri" "$APP/Contents/Resources/bin/tiri-session" "$APP"/Contents/Resources/remote/tiri-remote-darwin-*; do
@@ -123,14 +142,15 @@ start)
   ;;
 run)
   # Always through here: launched by hand, without these variables, it would be using real state.
-  [ -f "$DIR/pid" ] && kill -9 "$(cat "$DIR/pid")" 2>/dev/null || true
+  kill_recorded -9
   launch_in_background
   for _ in $(seq 1 100); do "$CLI" ping >/dev/null 2>&1 && break; sleep 0.1; done
   "$CLI" ping
   ;;
 stop)
   "$CLI" quit >/dev/null 2>&1 || true; sleep 0.3
-  [ -f "$DIR/pid" ] && kill "$(cat "$DIR/pid")" 2>/dev/null || true
+  kill_recorded -TERM
+  pkill -f "$NAME/(TiriDev.app|home/your-tiri/copies/[^/]+/Tiri.app)/Contents/MacOS/Tiri" 2>/dev/null || true
   pkill -f "tiri-session attach /tmp/tiri-$(id -u)-$(printf %s "$TIRI_HOME" | shasum -a 256 | cut -c1-12)/" 2>/dev/null || true
   ;;
 focus)
@@ -146,7 +166,7 @@ focus)
   ;;
 shot)
   # By window, without raising it. The copy keeps itself hidden, and this reads what it drew.
-  screencapture -x -o -l"$(window_id "$(cat "$DIR/pid")")" "${3:?png path}"
+  screencapture -x -o -l"$(window_id "$(running_pid)")" "${3:?png path}"
   ;;
 env)
   echo "export TIRI_HOME='$TIRI_HOME' TIRI_CONFIG_HOME='$TIRI_CONFIG_HOME' TIRI_SOCKET='$TIRI_SOCKET' PATH='$APP/Contents/Resources/bin':\"\$PATH\""

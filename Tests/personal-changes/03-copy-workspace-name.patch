@@ -1,0 +1,12 @@
+diff --git a/Sources/TiriApp/Commands.swift b/Sources/TiriApp/Commands.swift
+index b6a16a0..391f41d 100644
+--- a/Sources/TiriApp/Commands.swift
++++ b/Sources/TiriApp/Commands.swift
+@@ -148,6 +148,7 @@ extension AppModel {
+             AppCommand(id: "newPlugin", title: "New Plugin…", category: "Settings") { $0.promptForNewPlugin() },
+             AppCommand(id: "changeTiri", title: "Change Tiri…", category: "Settings") { $0.yourTiri.beginChange(surface: nil) },
+             AppCommand(id: "showYourTiri", title: "Your Tiri", category: "Settings") { $0.openSettings(pane: .yourTiri) },
++            AppCommand(id: "copyWorkspaceName", title: "Copy Workspace Name", category: "Navigation") { Clipboard.copy($0.active.name) },
+             AppCommand(id: "managePlugins", title: "Plugins…", category: "Settings") { $0.openPluginSettings() },
+             AppCommand(id: "importPlugin", title: "Import Plugin…", category: "Settings") {
+                 $0.openPluginSettings()

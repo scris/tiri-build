@@ -7,6 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# TIRI_RELEASE_NOTES=<file> says what's new and what code moved. It's signed into the app, for repairs to read.
 IDENTITY="${TIRI_RELEASE_IDENTITY:-Developer ID Application: Tianrun Qiu (CXA8L7KWZG)}"
 PROFILE="${TIRI_NOTARY_PROFILE:-tiri-notary}"
 OUT="build/release"
@@ -21,6 +22,13 @@ if ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; the
   echo "  xcrun notarytool store-credentials $PROFILE --apple-id <you> --team-id <team>" >&2
   exit 1
 fi
+
+# What's built is what ships, source included, so nothing stray comes along with it.
+if [ -n "$(git status --porcelain)" ]; then echo "There are uncommitted files. A release's source is what's in the repository." >&2; exit 1; fi
+
+# What has to stay true of every release: people's own changes still go on it, and it builds with free tools.
+scripts/replay-corpus.sh
+scripts/check-free-tools.sh
 
 rm -rf "$OUT"
 TIRI_BUILD_DIR="$OUT" TIRI_SIGN_IDENTITY="$IDENTITY" TIRI_SIGN_TIMESTAMP=1 ./build.sh release

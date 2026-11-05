@@ -7,6 +7,10 @@ public enum CLIParser {
         case printText(String)
         /// Works on files, with no app, and only on this Mac: a server's terminal is refused.
         case local(PluginTools.Action)
+        /// `tiri change`: changing Tiri's own source, on this Mac, with or without the app.
+        case change(ChangeTools.Action)
+        /// `tiri update`: carrying someone's changes to the next release.
+        case update(UpdateTools.Action)
         /// `tiri notify` outside a Tiri terminal: succeed quietly so hooks never break elsewhere.
         case quietSuccess
     }
@@ -110,6 +114,12 @@ public enum CLIParser {
             var payload: [String: JSONValue] = ["row": .int(row)]
             if args.count > 1 { payload["action"] = .string(args[1]) }
             return request("dev.change", payload)
+
+        case "dev-your-tiri":
+            guard let action = args.first else { throw UsageError("usage: tiri dev-your-tiri <action> [<value>]   (test copies only)") }
+            var payload: [String: JSONValue] = ["action": .string(action)]
+            if args.count > 1 { payload["value"] = .string(args[1...].joined(separator: " ")) }
+            return request("dev.your-tiri", payload)
 
         case "dev-settings":
             guard args.count >= 1 else { throw UsageError("usage: tiri dev-settings <action> [<value>]   (test copies only)") }
@@ -592,6 +602,88 @@ public enum CLIParser {
             if !named.isEmpty { payload["args"] = .object(named) }
             if let item = environment.itemID { payload["source"] = .string(item) }
             return request("run", payload)
+
+        case "update":
+            let usage = """
+            usage: tiri update                     (where an update stands)
+                   tiri update check [--feed URL]  (asks for a new release, and gets it ready if there is one)
+                   tiri update prepare <Tiri.app|Tiri.zip> [--notes TEXT]   (gets a new release ready, from a file)
+                   tiri update repair <id>         (the old change in these files, conflicts marked, and its diff)
+                   tiri update repaired            (builds it, runs its check, and carries on)
+                   tiri update retire <id>         (the new version does this already)
+                   tiri update leave-out <id>      (it can't be done now, and it's kept)
+            Installing is one click in the app, once everything's ready. Nothing here switches anything.
+            """
+            if args.contains("--help") || args.contains("-h") { return .printText(usage) }
+            var options = Options(Array(args.dropFirst()))
+            let feed = try options.value("--feed")
+            let notes = try options.value("--notes")
+            func id() throws -> String {
+                guard let name = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                return name
+            }
+            switch args.first ?? "status" {
+            case "status": return .update(.status)
+            case "check":
+                try options.finish()
+                return .update(.check(feed: feed))
+            case "prepare":
+                guard let path = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                return .update(.prepare(absolute(path, environment), notes: notes))
+            case "repair": return .update(.repair(try id()))
+            case "repaired":
+                try options.finish()
+                return .update(.repaired)
+            case "retire": return .update(.retire(try id()))
+            case "leave-out": return .update(.leaveOut(try id()))
+            default: throw UsageError(usage)
+            }
+
+        case "change":
+            let usage = """
+            usage: tiri change start "<sentence>" [--surface NAME]   (begins one change, in the person's words)
+                   tiri change build                  (after each edit: errors, in about 5 seconds)
+                   tiri change check                  (runs checks/<id>.sh against an invisible copy)
+                   tiri change ready                  (commits it and builds the copy they'll try)
+                   tiri change revise [<id>]          (reopens the newest change, or one that's off)
+                   tiri change drop                   (gives up the one being made)
+                   tiri change list | status | show <id>
+                   tiri change off <id> | on <id>     (builds a copy without it, or with it)
+            Only the person can switch to a copy, with a click in the app. See `tiri --skill`.
+            """
+            if args.isEmpty || args.contains("--help") || args.contains("-h") { return .printText(usage) }
+            var options = Options(Array(args.dropFirst()))
+            let surface = try options.value("--surface")
+            let noBuild = options.flag("--no-build")
+            guard let subcommand = args.first else { throw UsageError(usage) }
+            func name() throws -> String {
+                guard let id = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                return id
+            }
+            func none() throws { try options.finish() }
+            switch subcommand {
+            case "start":
+                guard let sentence = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                return .change(.start(sentence: sentence, surface: surface))
+            case "build": try none(); return .change(.build)
+            case "check": try none(); return .change(.check)
+            case "ready": try none(); return .change(.ready)
+            case "list": try none(); return .change(.list(json: json))
+            case "status": try none(); return .change(.status)
+            case "show": return .change(.show(try name()))
+            case "off": return .change(.off(try name(), build: !noBuild))
+            case "on": return .change(.on(try name()))
+            case "drop": try none(); return .change(.drop)
+            case "revise":
+                let id = options.positional()
+                try options.finish()
+                return .change(.revise(id))
+            default: throw UsageError(usage)
+            }
 
         case "plugin", "plugins":
             let usage = """
@@ -1092,6 +1184,37 @@ public enum AgentGuide {
 
     Skills, hooks and MCP servers belong in your own plugin system, not here. A Tiri plugin is for
     what a terminal can't draw. It can carry a part for Claude Code too, loaded only in Tiri's terminals.
+
+    ## Change Tiri
+
+    When someone wants Tiri itself to be different, and a setting, a key or a plugin wouldn't fully do it,
+    change Tiri's own source. It's a normal way to do this, not a last resort: most of how the app
+    behaves is in the source. They'll try the result with one click, keep it or go back, and it stays
+    through updates, because each change is one commit carrying their sentence.
+
+    ```sh
+    tiri change start "show how long each agent has been working" --surface "tab bar"
+    # That prints where the source is. Work there.
+    tiri change build                     # after each edit: errors, in about 5 seconds
+    tiri change check                     # runs checks/<id>.sh against an invisible copy of Tiri
+    tiri change ready                     # commits it and builds their copy, a minute or two. Give it time
+    tiri change list                      # every change, on or off
+    tiri change show <id>                 # what one changed
+    tiri change revise                    # reopen the newest, after they ask for something different
+    tiri change off <id>                  # builds a copy without it. `on` brings it back
+    tiri change drop                      # give up the one being made
+    ```
+
+    Updates carry changes by themselves. When one can't be carried, you may be asked to mend it, in a tab of its
+    own: `tiri update repair <id>` shows you the old change, and `tiri update repaired` carries on from there.
+    `tiri update retire <id>` if the new version already does it, and `tiri update leave-out <id>` if it can't be done.
+
+    Keep their words as the sentence: it's what they see in Settings, and what an update repairs from.
+    `CHANGING.md` in the source says how the code is laid out and what's off limits. Write a check for
+    every change: a change without one is marked as needing a look at updates, and can't be repaired by itself.
+    Open each file you edit with `tiri open <file>`, so they can watch. It never takes them away from what they're doing.
+    You can build a copy but not switch to one. They press Try It on the card on your tab, and you
+    keep running through the switch, in the Tiri you just made. Don't ask them to run anything.
 
     ## Anything else
 

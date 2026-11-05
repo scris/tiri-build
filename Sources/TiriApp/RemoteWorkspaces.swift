@@ -822,6 +822,8 @@ enum RemoteRelay {
         case .local:
             // What's installed on this Mac doesn't get decided from a server.
             return refuse("plugins can only be managed on the Mac, not from a server.")
+        case .change, .update:
+            return refuse("Tiri itself can only be changed from a terminal on the Mac, not from a server.")
         case .request(var control, let json):
             guard allowed.contains(control.cmd) else {
                 return refuse("\(control.cmd) can only be run on the Mac, not from a server.")

@@ -56,6 +56,8 @@ public struct TiriSettings: Equatable, Sendable {
     public var activePresets: [TerminalPreset] { terminalPresets.filter(\.isEnabled) }
     public var terminalRestoreWithResume = true
     public var terminalKeepRunning = true
+    /// Whether anything in the app offers to change Tiri. Off, nothing about it appears anywhere, now or later.
+    public var changeEntries = true
     public var perTurnDiffs = true
     public var diffSideBySide = false
     public var conversationsUseMacModel = true
@@ -257,6 +259,7 @@ public struct TiriSettings: Equatable, Sendable {
         try bool("web.forceDark") { settings.webForceDark = $0 }
         try bool("documents.forceDark") { settings.documentsForceDark = $0 }
         try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
+        try bool("change.offer") { settings.changeEntries = $0 }
         try bool("changes.perTurn") { settings.perTurnDiffs = $0 }
         try bool("diff.sideBySide") { settings.diffSideBySide = $0 }
         try bool("conversations.useMacModel") { settings.conversationsUseMacModel = $0 }

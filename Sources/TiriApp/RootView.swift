@@ -298,6 +298,7 @@ struct ItemContentView: View {
                     .padding(.top, 8)
                     .padding(.trailing, 14)
             }
+            YourTiriCards(item: item.id)
         }
     }
 }
@@ -448,6 +449,7 @@ struct EmptyGroupView: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button("New Terminal") { model.startTerminal() }
+            ChangeThisItem(surface: "the start screen (Sources/TiriApp/RootView.swift)")
         }
         // Coming back from installing an agent should show it without a relaunch.
         .onAppear { model.refreshAvailableCommands() }

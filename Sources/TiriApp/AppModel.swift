@@ -173,6 +173,11 @@ final class AppModel {
     var barHasRepositories = false
     @ObservationIgnored lazy var languageServers = LanguageServerHub(model: self)
     @ObservationIgnored lazy var plugins = PluginHost(model: self)
+    @ObservationIgnored lazy var yourTiri = YourTiriModel(model: self)
+    /// The app is about to come straight back, so no terminal ends, whatever the setting says.
+    @ObservationIgnored var keepTerminalsThroughQuit = false
+    /// Your Tiri has no place in Settings until someone has used it.
+    var settingsPanes: [SettingsPane] { SettingsPane.allCases.filter { $0 != .yourTiri || yourTiri.isUsed } }
     @ObservationIgnored let commands = CommandRegistry(builtIn: AppModel.staticCommands)
     @ObservationIgnored let languageTrust = LanguageServerTrust()
     @ObservationIgnored var hoverPopover: NSPopover?
@@ -275,6 +280,7 @@ final class AppModel {
         adoptNewAgents()
         languageServers.prepare()
         plugins.load()
+        yourTiri.finishLaunching()
         // So the first file's colors aren't late, without making launch any longer.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { HighlightEngine.shared.prepare() }
         // Whatever isn't in a tab any more has nothing to come back to.
@@ -512,7 +518,7 @@ final class AppModel {
             var launch = spec.command
             var prefill: String?
             // Still running from before: what's there now is what counts, so nothing is replayed.
-            if settings.terminalKeepRunning, TerminalSessions.isAlive(id) {
+            if settings.terminalKeepRunning || keepTerminalsThroughQuit, TerminalSessions.isAlive(id) {
                 launch = nil
             } else if restored, spec.isShell, let typed = spec.typedAgent {
                 // Typed at a prompt, so the prompt should still be there after it exits.
@@ -638,7 +644,9 @@ final class AppModel {
     /// app's identity, or using its folders, ever counts, whatever its environment says.
     static var isTestCopy: Bool {
         let environment = ProcessInfo.processInfo.environment
-        return Bundle.main.bundleIdentifier?.contains(".test.") == true && environment["TIRI_DEV_OFFSCREEN"] == "1" && environment["TIRI_HOME"]?.isEmpty == false
+        guard Bundle.main.bundleIdentifier?.contains(".test.") == true, environment["TIRI_DEV_OFFSCREEN"] == "1", let home = environment["TIRI_HOME"], !home.isEmpty else { return false }
+        let real = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Tiri").standardizedFileURL.path
+        return URL(fileURLWithPath: home).standardizedFileURL.path != real
     }
 
     func openPluginSettings() { openSettings(pane: .plugins) }
@@ -1644,10 +1652,10 @@ final class AppModel {
     }
 
     @discardableResult
-    func createWorkspace(name: String, folders: [String], remote destination: String? = nil, activating: Bool = true) -> Workspace {
+    func createWorkspace(name: String, folders: [String], remote destination: String? = nil, activating: Bool = true, initialTerminal: Bool = true) -> Workspace {
         var workspace = Workspace(name: uniqueName(name), folders: folders)
         workspace.remote = destination
-        if !folders.isEmpty { workspace.addInitialTerminal(fallbackCwd: NSHomeDirectory()) }
+        if !folders.isEmpty, initialTerminal { workspace.addInitialTerminal(fallbackCwd: NSHomeDirectory()) }
         workspaces.append(workspace)
         if activating { switchWorkspace(workspace.id) } else { scheduleSave() }
         editorBridge.writeLock()

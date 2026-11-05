@@ -146,6 +146,8 @@ extension AppModel {
             AppCommand(id: "themeDark", title: "Theme: Dark", category: "Settings") { $0.setTheme(.dark) },
             AppCommand(id: "manageLanguageServers", title: "Language Servers…", category: "Settings") { $0.openLanguageServerSettings() },
             AppCommand(id: "newPlugin", title: "New Plugin…", category: "Settings") { $0.promptForNewPlugin() },
+            AppCommand(id: "changeTiri", title: "Change Tiri…", category: "Settings") { $0.yourTiri.beginChange(surface: nil) },
+            AppCommand(id: "showYourTiri", title: "Your Tiri", category: "Settings") { $0.openSettings(pane: .yourTiri) },
             AppCommand(id: "managePlugins", title: "Plugins…", category: "Settings") { $0.openPluginSettings() },
             AppCommand(id: "importPlugin", title: "Import Plugin…", category: "Settings") {
                 $0.openPluginSettings()
@@ -195,6 +197,9 @@ extension AppModel {
     /// Static commands plus the ones that depend on what's in the app right now.
     var allCommands: [AppCommand] {
         var list = commands.list
+        // Off means nowhere, and these are only for people with something to change them with.
+        if !yourTiri.entriesAreOn { list.removeAll { $0.id == "changeTiri" } }
+        if !yourTiri.isUsed { list.removeAll { $0.id == "showYourTiri" } }
         for preset in settings.activePresets where !preset.command.isEmpty {
             list.append(AppCommand(id: "newTerminal:\(preset.name)", title: "New Terminal: \(preset.name)", category: "Terminal") {
                 $0.startTerminal(command: preset.command)
@@ -927,8 +932,47 @@ enum ControlHandler {
             }
             return .object([:])
 
+        case "change.facts":
+            model.yourTiri.recordFacts()
+            return .object([:])
+
+        case "change.refresh":
+            model.yourTiri.refresh()
+            return .object([:])
+
+        case "dev.your-tiri":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            let yours = model.yourTiri
+            let value = request.args["value"]?.stringValue
+            switch request.args["action"]?.stringValue {
+            case "point": yours.beginChange(surface: value)
+            case "ask":
+                guard let preset = model.runnableAgentPresets().first else { throw ControlFailure("No agent can run here.") }
+                _ = yours.startChange(sentence: value ?? "", surface: nil, preset: preset)
+            case "try": DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { yours.tryReady() }
+            case "keep": yours.keep()
+            case "back": DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { yours.back() }
+            case "plain": DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { yours.usePlain() }
+            case "yours": DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { yours.useYours() }
+            case "toggle":
+                guard let change = yours.changes.first(where: { $0.id == value }) else { throw ControlFailure("No such change.") }
+                yours.setChange(change, on: !change.isOn)
+            case "update": DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { yours.applyUpdate() }
+            case "repairs": yours.answerRepairs(value == "yes")
+            case "unfold": UserDefaults.standard.set(true, forKey: "YourTiri.open.\(value ?? "")")
+            case "where": break
+            default: throw ControlFailure("Unknown action.")
+            }
+            yours.refresh()
+            return .object(["personal": .bool(yours.isPersonalCopy), "bundle": .string(Bundle.main.bundlePath),
+                            "commit": .string(Bundle.main.object(forInfoDictionaryKey: YourTiri.commitKey) as? String ?? ""),
+                            "swiftTools": .bool(SwiftTools.areHere()),
+                            "ready": .string(yours.ready?.sentence ?? ""), "trial": .string(yours.state?.trial?.sentence ?? ""),
+                            "plainForNow": .bool(PlainForNow.isOn), "panes": .array(model.settingsPanes.map { .string($0.rawValue) }),
+                            "offers": .bool(yours.entriesAreOn), "update": .string(yours.update?.line ?? ""), "version": .string(YourTiriModel.version)])
+
         case "dev.settings":
-            guard ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1" else { throw ControlFailure("Only for a test copy.") }
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
             switch request.args["action"]?.stringValue {
             case "record": model.beginRecordingShortcut(for: try string(request, "command"))
             case "key":

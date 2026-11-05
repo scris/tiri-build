@@ -1,0 +1,64 @@
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -35,6 +35,7 @@ tree-sitter-yaml = "0.7"
+ tree-sitter-toml-ng = "0.7"
+ tree-sitter-java-orchard = "0.5"
+ tree-sitter-kotlin-ng = "1.1"
++tree-sitter-swift = "0.7.4"
+ tree-sitter-html = "0.23"
+ tree-sitter-javascript = "0.25"
+ tree-sitter-c = "0.24.1"
+diff --git a/src/supported_langs.rs b/src/supported_langs.rs
+--- a/src/supported_langs.rs
++++ b/src/supported_langs.rs
+@@ -210,6 +210,49 @@ pub static SUPPORTED_LANGUAGES: LazyLock<Vec<LangProfile>> = LazyLock::new(|| {
+             extra_comment_nodes: &[],
+             allow_parse_errors: false,
+         },
++        LangProfile {
++            name: "Swift",
++            alternate_names: &[],
++            extensions: &["swift"],
++            file_names: &[],
++            language: tree_sitter_swift::LANGUAGE.into(),
++            atomic_nodes: &[],
++            commutative_parents: vec![
++                CommutativeParent::without_delimiters("source_file", "\n\n").restricted_to_groups(&[
++                    &["import_declaration"],
++                    &["class_declaration", "protocol_declaration", "function_declaration", "typealias_declaration"],
++                ]),
++                CommutativeParent::new("class_body", " {\n", "\n\n", "\n}\n").restricted_to_groups(&[
++                    &["property_declaration"],
++                    &["function_declaration", "init_declaration", "deinit_declaration", "subscript_declaration"],
++                    &["class_declaration", "typealias_declaration"],
++                ]),
++                CommutativeParent::new("enum_class_body", " {\n", "\n\n", "\n}\n").restricted_to_groups(&[
++                    &["enum_entry"],
++                    &["property_declaration"],
++                    &["function_declaration", "init_declaration"],
++                ]),
++                CommutativeParent::new("protocol_body", " {\n", "\n\n", "\n}\n").restricted_to_groups(&[
++                    &["protocol_property_declaration"],
++                    &["protocol_function_declaration"],
++                ]),
++            ],
++            signatures: vec![
++                signature("import_declaration", vec![vec![]]),
++                signature("class_declaration", vec![vec![Field("name")]]),
++                signature("protocol_declaration", vec![vec![Field("name")]]),
++                signature("typealias_declaration", vec![vec![Field("name")]]),
++                signature("function_declaration", vec![vec![Field("name")], vec![ChildKind("parameter")]]),
++                signature("protocol_function_declaration", vec![vec![Field("name")], vec![ChildKind("parameter")]]),
++                signature("property_declaration", vec![vec![ChildKind("pattern")]]),
++                signature("protocol_property_declaration", vec![vec![ChildKind("pattern")]]),
++                signature("enum_entry", vec![vec![Field("name")]]),
++            ],
++            injections: None,
++            flattened_nodes: &[],
++            extra_comment_nodes: &[],
++            allow_parse_errors: false,
++        },
+         LangProfile {
+             name: "Kotlin",
+             alternate_names: &[],

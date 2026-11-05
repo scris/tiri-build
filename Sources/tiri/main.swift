@@ -70,6 +70,19 @@ case .local(let action):
     fputs(outcome.output, stdout)
     fputs(outcome.errors, stderr)
     exit(outcome.code)
+case .change(let action):
+    // Whatever reads this may have gone, and a build shouldn't stop halfway because of that.
+    signal(SIGPIPE, SIG_IGN)
+    let outcome = ChangeTools.run(action, context: ChangeTools.Context(item: environment["TIRI_ITEM_ID"]))
+    fputs(outcome.output, stdout)
+    fputs(outcome.errors, stderr)
+    exit(outcome.code)
+case .update(let action):
+    signal(SIGPIPE, SIG_IGN)
+    let outcome = UpdateTools.run(action, context: ChangeTools.Context(item: environment["TIRI_ITEM_ID"]))
+    fputs(outcome.output, stdout)
+    fputs(outcome.errors, stderr)
+    exit(outcome.code)
 case .request(let value, let json):
     request = value
     rawJSON = json

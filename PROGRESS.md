@@ -33,6 +33,16 @@ Real extensions and real agents:
 - **Words from a panel in a real Claude Code:** three lines waited in its input, with it idle, under bypass permissions, until they'd have been sent by a person.
 - **A plugin's Claude Code part:** a skill loaded in a shell that was already open, and was gone from that same shell once the plugin was off.
 
+### Your Tiri (2026-11-05)
+
+`scripts/e2e-your-tiri.sh` and `scripts/e2e-your-tiri-update.sh` against real test copies, with real signed release builds from Tiri's own source, and a program in a terminal the whole way. **A real Claude Code**, given only `tiri --skill` and `CHANGING.md`, asked through the app to "show how long each agent has been working": it read the guide, made the change in 5 min 33 s with its own unit test and check, and said to press Try It. After Try It the same agent process was alive, answered a new prompt, and its timer was on its row, ticking. `scripts/replay-corpus.sh` replays that patch and two others.
+
+**A whole update with real agents:** a second real Claude Code put Changes above Explorer in 3 min 18 s. A real release then renamed Explorer to Files and rewrote the line beside it. Git couldn't replay the change, so Tiri started a third real Claude Code in its own tab, with no merge tool installed. It read the old change, kept both the move and the rename, noticed its own check still looked for the old name and fixed that, and ran `tiri update repaired`. The build and check passed by themselves, Update appeared, and after it the app said Tiri 0.2.0 with 1 change, with the agent that made the change still alive.
+
+A build made only with Apple's Command Line Tools was launched and driven too: terminals, highlighting with its JIT, and a whole change through Try It.
+
+An independent review of correctness found 15 defects and one of trust found 8, including an update stuck forever after a quit, a dropped change lost, and a release put in place before its signature was read. They're fixed, with tests where a test could hold them. The exceptions are that a newer properly signed release can still be installed by running it by hand with the install flag, which only ever moves forward and only to what its maker signed, and a feed's zip is unpacked by `ditto` before its signature is read, in a folder of its own.
+
 ### Not verified yet
 
 | What | Why | How to check |
@@ -59,6 +69,11 @@ Real extensions and real agents:
 | Dragging from Finder into an agent | Dragging from the explorer into Claude had real events | Drag a file in from Finder |
 | Clicking in Settings | Panes, search, recording, conflicts, filters, find by key and narrow panes were driven through the CLI, a test-only command and real key events posted to a test copy. Those windows take no clicks or hover, so the row buttons, the hover-only Add Shortcut, the info buttons, the word chips and the Ask menu weren't pressed | Click through Settings, and point at a command with no shortcut |
 | Apple Intelligence really being unavailable | This Mac has it, so each state was pretended in a test copy. Search and titles were checked without the model, and a real title was written when it came back. Open System Settings wasn't pressed, and the screen noticing a real change by itself wasn't seen. Title every conversation looks again within 5 minutes | Turn Apple Intelligence off in System Settings with Settings open |
+| Your Tiri: folder permission across rebuilds, and a real first grant | Every build has the same designated requirement, which is what macOS keys on, but a real grant takes a click on a dialog, and test copies stay away from protected folders | Press Try It on a real install with a project in Documents, say yes once, change something else, and try that |
+| Your Tiri: real clicks and the real ⌥ | Try It, Keep, Back, the switches, the right-click items and ⌥ ran through a test-only command and a pretend key, in a hidden window. The menus' items weren't opened by a real right-click. The fold of a change's files, and its diffs, weren't opened either | Right-click a tab, change something, press each button, and hold ⌥ while opening Tiri |
+| Your Tiri: the Dock | A personal copy is another app to macOS, so it should show as its own Dock tile beside the pinned one, and clicking the pinned one should bring it forward. That's the launch path that's tested. How the two tiles look isn't, since test copies stay hidden | Use it with Tiri pinned |
+| Your Tiri: installing a real update over a notarized app | Tested with ad-hoc signed releases. Replacing a Developer ID app with its next release is run by that next release, which is what macOS's App Management allows, and that hasn't met the real protection | Publish two releases, and update from one to the other in /Applications |
+| Your Tiri: a release feed | There's no public download yet. The feed reading is written and `tiri update prepare` is what's tested, from a file. `TiriUpdateFeed` in Info.plist turns on the look every 6 hours, only on AC power and when nobody's using the Mac | Publish a feed |
 | Reduce Transparency, Increase Contrast | Left to the system's glass, as the spec asks, but not exercised | Turn them on in Accessibility settings |
 
 ## What works
@@ -105,6 +120,7 @@ Real extensions and real agents:
 - **Navigation:** quick open, command palette, all §6 keybindings, chords, breadcrumbs, find, tab drag and drop.
 - **Settings:** panes for General, Agents, Terminal, Editor, Languages, Files and Keyboard, built from one list of settings, with one search across them all. `tiri settings` is there for agents, and `tiri settings open` shows the user a pane, a setting, a command or a search. A one-click prompt goes from the screen to your agent. Keyboard shortcuts are grouped by what they're for, can be filtered and found by key, and ask before taking a key from another command; `tiri keys` does the same for agents. Nobody needs to touch JSON. The file is only where they're stored.
 
+- **Your Tiri:** change Tiri by asking. Change This… on right-click menus, an Ask row when the palette or a settings search finds nothing, `tiri change` for agents, a card with Try It, ten minutes of Keep and Back, a list of your changes as sentences with switches, Plain Tiri, ⌥ at launch, and going back by itself when a copy won't start. `tiri update` carries changes onto the next release: Git, then a syntax-aware merge when it's there, then a build, then checks, then repair by your own agent, leaving out, and retiring. Builds with Apple's free Command Line Tools. See the README.
 - **Signing:** `scripts/release.sh` makes a build with a Developer ID, the hardened runtime and a stapled notarization, and refuses before uploading if any program in it isn't ready. JavaScript still gets its JIT under the hardened runtime. Terminals keep access to the microphone, camera and scripting other apps, because under the hardened runtime they'd otherwise be refused with no question shown.
 
 ## What is stubbed or thin
@@ -129,6 +145,13 @@ A language server isn't counted below, because it's optional and only runs once 
 | Open text, code or image under 5 MB | < 100 ms | 15–30 ms |
 | Colors on 60 visible lines | < 16 ms | 1.2 ms |
 | Filtering 5,000 names for completion | < 16 ms | 1.9 ms |
+| Cold launch to window, for someone who has never changed Tiri | < 500 ms | 181 ms. What this adds is one failed file open |
+| Cold launch of a personal copy | < 500 ms | 190 ms, and the app it's handed over from first |
+| Switching: Try It, Back, Plain Tiri, with terminals still running | (the plan said a third of a second) | 0.35–0.5 s from the press to answering, and 0.8 s the first time a build runs. That's the installed app starting, handing over and the copy coming up |
+| A change: fast build, after one edit | about 5 s | 3 s |
+| A change: the copy they try | about 30 s after an edit | 27–30 s, or 90 s from nothing |
+| JavaScript engine in a personal copy, 10,000 lines | same as a release | 192 ms, against 187 ms |
+| The source inside the app | 3 MB in the plan | 5.1 MB, since the code has grown |
 | Cold launch to window, with 50 plugins, 10 on | < 500 ms | 210–240 ms, the higher on a signed release |
 | Open a plugin panel | < 100 ms | 54–78 ms, the first included. Each plugin has its own storage, so there's no warm page to reuse |
 | Reading 50 plugins, off the main thread | < 150 ms, as a guard. Launch doesn't wait for it | 92–122 ms |
@@ -143,6 +166,8 @@ A language server isn't counted below, because it's optional and only runs once 
 Open times run from the request until the content is showing, except for Office and PDF, where they stop when the viewer is attached and Quick Look's own rendering continues after that.
 
 ## Known bugs
+
+- The first time an agent opens Your Tiri's folder, Claude Code shows its folder-trust screen, with "No, exit" selected, before it reads the request. Tiri doesn't change an agent's settings to skip that.
 
 - ⌘-clicking a labelled hyperlink whose target has no scheme can still show SwiftTerm's "Link blocked" alert, because SwiftTerm doesn't expose link targets. Text that looks like a path never reaches it. Fixing it needs a patch to SwiftTerm.
 - In dark mode, photos inside a PDF or Office file invert with the page, because the viewer can't tell them apart. The moon button shows true colors.
