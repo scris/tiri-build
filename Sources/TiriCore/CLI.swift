@@ -314,6 +314,8 @@ public enum CLIParser {
             guard args.count == 2 else { throw UsageError("usage: tiri dev-plugin-export <name> <file>   (test copies only)") }
             return request("dev.plugin-export", ["name": .string(args[0]), "path": .string(args[1])])
 
+        case "dev-browser":
+            return request("dev.browser")
         case "dev-drag":
             // A mouse drag through the app's own queue, from one point to another, in the window from the top left.
             let numbers = args.first.map { $0.split(separator: ",").compactMap { Double($0) } } ?? []

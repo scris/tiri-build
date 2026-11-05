@@ -935,6 +935,7 @@ struct WebHeader: View {
             .frame(width: 24, height: 24)
             .contentShape(Rectangle())
             .help(controller.forceDarkActive ? "Forced dark is on" : "Force dark mode on this page")
+            BrowserButton(controller: controller)
             if let filePath {
                 Button { model.openExternally(path: filePath) } label: {
                     Image(systemName: "arrow.up.forward.square")

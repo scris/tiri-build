@@ -161,7 +161,9 @@ final class PluginPanelContext: NSObject, WKScriptMessageHandlerWithReply {
             let now = ProcessClock.now()
             guard now - lastLink > 1000 else { return .cancel }
             lastLink = now
-            model.openWeb(url: target.absoluteString, split: nil, in: model.workspace(containing: itemID)?.id)
+            let workspace = model.workspace(containing: itemID)?.id
+            let openHere = { [weak model] in _ = model?.openWeb(url: target.absoluteString, split: nil, in: workspace) }
+            if !model.sendsToBrowser(target, openHere: openHere) { openHere() }
         }
         return .cancel
     }

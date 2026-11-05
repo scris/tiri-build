@@ -525,7 +525,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
             model.open(path: url.path(percentEncoded: false), intent: .pinned)
             model.requestFocus()
         case "http", "https":
-            model.openWeb(url: url.absoluteString, split: nil)
+            let openHere = { [weak model] in _ = model?.openWeb(url: url.absoluteString, split: nil) }
+            if !model.sendsToBrowser(url, openHere: openHere) { openHere() }
         case "mailto":
             NSWorkspace.shared.open(url)
         default:

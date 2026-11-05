@@ -267,6 +267,10 @@ struct TabContextMenu: View {
             }
             Button("Open in External Editor") { model.openExternally(path: path) }
         }
+        if case .web = item.content, (model.existingController(for: item.id) as? WebController)?.addressForBrowser != nil {
+            Divider()
+            Button("Open in \(DefaultBrowser.name)") { model.movePageToBrowser(item.id) }
+        }
         if case .terminal = item.content, model.runtimes[item.id]?.status == .exited {
             Divider()
             Button("Restart") { (model.existingController(for: item.id) as? TerminalController)?.restart() }

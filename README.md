@@ -73,6 +73,8 @@ Agents working on a page can read it for themselves, so you don't have to copy a
 
 You've got two buttons of your own beside the address. A count appears when the page has errors, and clicking it quotes them in your agent. ◎ lets you point at something on the page: click it and your agent gets where it is and its HTML. Esc cancels. Scripts on the page can't see that you're picking.
 
+Your browser's own icon is there too, in a tab and in a Peek. Click it and the page moves to your browser, where you're signed in. Its menu has **Always Open github.com in Chrome**, or whichever site and browser it is: from then on, links to that site go straight there, from a terminal, a page, a document or an agent's `tiri preview`. A note says where it went, with **Open Here** for the one time you want it in Tiri, and the same menu takes the site off again. Settings, under General, lists them all.
+
 ## Past conversations
 
 The clock in the toolbar lists your Claude Code, Codex and Grok conversations, this workspace's first. So do ⇧⌘H, **Past Conversations…** in the **+** menu and in an empty tab, and the clock in the Agents section. Click one, or press Return, and you're back in it: in a terminal, in the folder it was in, or in the terminal it's already running in. If it can't be carried on, because its folder has gone, you get to read it instead. **Read**, on the row you're on or pointing at, or ⌘↩, shows it as a document, with what was said and what was done in a line each, and **Hand To** there asks another agent to read it and carry on. Tiri only reads the agents' own files, and what it writes for reading stays private to you. `tiri conversations [words]`, `read`, `open`, `reopen` and `hand` do the same for agents.

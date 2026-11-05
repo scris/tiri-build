@@ -72,6 +72,9 @@ struct PeekView: View {
                 Spacer(minLength: 8)
                 if case .web = item.content, let web = model.controller(for: item.id) as? WebController {
                     PeekWebControls(controller: web)
+                } else if case .file = item.content, let page = model.controller(for: item.id) as? WebController {
+                    // A local page is a page: it can go to the browser too.
+                    BrowserButton(controller: page, glass: true)
                 }
                 if let path = item.filePath {
                     FileActions(item: item, path: path)
@@ -171,6 +174,7 @@ struct PeekWebControls: View {
                 Image(systemName: controller.isLoading ? "xmark" : "arrow.clockwise")
             }
             .help(controller.isLoading ? "Stop" : "Reload (⌘R)")
+            BrowserButton(controller: controller, glass: true)
         }
         .buttonStyle(.glass)
     }

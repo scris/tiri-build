@@ -119,6 +119,10 @@ public enum SettingsSchema {
               explanation: "In dark mode, show PDF and Office pages dark too.",
               note: "The moon button above a file shows its true colors.",
               kind: .toggle, value: { .bool($0.documentsForceDark) }),
+        .init(key: "web.openInBrowser", pane: .general, group: "Links", title: "Open in your browser",
+              explanation: "Sites that open in your own browser instead of in Tiri, like ones you're signed in to there.",
+              note: "The browser button on any page adds its site, or takes it off.",
+              kind: .list(placeholder: "Add a site, like github.com"), value: { strings($0.webOpenInBrowser) }),
 
         .init(key: "terminal.presets", pane: .agents, group: "", title: "New terminal menu",
               explanation: "What the + button offers. Each entry is a name and the command it runs. Adding `\"enabled\": false` keeps an entry but hides it. `tiri agents` is the easy way to change this.",

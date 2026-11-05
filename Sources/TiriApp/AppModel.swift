@@ -104,6 +104,8 @@ final class AppModel {
     var runtimes: [ItemID: TerminalRuntime] = [:] { didSet { scheduleAgentRows() } }
     var banner: AppBanner?
     var toasts: [AppToast] = []
+    /// What a test copy would have opened in a browser, instead of opening it.
+    @ObservationIgnored var sentToBrowser: [String] = []
     var find: FindState?
     var tabDrag: TabDragState?
     var palette: PaletteModel?
@@ -1027,7 +1029,10 @@ final class AppModel {
         }
     }
 
-    func openWebFromTerminal(_ url: URL, forceTab: Bool) {
+    func openWebFromTerminal(_ url: URL, forceTab: Bool, keepHere: Bool = false) {
+        if !keepHere, sendsToBrowser(url, openHere: { [weak self] in self?.openWebFromTerminal(url, forceTab: forceTab, keepHere: true) }) {
+            return
+        }
         if forceTab || settings.terminalLinkOpens == .tab {
             openWeb(url: url.absoluteString, split: nil)
             return

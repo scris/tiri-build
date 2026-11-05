@@ -239,6 +239,14 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
             decisionHandler(.allow)
             return
         }
+        // A click to a site kept in the browser goes there. Not one within it: a page someone chose to have here stays here.
+        if navigationAction.navigationType == .linkActivated, navigationAction.targetFrame?.isMainFrame ?? true,
+           let rule = BrowserRules.matching(url, in: model.settings.webOpenInBrowser),
+           webView.url.flatMap({ BrowserRules.matching($0, in: [rule]) }) == nil,
+           model.sendsToBrowser(url, openHere: { [weak self] in self?.load(url) }) {
+            decisionHandler(.cancel)
+            return
+        }
         switch url.scheme?.lowercased() {
         case "http", "https", "about", "data", "blob":
             decisionHandler(.allow)
@@ -315,7 +323,9 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         let now = ProcessClock.now()
         guard now - lastPopupAt > 1000 else { return nil }
         lastPopupAt = now
-        model.openWeb(url: url.absoluteString, split: nil, in: model.workspace(containing: itemID)?.id)
+        let workspace = model.workspace(containing: itemID)?.id
+        let openHere = { [weak self] in _ = self?.model.openWeb(url: url.absoluteString, split: nil, in: workspace) }
+        if !model.sendsToBrowser(url, openHere: openHere) { openHere() }
         return nil
     }
 

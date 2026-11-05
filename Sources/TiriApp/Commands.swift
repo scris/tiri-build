@@ -133,6 +133,9 @@ extension AppModel {
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 model.frontWebController?.reload()
             },
+            AppCommand(id: "webOpenInBrowser", title: "Web: Open in \(DefaultBrowser.name)", category: "Web") { model in
+                if let page = model.frontWebController { model.movePageToBrowser(page.itemID) }
+            },
             AppCommand(id: "webDarkOn", title: "Force Dark On", category: "Web") { model in
                 model.setForceDark(true, item: model.active.focused.active)
             },
@@ -656,8 +659,13 @@ enum ControlHandler {
             if url?.isFileURL == true, let path = url?.path, !FileManager.default.fileExists(atPath: path) {
                 throw ControlFailure("No such file: \(path)")
             }
-            guard url?.scheme != nil else { throw ControlFailure("Not a URL or path: \(target)") }
-            return .object(["item": .string(model.openWeb(url: target, split: split(request), in: sourceWorkspace))])
+            guard let url, url.scheme != nil else { throw ControlFailure("Not a URL or path: \(target)") }
+            // The person keeps this site in their browser, so that's where it goes, and the agent is told.
+            let direction = split(request)
+            if model.sendsToBrowser(url, openHere: { _ = model.openWeb(url: target, split: direction, in: sourceWorkspace) }) {
+                return .object(["browser": .string(url.absoluteString)])
+            }
+            return .object(["item": .string(model.openWeb(url: target, split: direction, in: sourceWorkspace))])
 
         case "term":
             var cwd = request.args["cwd"]?.stringValue
@@ -1183,6 +1191,12 @@ enum ControlHandler {
                 NSApp.postEvent(event, atStart: false)
             }
             return .object([:])
+
+        case "dev.browser":
+            // What a test copy would have opened in a browser: it never opens one.
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            return .object(["sent": .array(model.sentToBrowser.map(JSONValue.string)), "rules": .array(model.settings.webOpenInBrowser.map(JSONValue.string)),
+                            "peek": .string(model.active.peek.map { model.title(for: $0) } ?? "")])
 
         case "dev.drag":
             // The left button down, moved in steps, and up: what a real drag sends, for the monitors to see first.

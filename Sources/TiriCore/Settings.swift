@@ -80,6 +80,8 @@ public struct TiriSettings: Equatable, Sendable {
     public var explorerAutoReveal = true
     public var explorerCompactFolders = true
     public var webForceDark = true
+    /// Sites that open in the person's own browser, not in Tiri. See `BrowserRules`.
+    public var webOpenInBrowser: [String] = []
     public var documentsForceDark = true
     public var notificationsEnabled = true
 
@@ -142,6 +144,9 @@ public struct TiriSettings: Equatable, Sendable {
 
       // In dark mode, darken web previews that have no dark mode of their own.
       "web.forceDark": true,
+      // Sites that open in your own browser instead of in Tiri, like ones you're signed in to there.
+      // "github.com" covers all of it, "github.com/acme" one place on it.
+      "web.openInBrowser": [],
       // In dark mode, show PDF and Office pages dark too. The moon button shows true colors.
       "documents.forceDark": true,
 
@@ -257,6 +262,7 @@ public struct TiriSettings: Equatable, Sendable {
         try bool("explorer.autoReveal") { settings.explorerAutoReveal = $0 }
         try bool("explorer.compactFolders") { settings.explorerCompactFolders = $0 }
         try bool("web.forceDark") { settings.webForceDark = $0 }
+        try strings("web.openInBrowser") { settings.webOpenInBrowser = $0.compactMap(BrowserRules.tidy) }
         try bool("documents.forceDark") { settings.documentsForceDark = $0 }
         try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
         try bool("change.offer") { settings.changeEntries = $0 }
