@@ -232,6 +232,7 @@ public enum CopyFiles {
 /// would put up Apple's installer on a Mac without them.
 public enum SwiftTools {
     public static func areHere(developerDirectory: String? = nil) -> Bool {
+        if developerDirectory == nil, DeveloperTools.pretendMissing { return false }
         let found = developerDirectory ?? Tool.run("/usr/bin/xcode-select", ["-p"]).output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !found.isEmpty else { return false }
         // The Command Line Tools keep it in `usr/bin`, and Xcode keeps it in its toolchain.

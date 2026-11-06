@@ -266,8 +266,13 @@ public enum Git {
             argv.forEach { free($0) }
             envp.forEach { free($0) }
         }
+        // With no git but Apple's stand-in, there's no repository to see, rather than Apple's installer on every look.
+        guard let git = DeveloperTools.git else {
+            close(writeEnd)
+            return nil
+        }
         var pid: pid_t = 0
-        let spawned = posix_spawn(&pid, "/usr/bin/git", &actions, &attributes, argv, envp)
+        let spawned = posix_spawn(&pid, git, &actions, &attributes, argv, envp)
         close(writeEnd)
         guard spawned == 0 else { return nil }
 
@@ -318,6 +323,16 @@ public enum Git {
             line.hasPrefix("/") ? connection.map.local(String(line)) : String(line)
         }
         return (result.status, Data(lines.joined(separator: "\n").utf8))
+    }
+
+    /// Without running git: a `.git` in the folder or above it. Only for saying git is missing.
+    public static func looksLikeRepository(_ folder: String) -> Bool {
+        var current = folder
+        while !current.isEmpty, current != "/" {
+            if FileManager.default.fileExists(atPath: current + "/.git") { return true }
+            current = (current as NSString).deletingLastPathComponent
+        }
+        return false
     }
 
     public static func repositoryRoot(of folder: String) -> String? {
