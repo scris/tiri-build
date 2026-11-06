@@ -70,17 +70,23 @@ struct PeekView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                if case .web = item.content, let web = model.controller(for: item.id) as? WebController {
-                    PeekWebControls(controller: web)
-                } else if case .file = item.content, let page = model.controller(for: item.id) as? WebController {
-                    // A local page is a page: it can go to the browser too.
-                    BrowserButton(controller: page, glass: true)
+                // What the content can do: quiet glyphs, so the way to keep it is the one thing that stands out.
+                HStack(spacing: 10) {
+                    if case .web = item.content, let web = model.controller(for: item.id) as? WebController {
+                        PeekWebControls(controller: web)
+                        OpenElsewhereButton(page: web, path: nil)
+                    }
+                    if let path = item.filePath {
+                        FileActions(item: item, path: path)
+                    } else if case .diff(let spec) = item.content {
+                        FileActions(item: item, path: spec.path)
+                    }
                 }
-                if let path = item.filePath {
-                    FileActions(item: item, path: path)
-                } else if case .diff(let spec) = item.content {
-                    FileActions(item: item, path: spec.path)
-                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .font(.system(size: 13))
+                .controlSize(.regular)
+                .padding(.trailing, 6)
                 Button {
                     model.promotePeek(split: .right)
                 } label: {
@@ -156,26 +162,27 @@ struct PeekView: View {
     }
 }
 
-/// A page in a Peek has to be able to go back and reload, the same as one in a tab.
+/// A page in a Peek has to be able to go back and reload, the same as one in a tab. Back and forward
+/// only show when there's somewhere to go: most Peeks are one page.
 struct PeekWebControls: View {
     @Bindable var controller: WebController
 
     var body: some View {
-        HStack(spacing: 4) {
-            Button { controller.goBack() } label: { Image(systemName: "chevron.left") }
-                .disabled(!controller.canGoBack)
-                .help("Back")
-            Button { controller.goForward() } label: { Image(systemName: "chevron.right") }
-                .disabled(!controller.canGoForward)
-                .help("Forward")
-            Button {
-                if controller.isLoading { controller.webView.stopLoading() } else { controller.reload() }
-            } label: {
-                Image(systemName: controller.isLoading ? "xmark" : "arrow.clockwise")
-            }
-            .help(controller.isLoading ? "Stop" : "Reload (⌘R)")
-            BrowserButton(controller: controller, glass: true)
+        if controller.canGoBack || controller.canGoForward {
+            glyph("chevron.left", "Back", enabled: controller.canGoBack) { controller.goBack() }
+            glyph("chevron.right", "Forward", enabled: controller.canGoForward) { controller.goForward() }
         }
-        .buttonStyle(.glass)
+        glyph(controller.isLoading ? "xmark" : "arrow.clockwise", controller.isLoading ? "Stop" : "Reload (⌘R)", enabled: true) {
+            if controller.isLoading { controller.webView.stopLoading() } else { controller.reload() }
+        }
+    }
+
+    private func glyph(_ symbol: String, _ help: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).frame(width: 24, height: 24).contentShape(Rectangle())
+        }
+        .disabled(!enabled)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }

@@ -370,6 +370,19 @@ public enum ExternalEditor {
         "/usr/local/bin", "/opt/homebrew/bin", NSHomeDirectory() + "/.local/bin", NSHomeDirectory() + "/bin",
     ]
 
+    /// What to call the editor a file would open in: the first one installed, by its own name.
+    public static func displayName(of editors: [String], pathEnv: String?) -> String {
+        guard let found = editors.first(where: { locate($0, pathEnv: pathEnv) != nil }) else { return "External Editor" }
+        switch found.lowercased() {
+        case "code": return "VS Code"
+        case "zed": return "Zed"
+        case "cursor": return "Cursor"
+        case "subl": return "Sublime Text"
+        case "mate": return "TextMate"
+        default: return (found as NSString).lastPathComponent.capitalized
+        }
+    }
+
     public static func locate(_ editor: String, pathEnv: String?) -> String? {
         if editor.hasPrefix("/") {
             return FileManager.default.isExecutableFile(atPath: editor) ? editor : nil

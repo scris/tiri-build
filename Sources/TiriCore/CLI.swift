@@ -316,6 +316,10 @@ public enum CLIParser {
 
         case "dev-browser":
             return request("dev.browser")
+        case "dev-toolbar":
+            // The window toolbar as icons only, or with their names under them, as a right-click on it chooses.
+            guard args.count == 1, ["icons", "both"].contains(args[0]) else { throw UsageError("usage: tiri dev-toolbar icons|both   (test copies only)") }
+            return request("dev.toolbar", ["mode": .string(args[0])])
         case "dev-drag":
             // A mouse drag through the app's own queue, from one point to another, in the window from the top left.
             let numbers = args.first.map { $0.split(separator: ",").compactMap { Double($0) } } ?? []

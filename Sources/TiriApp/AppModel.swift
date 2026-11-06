@@ -62,6 +62,9 @@ struct AppToast: Identifiable {
     var tint: Color
     var actionTitle: String?
     var action: (() -> Void)?
+    /// A quieter second choice, shown before the main one.
+    var otherTitle: String?
+    var otherAction: (() -> Void)?
 }
 
 struct FindState: Equatable {
@@ -1064,11 +1067,21 @@ final class AppModel {
         } else {
             let name = (path as NSString).lastPathComponent
             showToast(title: "\(name) isn't in this workspace", detail: path, symbol: "folder.badge.plus", tint: .accentColor,
-                      actionTitle: "Add Folder") { [weak self] in
+                      actionTitle: "Add Folder", duration: 10,
+                      other: ("Show in Finder", { [weak self] in self?.showInFinder(path) })) { [weak self] in
                 self?.addFolder(path)
                 self?.revealInTree(path)
             }
         }
+    }
+
+    /// Finder, with the thing selected. A test copy only writes it down: Finder would come to the front.
+    func showInFinder(_ path: String) {
+        if Self.isTestCopy {
+            sentToBrowser.append("finder:" + path)
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
     func revealInTree(_ path: String) {
@@ -2987,8 +3000,10 @@ final class AppModel {
 
     @discardableResult
     func showToast(title: String, detail: String?, symbol: String, tint: Color,
-                   actionTitle: String? = nil, duration: TimeInterval = 6, action: (() -> Void)? = nil) -> UUID {
-        let toast = AppToast(title: title, detail: detail, symbol: symbol, tint: tint, actionTitle: actionTitle, action: action)
+                   actionTitle: String? = nil, duration: TimeInterval = 6, other: (title: String, action: () -> Void)? = nil,
+                   action: (() -> Void)? = nil) -> UUID {
+        let toast = AppToast(title: title, detail: detail, symbol: symbol, tint: tint, actionTitle: actionTitle, action: action,
+                             otherTitle: other?.title, otherAction: other?.action)
         withAnimation(.smooth(duration: 0.25)) {
             toasts.append(toast)
             if toasts.count > 3 { toasts.removeFirst() }

@@ -287,7 +287,7 @@ Beside the address bar:
 
 - **An error count** appears when the page has errors. Click it to quote them in your agent.
 - **◎** lets you point at something on the page. Click an element, and your agent gets its location and HTML. Esc cancels. Scripts on the page can't detect that you're picking.
-- **Your browser's icon** moves the page to your own browser, where you're signed in. Its menu has **Always Open github.com in Chrome**, or whichever site and browser it is. From then on, links to that site go straight there, whether from a terminal, a page, a document or an agent's `tiri preview`. A note says where each one went, with **Open Here** for the times you want it in Tiri. **Settings → General** lists these sites.
+- **↗** moves the page to your own browser, where you're signed in; for a file, it opens your editor. Hold it, or right-click it, for the rest: your editor, **Show in Finder**, and **Always Open github.com in Chrome**, or whichever site and browser it is. From then on, links to that site go straight there, whether from a terminal, a page, a document or an agent's `tiri preview`. A note says where each one went, with **Open Here** for the times you want it in Tiri. **Settings → General** lists these sites.
 
 ---
 

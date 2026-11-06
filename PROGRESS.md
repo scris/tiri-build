@@ -170,7 +170,7 @@ Open times run from the request until the content is showing, except for Office 
 
 - The first time an agent opens Your Tiri's folder, Claude Code shows its folder-trust screen, with "No, exit" selected, before it reads the request. Tiri doesn't change an agent's settings to skip that.
 
-- ⌘-clicking a labelled hyperlink whose target has no scheme can still show SwiftTerm's "Link blocked" alert, because SwiftTerm doesn't expose link targets. Text that looks like a path never reaches it. Fixing it needs a patch to SwiftTerm.
+- ⌘-clicking a labelled hyperlink is Tiri's own now: it reads the target from SwiftTerm's terminal (found by reflection, since a Mac view doesn't hand it out) and opens it, so SwiftTerm's "Link blocked" alert can't appear. Tested through `tiri follow` with a relative target, `file://host/…` and a custom scheme; a real mouse ⌘-click on one was never pressed. If a SwiftTerm update renames its `terminal` property, links fall back to SwiftTerm's handling.
 - In dark mode, photos inside a PDF or Office file invert with the page, because the viewer can't tell them apart. The moon button shows true colors.
 - Large Office files show Quick Look's spinner for a few seconds before they appear.
 - Ignoring `claude -p` runs depends on `CLAUDE_CODE_ENTRYPOINT`, read from real hooks in Claude Code 2.1.318. If Claude Code changes it, those runs report again.
@@ -208,8 +208,7 @@ Open times run from the request until the content is showing, except for Office 
 
 ## Next tasks
 
-1. Patch SwiftTerm so a labelled hyperlink with no scheme can't show "Link blocked", and read link targets directly.
-2. Highlighting while typing in a notebook cell, and a way to reopen a file in another encoding.
-3. A second window with its own workspace.
-4. An MCP wrapper around the control API, now that the CLI is stable.
-5. What the LeetCode and Todo Tree ports found missing from plugins, most wanted first: coloring text in the editor, which is the biggest loss in Todo Tree, then right-click menus on sidebar rows, asking for a line of text or a choice without opening a terminal, knowing which files are open and when the front one changes, a file-change event, colors on sidebar rows, marks on files in the explorer, and saving the file in front before a command runs. Later, installing from a link, a store, probably a plain JSON index, signed `.tiriplugin` files, and an OS sandbox for their programs, which hasn't been tried. Snippets and AI ghost text are decided against, and so is any Git control beyond fetch, pull and push: the rest is for agents.
+1. Highlighting while typing in a notebook cell, and a way to reopen a file in another encoding.
+2. A second window with its own workspace.
+3. An MCP wrapper around the control API, now that the CLI is stable.
+4. What the LeetCode and Todo Tree ports found missing from plugins, most wanted first: coloring text in the editor, which is the biggest loss in Todo Tree, then right-click menus on sidebar rows, asking for a line of text or a choice without opening a terminal, knowing which files are open and when the front one changes, a file-change event, colors on sidebar rows, marks on files in the explorer, and saving the file in front before a command runs. Later, installing from a link, a store, probably a plain JSON index, signed `.tiriplugin` files, and an OS sandbox for their programs, which hasn't been tried. Snippets and AI ghost text are decided against, and so is any Git control beyond fetch, pull and push: the rest is for agents.

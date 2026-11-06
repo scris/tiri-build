@@ -63,26 +63,11 @@ struct MainToolbar: ToolbarContent {
 
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            // One button, one menu. Its size and shape match the buttons beside it.
-            Menu {
-                ForEach(model.settings.activePresets) { preset in
-                    if model.active.folders.count > 1 {
-                        Menu(preset.name) {
-                            ForEach(model.active.folders, id: \.self) { folder in
-                                Button(folderLabel(folder)) { model.newTerminal(command: preset.command, cwd: folder) }
-                            }
-                        }
-                    } else {
-                        Button(preset.name) { model.startTerminal(command: preset.command) }
-                    }
-                }
-                Divider()
-                Button("Past Conversations…") { model.openConversationPicker() }
-                Button("Manage Agents…") { model.openAgentSettings() }
-            } label: {
-                Label("New Terminal", systemImage: "plus")
+            // One button, one menu. A button and not a SwiftUI menu, because a toolbar drops a menu's title
+            // when it shows icons and text, and this one would be the only one without words.
+            Button { NewMenu.popUp(model: model) } label: {
+                Label("New", systemImage: "plus")
             }
-            .menuIndicator(.hidden)
             .help("New terminal or agent")
 
             Button { model.openConversationPicker() } label: {
@@ -91,7 +76,7 @@ struct MainToolbar: ToolbarContent {
             .help("Find and go back to a past conversation (⇧⌘H)")
 
             Button { model.chooseFilesForAgent() } label: {
-                Label("Add Files or Images to Agent", systemImage: "paperclip")
+                Label("Add Files", systemImage: "paperclip")
             }
             .help("Add files or images to your agent (⇧⌘L)")
 
@@ -108,9 +93,56 @@ struct MainToolbar: ToolbarContent {
     }
 }
 
+/// The + button's menu: an agent or a shell, in which folder when there are several.
+@MainActor
+enum NewMenu {
+    private final class Handler: NSObject {
+        let run: () -> Void
+        init(_ run: @escaping () -> Void) { self.run = run }
+        @objc func fire() { run() }
+    }
+
+    static func popUp(model: AppModel) {
+        let menu = NSMenu()
+        var handlers: [Handler] = []
+        func item(_ title: String, _ run: @escaping () -> Void) -> NSMenuItem {
+            let handler = Handler(run)
+            handlers.append(handler)
+            let item = NSMenuItem(title: title, action: #selector(Handler.fire), keyEquivalent: "")
+            item.target = handler
+            item.representedObject = handler
+            return item
+        }
+        for preset in model.settings.activePresets {
+            if model.active.folders.count > 1 {
+                let sub = NSMenu()
+                for folder in model.active.folders {
+                    sub.addItem(item(MainToolbar.folderLabel(folder, in: model)) { model.newTerminal(command: preset.command, cwd: folder) })
+                }
+                let parent = NSMenuItem(title: preset.name, action: nil, keyEquivalent: "")
+                parent.submenu = sub
+                menu.addItem(parent)
+            } else {
+                menu.addItem(item(preset.name) { model.startTerminal(command: preset.command) })
+            }
+        }
+        menu.addItem(.separator())
+        menu.addItem(item("Past Conversations…") { model.openConversationPicker() })
+        menu.addItem(item("Manage Agents…") { model.openAgentSettings() })
+        // Under the button that was pressed, the way a toolbar menu opens.
+        guard let event = NSApp.currentEvent, let window = event.window, let content = window.contentView else {
+            menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+            return
+        }
+        let point = content.convert(event.locationInWindow, from: nil)
+        menu.popUp(positioning: nil, at: NSPoint(x: point.x - 12, y: point.y - 22), in: content)
+        _ = handlers
+    }
+}
+
 extension MainToolbar {
     /// Two folders can share a name, and the choice decides where an agent works.
-    private func folderLabel(_ folder: String) -> String {
+    static func folderLabel(_ folder: String, in model: AppModel) -> String {
         let name = (folder as NSString).lastPathComponent
         let shared = model.active.folders.filter { ($0 as NSString).lastPathComponent == name }.count > 1
         return shared ? (folder as NSString).abbreviatingWithTildeInPath : name
@@ -822,15 +854,7 @@ struct FileActions: View {
             .font(.caption)
             .help(markdown.showingSource ? "Show rendered \(markdown.kindName)" : "Show \(markdown.kindName) source")
         }
-        Button {
-            model.openExternally(path: path, line: nil, col: nil)
-        } label: {
-            Label("Open in External Editor", systemImage: "arrow.up.forward.square")
-                .labelStyle(.iconOnly)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .help("Open in External Editor")
+        OpenElsewhereButton(page: model.controller(for: item.id) as? WebController, path: path)
     }
 }
 
@@ -935,16 +959,7 @@ struct WebHeader: View {
             .frame(width: 24, height: 24)
             .contentShape(Rectangle())
             .help(controller.forceDarkActive ? "Forced dark is on" : "Force dark mode on this page")
-            BrowserButton(controller: controller)
-            if let filePath {
-                Button { model.openExternally(path: filePath) } label: {
-                    Image(systemName: "arrow.up.forward.square")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
-                .help("Open in External Editor")
-            }
+            OpenElsewhereButton(page: controller, path: filePath)
         }
         .padding(.horizontal, 8)
         .frame(height: 34)
@@ -1139,6 +1154,14 @@ struct ToastStack: View {
                             }
                         }
                         .frame(width: textWidth(toast), alignment: .leading)
+                        if let title = toast.otherTitle {
+                            Button(title) {
+                                toast.otherAction?()
+                                model.dismissToast(toast.id)
+                            }
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                        }
                         if let title = toast.actionTitle {
                             Button(title) {
                                 toast.action?()
@@ -1167,7 +1190,7 @@ struct ToastStack: View {
     private func textWidth(_ toast: AppToast) -> CGFloat {
         let title = (toast.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .medium)]).width
         let detail = ((toast.detail ?? "") as NSString).size(withAttributes: [.font: NSFont.preferredFont(forTextStyle: .caption1)]).width
-        return min(max(title, detail).rounded(.up) + 1, toast.actionTitle == nil ? 300 : 220)
+        return min(max(title, detail).rounded(.up) + 1, toast.actionTitle == nil ? 300 : toast.otherTitle == nil ? 220 : 190)
     }
 }
 

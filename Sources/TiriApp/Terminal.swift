@@ -175,14 +175,29 @@ final class TiriTerminalView: LocalProcessTerminalView {
     /// isn't taken as pressing Return. SwiftTerm keeps its terminal to itself on a Mac, and this is only
     /// looked at when something's about to be pasted. Not being able to tell counts as no.
     var holdsPastes: Bool {
+        swiftTermTerminal?.bracketedPasteMode ?? false
+    }
+
+    /// SwiftTerm's own terminal, which a Mac view doesn't hand out.
+    private var swiftTermTerminal: Terminal? {
         var mirror: Mirror? = Mirror(reflecting: self)
         while let current = mirror {
             for child in current.children where child.label == "terminal" {
-                if let terminal = child.value as? Terminal { return terminal.bracketedPasteMode }
+                if let terminal = child.value as? Terminal { return terminal }
             }
             mirror = current.superclassMirror
         }
-        return false
+        return nil
+    }
+
+    /// Where a hyperlink a program printed (OSC 8) really goes, if there's one at this screen cell.
+    /// Read here so that SwiftTerm never gets the click: its own handling puts up a "Link blocked"
+    /// alert for targets it can't open itself, such as a path with no scheme or `file://host/…`.
+    func hyperlinkTarget(row: Int, column: Int) -> String? {
+        guard row >= 0, column >= 0, let terminal = swiftTermTerminal else { return nil }
+        return terminal.terminalLock.withLock {
+            terminal.link(at: .screen(Position(col: column, row: row)), mode: .explicitOnly)
+        }
     }
 
     enum LinkTarget {
@@ -202,19 +217,24 @@ final class TiriTerminalView: LocalProcessTerminalView {
     // MARK: Cmd-click
 
     override func mouseDown(with event: NSEvent) {
-        // Anything that looks like a path is Tiri's to find, so SwiftTerm never gets to put up its
-        // "Link blocked" alert for one. Other text may be a labelled hyperlink, which SwiftTerm
-        // resolves and hands back through `requestOpenLink`.
+        // Every ⌘-click is Tiri's: a hyperlink goes where it points, and anything that looks like a
+        // path is found. SwiftTerm only sees one that's neither, so it never puts up "Link blocked".
         if event.modifierFlags.contains(.command) {
-            let variants = logicalLines(atWindowPoint: event.locationInWindow)
             let forceTab = event.modifierFlags.contains(.shift)
-            var followed = followLink(in: variants, forceTab: forceTab)
+            let local = convert(event.locationInWindow, from: nil)
+            let size = cellSize
+            let cell: (row: Int, column: Int)? = size.width > 0 && size.height > 0
+                ? (Int((bounds.height - local.y) / size.height), Int(local.x / size.width)) : nil
+            var followed = false
+            if let cell, let target = hyperlinkTarget(row: cell.row, column: cell.column) {
+                openHyperlink(target, forceTab: forceTab)
+                followed = true
+            }
             if !followed {
-                let local = convert(event.locationInWindow, from: nil)
-                let size = cellSize
-                if size.width > 0, size.height > 0 {
-                    followed = followLocationUnderPath(row: Int((bounds.height - local.y) / size.height), column: Int(local.x / size.width), forceTab: forceTab)
-                }
+                followed = followLink(in: logicalLines(atWindowPoint: event.locationInWindow), forceTab: forceTab)
+            }
+            if !followed, let cell {
+                followed = followLocationUnderPath(row: cell.row, column: cell.column, forceTab: forceTab)
             }
             if followed {
                 swallowNextMouseUp = true
@@ -282,6 +302,10 @@ final class TiriTerminalView: LocalProcessTerminalView {
     /// What a ⌘-click does, and what `tiri follow` does.
     /// Returns false when the text there isn't a link and doesn't look like a path at all.
     func followLink(row: Int, column: Int, forceTab: Bool) -> Bool {
+        if let target = hyperlinkTarget(row: row, column: column) {
+            openHyperlink(target, forceTab: forceTab)
+            return true
+        }
         if followLink(in: logicalLines(row: row, column: column), forceTab: forceTab) { return true }
         return followLocationUnderPath(row: row, column: column, forceTab: forceTab)
     }

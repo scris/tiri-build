@@ -74,43 +74,55 @@ extension WebController {
     }
 }
 
-/// The browser's own icon above a page. A click moves the page there; its menu keeps the site there from now on, or stops.
-struct BrowserButton: View {
-    let controller: WebController
-    var glass = false
+/// The one way out of Tiri above a page or a file: a quiet arrow, never another app's colored icon. A click takes a page
+/// to the browser and a file to the editor; holding it (or a right-click) offers the rest, by name.
+struct OpenElsewhereButton: View {
+    var page: WebController?
+    var path: String?
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if let url = controller.addressForBrowser {
-            let item = controller.itemID
-            let name = DefaultBrowser.name
-            let rule = BrowserRules.matching(url, in: model.settings.webOpenInBrowser)
-            let menu = Menu {
-                Button("Open in \(name)") { model.movePageToBrowser(item) }
-                if let rule {
-                    Button("Stop Opening \(rule) in \(name)") { model.setOpensInBrowser(rule, false) }
-                } else if let site = BrowserRules.site(of: url) {
-                    Button("Always Open \(site) in \(name)") {
-                        model.setOpensInBrowser(site, true)
-                        model.movePageToBrowser(item)
-                    }
-                }
+        let url = page?.addressForBrowser
+        if url != nil || path != nil {
+            let browser = DefaultBrowser.name
+            let editor = ExternalEditor.displayName(of: model.settings.externalEditors, pathEnv: ProcessInfo.processInfo.environment["PATH"])
+            Menu {
+                choices(url: url, browser: browser, editor: editor)
             } label: {
-                if let icon = DefaultBrowser.icon {
-                    Image(nsImage: icon).resizable().frame(width: 16, height: 16)
-                } else {
-                    Image(systemName: "safari")
-                }
+                Label(url != nil ? "Open in \(browser)" : "Open in \(editor)", systemImage: "arrow.up.forward.square")
+                    .labelStyle(.iconOnly)
             } primaryAction: {
-                model.movePageToBrowser(item)
+                if let page, url != nil { model.movePageToBrowser(page.itemID) } else if let path { model.openExternally(path: path) }
             }
-            .help("Open in \(name)")
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .fixedSize()
-            if glass {
-                menu.menuStyle(.button).buttonStyle(.glass)
-            } else {
-                menu.menuStyle(.borderlessButton).frame(height: 24)
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+            .contextMenu { choices(url: url, browser: browser, editor: editor) }
+            .help(url != nil ? "Open in \(browser). Hold for more" : "Open in \(editor). Hold for more")
+        }
+    }
+
+    @ViewBuilder
+    private func choices(url: URL?, browser: String, editor: String) -> some View {
+        if let page, let url {
+            Button("Open in \(browser)") { model.movePageToBrowser(page.itemID) }
+            if let path { Button("Open in \(editor)") { model.openExternally(path: path) } }
+            if let path { Button("Show in Finder") { model.showInFinder(path) } }
+            Divider()
+            if let rule = BrowserRules.matching(url, in: model.settings.webOpenInBrowser) {
+                Button("Stop Opening \(rule) in \(browser)") { model.setOpensInBrowser(rule, false) }
+            } else if let site = BrowserRules.site(of: url) {
+                Button("Always Open \(site) in \(browser)") {
+                    model.setOpensInBrowser(site, true)
+                    model.movePageToBrowser(page.itemID)
+                }
             }
+        } else if let path {
+            Button("Open in \(editor)") { model.openExternally(path: path) }
+            Button("Show in Finder") { model.showInFinder(path) }
         }
     }
 }

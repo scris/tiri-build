@@ -1200,6 +1200,12 @@ enum ControlHandler {
             return .object(["sent": .array(model.sentToBrowser.map(JSONValue.string)), "rules": .array(model.settings.webOpenInBrowser.map(JSONValue.string)),
                             "peek": .string(model.active.peek.map { model.title(for: $0) } ?? "")])
 
+        case "dev.toolbar":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            let both = request.args["mode"]?.stringValue == "both"
+            model.window?.toolbar?.displayMode = both ? .iconAndLabel : .iconOnly
+            return .object([:])
+
         case "dev.drag":
             // The left button down, moved in steps, and up: what a real drag sends, for the monitors to see first.
             guard AppModel.isTestCopy, let window = model.window, let height = window.contentView?.bounds.height,
