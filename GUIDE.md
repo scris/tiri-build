@@ -356,7 +356,7 @@ A plugin's commands also reach the palette, the Plugins menu and keyboard shortc
 Tiri can be changed the way it was made: by asking.
 
 1. **Ask.** Choose **Change Tiri…** from the Tiri menu, the command palette or the start screen. You can also ask when a palette or settings search finds nothing, or just tell any agent in a Tiri terminal. Drag a box around the part of the screen you mean, so your agent can see it.
-2. **Watch.** Your agent starts in its own tab, in a workspace called **Your Tiri** that holds the exact source of the version you're running. You can follow along in Tiri's own file tree and Changes.
+2. **Watch.** Your agent starts in its own tab, in a workspace called **Your Tiri** that holds the exact source of the version you're running. You can follow along in Tiri's own file tree and Changes. The first time, Claude Code asks whether it may work in that folder, with "No, exit" chosen; press **Trust Tiri's Code** on the tab to answer yes.
 3. **Try it.** When the agent is done, a card on its tab says what changed and how big the change is. Press **Try It**. Tiri closes and reopens in about half a second with everything still running, including the agent that made the change, now inside what it made.
 4. **Keep it or go back.** For ten minutes, the card offers **Keep** and **Back**. Back takes one click and loses nothing.
 

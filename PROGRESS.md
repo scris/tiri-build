@@ -168,8 +168,6 @@ Open times run from the request until the content is showing, except for Office 
 
 ## Known bugs
 
-- The first time an agent opens Your Tiri's folder, Claude Code shows its folder-trust screen, with "No, exit" selected, before it reads the request. Tiri doesn't change an agent's settings to skip that.
-
 - ⌘-clicking a labelled hyperlink whose target has no scheme can still show SwiftTerm's "Link blocked" alert, because SwiftTerm doesn't expose link targets. Text that looks like a path never reaches it. Fixing it needs a patch to SwiftTerm.
 - In dark mode, photos inside a PDF or Office file invert with the page, because the viewer can't tell them apart. The moon button shows true colors.
 - Large Office files show Quick Look's spinner for a few seconds before they appear.

@@ -976,6 +976,10 @@ enum ControlHandler {
                 yours.finishMarking(CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3]))
             case "unfold": UserDefaults.standard.set(true, forKey: "YourTiri.open.\(value ?? "")")
             case "where": break
+            case "notice", "press-notice":
+                guard let item = value ?? yours.draft?.item, let terminal = model.existingController(for: item) as? TerminalController else { throw ControlFailure("No change is being made.") }
+                if request.args["action"]?.stringValue == "press-notice" { terminal.pressNotice() }
+                return .object(["notice": .string(terminal.noticeText ?? ""), "item": .string(item)])
             default: throw ControlFailure("Unknown action.")
             }
             yours.refresh()

@@ -496,7 +496,6 @@ struct ChangeMark {
         let version = Self.version
         let brief = Self.brief(sentence: sentence, surface: surface, hasMark: mark != nil)
         let markFile = mark?.file
-        let isFirst = hasNeverChanged
         return Task { [weak self] in
             let failure: String? = await Task.detached {
                 do {
@@ -520,11 +519,53 @@ struct ChangeMark {
             // Its name is what was asked. It stays through the switch, where it's looked at hardest.
             let item = model.newTerminal(command: command, cwd: YourTiri.source.path, in: workspace, title: sentence)
             model.agentAsked[item] = sentence
-            if isFirst, preset.command.contains("claude") {
-                model.showToast(title: "Claude Code may ask about trust", detail: "Choose Yes. This is Tiri's own code.", symbol: "checkmark.shield", tint: .accentColor, duration: 25)
-            }
+            self.answerTrustQuestion(on: item)
             self.refresh()
         }
+    }
+
+    /// Claude Code asks once whether it may work in a folder it hasn't seen, with "No, exit" chosen, so Return
+    /// ends it. Tiri's source is new to it on a first change. The question gets a button on the tab, and only
+    /// pressing it answers: nothing is chosen for anyone.
+    private func answerTrustQuestion(on item: ItemID) {
+        Task { @MainActor [weak self] in
+            var shown = false
+            for _ in 0..<120 {
+                try? await Task.sleep(for: .seconds(1))
+                guard let terminal = self?.model?.existingController(for: item) as? TerminalController else {
+                    if shown { return } else { continue }
+                }
+                let asking = Self.isTrustQuestion(terminal.readText(lines: 40))
+                if asking, !shown {
+                    shown = true
+                    terminal.showNotice("Claude Code asks once whether it may work on Tiri's own code.", actionTitle: "Trust Tiri's Code") { [weak terminal] in
+                        guard let terminal else { return }
+                        let screen = terminal.readText(lines: 40)
+                        terminal.showNotice(nil)
+                        guard Self.isTrustQuestion(screen) else { return }
+                        Task { @MainActor in
+                            if !Self.yesIsChosen(screen) {
+                                terminal.send(text: "\u{1B}[B")
+                                try? await Task.sleep(for: .milliseconds(150))
+                            }
+                            terminal.send(text: "\r")
+                        }
+                    }
+                } else if !asking, shown {
+                    // Answered, either way, by the button or by hand.
+                    terminal.showNotice(nil)
+                    return
+                }
+            }
+        }
+    }
+
+    nonisolated static func isTrustQuestion(_ screen: String) -> Bool {
+        screen.contains("Yes, I trust this folder") && screen.contains("No, exit")
+    }
+
+    nonisolated static func yesIsChosen(_ screen: String) -> Bool {
+        screen.split(separator: "\n").contains { $0.contains("❯") && $0.contains("Yes, I trust this folder") }
     }
 
     /// On the agent's tab while it works, so that nobody is left wondering what they're looking at.
