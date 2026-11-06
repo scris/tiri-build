@@ -322,6 +322,7 @@ final class TiriTerminalView: LocalProcessTerminalView {
     // MARK: Cmd-click
 
     override func mouseDown(with event: NSEvent) {
+        dissolvePeekTip()
         // Every ⌘-click is Tiri's: a hyperlink goes where it points, and anything that looks like a
         // path is found. SwiftTerm only sees one that's neither, so it never puts up "Link blocked";
         // should it still, `BlockedLinks` takes the alert over.
@@ -709,6 +710,117 @@ final class TiriTerminalView: LocalProcessTerminalView {
             layer.addSublayer(line)
             underlines.append(line)
         }
+    }
+
+    // MARK: Peek tip
+
+    private var peekTip: (chip: NSView, underline: [CALayer], row: Int, text: String)?
+    private var peekTipTimer: Timer?
+    private var fadedTips: [(NSView, [CALayer])] = []
+
+    /// The last path on screen, underlined as ⌘ shows it, with how to open it beneath. False if there's none.
+    func showPeekTip() -> Bool {
+        guard peekTip == nil, let layer, let (line, range, row) = lastPathOnScreen() else { return false }
+        let size = cellSize
+        let cells = range.compactMap { $0 < line.cells.count ? line.cells[$0] : nil }
+        guard let first = cells.first, let lastRow = cells.map(\.row).max(), size.height > 0 else { return false }
+        var runs: [Int: (first: Int, last: Int)] = [:]
+        for cell in cells {
+            let run = runs[cell.row] ?? (cell.col, cell.col + cell.width)
+            runs[cell.row] = (min(run.first, cell.col), max(run.last, cell.col + cell.width))
+        }
+        var underline: [CALayer] = []
+        for (row, run) in runs {
+            let mark = CALayer()
+            mark.backgroundColor = NSColor.controlAccentColor.cgColor
+            mark.frame = CGRect(x: CGFloat(run.first) * size.width, y: bounds.height - CGFloat(row + 1) * size.height + 1,
+                                width: CGFloat(run.last - run.first) * size.width, height: 1.5)
+            mark.zPosition = 100
+            layer.addSublayer(mark)
+            underline.append(mark)
+        }
+        let chip = Tips.peekChip()
+        let fit = chip.fittingSize
+        // Under the path, or over it when it's on the last line.
+        var y = bounds.height - CGFloat(lastRow + 1) * size.height - fit.height - 3
+        if y < 2 { y = bounds.height - CGFloat(first.row) * size.height + 3 }
+        let x = min(CGFloat(first.col) * size.width, max(bounds.width - fit.width - 6, 0))
+        chip.frame = CGRect(x: x, y: y, width: fit.width, height: fit.height)
+        chip.alphaValue = 0
+        addSubview(chip)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = AccessibilityDisplay.shared.reduceMotion ? 0 : 0.2
+            chip.animator().alphaValue = 1
+        }
+        let rows = terminalStateSnapshot().visibleRows
+        peekTip = (chip, underline, row, row < rows.count ? rows[row].text : "")
+        peekTipTimer = Timer.scheduledTimer(withTimeInterval: 7, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.dissolvePeekTip() }
+        }
+        NSAccessibility.post(element: chip, notification: .announcementRequested,
+                             userInfo: [.announcement: String(localized: "Command-click a path to Peek at it"), .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        return true
+    }
+
+    /// It never waits to be closed: it goes after a few seconds, at a key or a click, or when what it points at moves.
+    func dissolvePeekTip() {
+        guard let tip = peekTip else { return }
+        peekTip = nil
+        peekTipTimer?.invalidate()
+        peekTipTimer = nil
+        let quick = AccessibilityDisplay.shared.reduceMotion
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = quick ? 0 : 0.4
+            tip.chip.animator().alphaValue = 0
+            tip.underline.forEach { $0.opacity = 0 }
+        }
+        fadedTips.append((tip.chip, tip.underline))
+        DispatchQueue.main.asyncAfter(deadline: .now() + (quick ? 0 : 0.45)) { [weak self] in
+            guard let self else { return }
+            for (chip, underline) in self.fadedTips {
+                chip.removeFromSuperview()
+                underline.forEach { $0.removeFromSuperlayer() }
+            }
+            self.fadedTips.removeAll()
+        }
+    }
+
+    /// Output and scrolling move the path out from under the tip.
+    func checkPeekTip() {
+        guard let tip = peekTip else { return }
+        let rows = terminalStateSnapshot().visibleRows
+        if tip.row >= rows.count || rows[tip.row].text != tip.text { dissolvePeekTip() }
+    }
+
+    /// From the bottom up, the first word that's a file Tiri can find.
+    private func lastPathOnScreen() -> (LogicalLine, Range<Int>, Int)? {
+        let rows = terminalStateSnapshot().visibleRows
+        for index in rows.indices.reversed().prefix(60) {
+            let row = rows[index]
+            var cursor = 0
+            var words: [(column: Int, text: String)] = []
+            for character in row.text {
+                let width = cursor < row.cellWidths.count ? max(row.cellWidths[cursor], 1) : 1
+                if character == " " {
+                    if let last = words.last, last.text.last != " " { words[words.count - 1].text.append(" ") }
+                } else if words.isEmpty || words[words.count - 1].text.last == " " {
+                    words.append((cursor, String(character)))
+                } else {
+                    words[words.count - 1].text.append(character)
+                }
+                cursor += width
+            }
+            for word in words.reversed() {
+                let text = word.text.trimmingCharacters(in: .whitespaces)
+                guard text.count > 2, text.contains("/") || text.contains("."), !text.contains("://") else { continue }
+                for variant in logicalLines(row: index, column: word.column) {
+                    if let (target, range) = resolveLink(in: variant.line, column: variant.column), case .path = target {
+                        return (variant.line, range, index)
+                    }
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: Find marks
@@ -1390,6 +1502,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         let now = ProcessClock.now()
         let quietFor = now - activity.lastOutput
         let current = model.runtimes[itemID]?.status ?? .idle
+        considerPeekTip(current: current, quietFor: quietFor)
 
         if hookActive {
             // `Stop` doesn't fire when a turn is interrupted, so "working" can go stale.
@@ -1569,7 +1682,23 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     private var hooksReportStarts = false
     func heardTurnStart() { hooksReportStarts = true }
 
+    /// The Peek is the one thing nobody finds by looking. Once, after an agent's turn and while you're
+    /// looking at it, the last path it printed shows how. Looked for once a turn, so a turn with no path costs one look.
+    private var peekTipLooksAfterTurn = false
+    /// A hidden test copy is never in front, so it's told to act as if someone were looking.
+    private static let testCopyLooks = ProcessInfo.processInfo.environment["TIRI_DEV_LOOKING"] != nil
+    private func considerPeekTip(current: TerminalStatus, quietFor: Double) {
+        terminalView.checkPeekTip()
+        guard peekTipLooksAfterTurn, !Tips.peekShown, current != .working, quietFor > 2_000, runningAgent != nil,
+              model.isLookingAt(itemID) || Self.testCopyLooks && model.active.focused.active == itemID,
+              !model.toasts.contains(where: { $0.actionTitle != nil }) else { return }
+        peekTipLooksAfterTurn = false
+        if terminalView.showPeekTip() { Tips.peekShown = true }
+    }
+
     func noteKeyPress(isReturn: Bool) {
+        terminalView.dissolvePeekTip()
+        if isReturn { peekTipLooksAfterTurn = true }
         lastInputAt = ProcessClock.now()
         if runningAgent != nil { model.lastAgentTerminal = itemID }
         guard isReturn else { return }

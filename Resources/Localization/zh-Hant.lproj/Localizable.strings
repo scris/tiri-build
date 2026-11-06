@@ -1625,3 +1625,17 @@
 "Choose files or images to add to your agent" = "選擇要加入代理的檔案或影像";
 "Add this selection to your agent's input" = "將所選內容加入代理的輸入";
 "Keep a comment on this for your next batch to the agent" = "為這裡留一則評論，隨下一批內容傳給代理";
+
+/* Welcome.swift */
+"Welcome to Tiri" = "歡迎使用 Tiri";
+"Keep your agent. Get everything around it." = "代理照用，周邊一應俱全。";
+"Change Tiri by asking" = "開口就能修改 Tiri";
+"Start" = "開始";
+"click to Peek" = "按一下即可速覽";
+"Command-click a path to Peek at it" = "按住 Command 鍵按一下路徑即可速覽";
+"⌘-click any path" = "⌘-按一下任何路徑";
+"The file floats over the session" = "檔案浮在工作階段上方";
+"Every agent at a glance" = "所有代理一目了然";
+"The one that needs you is marked" = "需要你的那個會標出來";
+"It improves itself" = "它會自我改進";
+"Ask, and your agent rewrites it" = "說出要求，代理就改寫它";

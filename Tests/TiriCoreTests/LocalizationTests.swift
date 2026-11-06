@@ -137,7 +137,10 @@ import Testing
             let specifier = #"%(?:\d+\$)?(?:@|lld|llu|ld|lu|lf|d|u|f)"#
             let pattern = "^" + pieces.map(NSRegularExpression.escapedPattern(for:)).joined(separator: specifier) + "$"
             let regex = try! NSRegularExpression(pattern: pattern, options: .dotMatchesLineSeparators)
-            return table.keys.contains { regex.firstMatch(in: $0, range: NSRange(location: 0, length: ($0 as NSString).length)) != nil }
+            let (first, last) = (pieces[0], pieces[pieces.count - 1])
+            return table.keys.contains {
+                $0.hasPrefix(first) && $0.hasSuffix(last) && regex.firstMatch(in: $0, range: NSRange(location: 0, length: ($0 as NSString).length)) != nil
+            }
         }
 
         /// Nothing to translate: symbols, numbers, or only what's interpolated.
@@ -165,10 +168,11 @@ import Testing
     }
 
     static func literals(in source: String, file: String) -> [Literal] {
-        let chars = Array(source)
+        // Bytes, not Characters: this runs beside every other test, and slow scanning starves their timeouts.
+        let chars = Array(source.utf8)
         var result: [Literal] = []
         var lineStarts: [Int] = [0]
-        for (index, char) in chars.enumerated() where char == "\n" { lineStarts.append(index + 1) }
+        for (index, byte) in chars.enumerated() where byte == UInt8(ascii: "\n") { lineStarts.append(index + 1) }
         func line(_ index: Int) -> Int {
             var (low, high) = (0, lineStarts.count - 1)
             while low < high {
@@ -177,34 +181,37 @@ import Testing
             }
             return low + 1
         }
-
-        func starts(_ word: [Character], at index: Int) -> Bool {
+        func starts(_ word: [UInt8], at index: Int) -> Bool {
             guard index + word.count <= chars.count else { return false }
             for offset in word.indices where chars[index + offset] != word[offset] { return false }
             return true
         }
-        let lookups = Self.lookups.map(Array.init)
-        let firsts = Set(lookups.compactMap(\.first) + ["/"])
+        func isWordByte(_ byte: UInt8) -> Bool {
+            (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A) || byte == 0x5F
+        }
+        let lookups = Self.lookups.map { Array($0.utf8) }
+        let firsts = Set(lookups.compactMap(\.first) + [UInt8(ascii: "/")])
+        let comment = Array("//".utf8), quote = UInt8(ascii: "\""), tripleQuote = Array("\"\"\"".utf8)
         var index = 0
         while index < chars.count {
+            guard firsts.contains(chars[index]) else { index += 1; continue }
             // Skip comments, so prose about Text("…") doesn't count.
-            if starts(["/", "/"], at: index) {
-                while index < chars.count, chars[index] != "\n" { index += 1 }
+            if starts(comment, at: index) {
+                while index < chars.count, chars[index] != UInt8(ascii: "\n") { index += 1 }
                 continue
             }
-            guard firsts.contains(chars[index]) else { index += 1; continue }
-            var matched: [Character]?
+            var matched: [UInt8]?
             for lookup in lookups where starts(lookup, at: index) {
                 // Text( but not someText( or verbatim:
-                if let first = lookup.first, first.isLetter, index > 0, chars[index - 1].isLetter || chars[index - 1].isNumber || chars[index - 1] == "_" { continue }
+                if let first = lookup.first, isWordByte(first), index > 0, isWordByte(chars[index - 1]) { continue }
                 matched = lookup
                 break
             }
             if let lookup = matched {
                 var cursor = index + lookup.count
-                while cursor < chars.count, chars[cursor] == " " { cursor += 1 }
-                if cursor < chars.count, chars[cursor] == "\"", !starts(["\"", "\"", "\""], at: cursor), let (pieces, end) = readLiteral(chars, from: cursor) {
-                    result.append(Literal(text: String(chars[cursor + 1..<end - 1]), place: "\(file):\(line(index))", pieces: pieces))
+                while cursor < chars.count, chars[cursor] == UInt8(ascii: " ") { cursor += 1 }
+                if cursor < chars.count, chars[cursor] == quote, !starts(tripleQuote, at: cursor), let (pieces, end) = readLiteral(chars, from: cursor) {
+                    result.append(Literal(text: String(decoding: chars[cursor + 1..<end - 1], as: UTF8.self), place: "\(file):\(line(index))", pieces: pieces))
                     index = end
                     continue
                 }
@@ -217,17 +224,18 @@ import Testing
     }
 
     /// The literal starting at the quote: its pieces between `\(…)`, and the index after its closing quote.
-    static func readLiteral(_ chars: [Character], from start: Int) -> ([String], Int)? {
-        var pieces: [String] = [""]
+    static func readLiteral(_ chars: [UInt8], from start: Int) -> ([String], Int)? {
+        var pieces: [[UInt8]] = [[]]
         var index = start + 1
+        let (quote, backslash, open, close) = (UInt8(ascii: "\""), UInt8(ascii: "\\"), UInt8(ascii: "("), UInt8(ascii: ")"))
         while index < chars.count {
-            let char = chars[index]
-            if char == "\"" { return (pieces, index + 1) }
-            if char == "\n" { return nil }
-            if char == "\\", index + 1 < chars.count {
+            let byte = chars[index]
+            if byte == quote { return (pieces.map { String(decoding: $0, as: UTF8.self) }, index + 1) }
+            if byte == UInt8(ascii: "\n") { return nil }
+            if byte == backslash, index + 1 < chars.count {
                 let next = chars[index + 1]
                 switch next {
-                case "(":
+                case open:
                     // Skip to the matching parenthesis, past any strings inside it.
                     var depth = 1
                     index += 2
@@ -235,23 +243,22 @@ import Testing
                     while index < chars.count, depth > 0 {
                         let c = chars[index]
                         if inString {
-                            if c == "\\" { index += 1 } else if c == "\"" { inString = false }
-                        } else if c == "\"" { inString = true }
-                        else if c == "(" { depth += 1 }
-                        else if c == ")" { depth -= 1 }
+                            if c == backslash { index += 1 } else if c == quote { inString = false }
+                        } else if c == quote { inString = true }
+                        else if c == open { depth += 1 }
+                        else if c == close { depth -= 1 }
                         index += 1
                     }
-                    pieces.append("")
+                    pieces.append([])
                     continue
-                case "n": pieces[pieces.count - 1].append("\n")
-                case "t": pieces[pieces.count - 1].append("\t")
-                case "\"", "\\", "'": pieces[pieces.count - 1].append(next)
+                case UInt8(ascii: "n"): pieces[pieces.count - 1].append(UInt8(ascii: "\n"))
+                case UInt8(ascii: "t"): pieces[pieces.count - 1].append(UInt8(ascii: "\t"))
                 default: pieces[pieces.count - 1].append(next)
                 }
                 index += 2
                 continue
             }
-            pieces[pieces.count - 1].append(char)
+            pieces[pieces.count - 1].append(byte)
             index += 1
         }
         return nil

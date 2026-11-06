@@ -249,6 +249,8 @@ final class AppModel {
     @ObservationIgnored private let store = WorkspaceStore()
     @ObservationIgnored private let notifier = Notifier()
     @ObservationIgnored private var didFinishLaunching = false
+    /// Nothing saved from before: the very first launch, which is the one that says hello.
+    @ObservationIgnored private var isNewInstall = false
     @ObservationIgnored private var checkedPaths: Set<String> = []
     @ObservationIgnored private var tabDragCommitted = false
 
@@ -269,6 +271,7 @@ final class AppModel {
                 }
             }
         } else {
+            isNewInstall = true
             // Nothing runs until you've said where: see `startTerminal`.
             let first = Workspace(name: Workspace.placeholderName)
             workspaces = [first]
@@ -328,6 +331,7 @@ final class AppModel {
         refreshDeletedFiles()
         // After launch, so the warm web view doesn't count against the launch budget.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { MarkdownWebViews.warmUp() }
+        Welcome.showIfNew(model: self, isNewInstall: isNewInstall)
     }
 
     /// Everything that reads the active workspace's files waits here until macOS has said yes.
@@ -3254,11 +3258,11 @@ final class Notifier: NSObject, @preconcurrency UNUserNotificationCenterDelegate
 
     func post(title: String, body: String, subtitle: String, workspace: WorkspaceID, item: ItemID) {
         guard Bundle.main.bundleIdentifier != nil else { return }
-        let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { settings in
+        // The answers come back off the main thread. Delivering needs nothing from it.
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .notDetermined:
-                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
                     if granted { Self.deliver(title: title, body: body, subtitle: subtitle, workspace: workspace, item: item) }
                 }
             case .denied:
@@ -3269,7 +3273,7 @@ final class Notifier: NSObject, @preconcurrency UNUserNotificationCenterDelegate
         }
     }
 
-    private static func deliver(title: String, body: String, subtitle: String, workspace: WorkspaceID, item: ItemID) {
+    private nonisolated static func deliver(title: String, body: String, subtitle: String, workspace: WorkspaceID, item: ItemID) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.subtitle = subtitle

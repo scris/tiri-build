@@ -1625,3 +1625,17 @@
 "Choose files or images to add to your agent" = "选择要添加给智能体的文件或图像";
 "Add this selection to your agent's input" = "将所选内容添加到智能体的输入中";
 "Keep a comment on this for your next batch to the agent" = "为这里留一条评论，随下一批内容发给智能体";
+
+/* Welcome.swift */
+"Welcome to Tiri" = "欢迎使用 Tiri";
+"Keep your agent. Get everything around it." = "智能体照用，周边一应俱全。";
+"Change Tiri by asking" = "开口就能修改 Tiri";
+"Start" = "开始";
+"click to Peek" = "点按即可速览";
+"Command-click a path to Peek at it" = "按住 Command 键点按路径即可速览";
+"⌘-click any path" = "⌘-点按任意路径";
+"The file floats over the session" = "文件浮在会话上方";
+"Every agent at a glance" = "所有智能体一目了然";
+"The one that needs you is marked" = "需要你的那个会标出来";
+"It improves itself" = "它会自我改进";
+"Ask, and your agent rewrites it" = "说出要求，智能体就改写它";

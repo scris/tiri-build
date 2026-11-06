@@ -40,8 +40,8 @@ private struct StoryFrame<Drawing: View>: View {
     }
 }
 
-/// Tiri, very small: a sidebar and a tab.
-private struct MiniWindow<Content: View>: View {
+/// Tiri, very small: a sidebar and a tab. The welcome draws with it too.
+struct MiniWindow<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -66,7 +66,7 @@ private struct MiniWindow<Content: View>: View {
     }
 }
 
-private struct SayDrawing: View {
+struct SayDrawing: View {
     var body: some View {
         Text("“Show how long each agent has been working”")
             .font(.system(size: 9.5))

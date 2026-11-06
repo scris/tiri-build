@@ -188,6 +188,7 @@ struct TiriMenus: Commands {
             item("reloadPlugins")
         }
         CommandGroup(replacing: .help) {
+            Button("Welcome to Tiri") { Welcome.show(model: model) }
             Button("Tiri Agent Guide") { model.showAgentGuide() }
             Button("Tiri Website") { NSWorkspace.shared.open(AboutPanel.websiteURL) }
             Divider()
