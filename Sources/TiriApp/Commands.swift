@@ -1309,6 +1309,50 @@ enum ControlHandler {
             }
             return .object([:])
 
+        case "dev.palette":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            guard let palette = model.palette else { throw ControlFailure("No palette is open.") }
+            let shown = JSONValue.object(["heading": .string(palette.heading ?? ""), "placeholder": .string(palette.placeholder), "query": .string(palette.query),
+                                          "rows": .array(palette.rows.map { .string($0.title) }), "note": .string(palette.note ?? ""), "loading": .bool(palette.isIndexing)])
+            if request.args["cancel"]?.boolValue == true {
+                model.closePalette()
+            } else if let index = request.args["choose"]?.intValue {
+                guard palette.rows.indices.contains(index) else { throw ControlFailure("There's no row \(index).") }
+                palette.selection = index
+                palette.submit()
+            } else if let text = request.args["text"]?.stringValue {
+                palette.query = text
+                palette.submit()
+            }
+            return shown
+
+        case "dev.plugin-colors":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            let path = try string(request, "path")
+            guard let text = model.allTextControllers().first(where: { $0.path == path }) else { throw ControlFailure("\(path) isn't open.") }
+            return .array(text.pluginColorMarks(line: (request.args["line"]?.intValue ?? 1) - 1).map { .object($0) })
+
+        case "dev.plugin-menu":
+            // A row's right-click menu, and choosing from it, as the menu does.
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            let id = try string(request, "section")
+            guard let section = model.plugins.sections.first(where: { $0.id == id }) else { throw ControlFailure("No section \(id).") }
+            let index = request.args["row"]?.intValue ?? 0
+            guard section.state.items.indices.contains(index) else { throw ControlFailure("No row \(index).") }
+            let item = section.state.items[index]
+            let menu = model.plugins.menu(for: item, in: section)
+            if let entry = request.args["entry"]?.intValue {
+                guard menu.indices.contains(entry) else { throw ControlFailure("No entry \(entry).") }
+                model.plugins.runMenu(menu[entry], on: item)
+            }
+            return .object(["title": .string(item.title), "menu": .array(menu.map { .string($0.title) }), "color": item.color.map(JSONValue.string) ?? .null])
+
+        case "dev.file-mark":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            guard let mark = model.plugins.fileMark(for: try string(request, "path")) else { return .null }
+            return .object(["badge": mark.badge.map(JSONValue.string) ?? .null, "color": mark.color.map(JSONValue.string) ?? .null,
+                            "tooltip": mark.tooltip.map(JSONValue.string) ?? .null])
+
         case "dev.plugin-question":
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
             return .object(["question": .string(model.plugins.pendingQuestion ?? ""), "lastShare": .string(model.plugins.lastShare),

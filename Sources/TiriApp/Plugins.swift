@@ -66,8 +66,10 @@ final class PluginHost {
     @ObservationIgnored private var folderToken: FileWatchHub.Token?
     @ObservationIgnored private var rescanWork: DispatchWorkItem?
     @ObservationIgnored private var refreshTimer: Timer?
-    @ObservationIgnored private var lastRefresh: [String: Date] = [:]
-    @ObservationIgnored private var inFlight: Set<String> = []
+    @ObservationIgnored var lastRefresh: [String: Date] = [:]
+    @ObservationIgnored var inFlight: Set<String> = []
+    /// Asked for again while it was running: what it's working from may already be out of date.
+    @ObservationIgnored var askedAgain: Set<String> = []
     @ObservationIgnored private var announcedChanges: [String: String] = [:]
     @ObservationIgnored lazy var processes = PluginProcesses(host: self)
     @ObservationIgnored lazy var runner = PluginRunner(host: self)
@@ -78,6 +80,11 @@ final class PluginHost {
     @ObservationIgnored private var waitingForScan: [() -> Void] = []
     @ObservationIgnored private var declinedAt: [String: Date] = [:]
     @ObservationIgnored private var lastProcessRefresh: [String: Double] = [:]
+    /// What each plugin's file marks say, by plugin/id, then by path.
+    var fileMarkStates: [String: [String: PluginFileMark]] = [:]
+    /// Text in the editor that plugins color, ready to match.
+    @ObservationIgnored var highlightRules: [EditorHighlightRule] = []
+    @ObservationIgnored var editorEvents = PluginEditorEvents()
     /// The last thing a person did, for a panel asking to reach beyond itself.
     @ObservationIgnored private var lastPersonEvent: NSEvent?
     @ObservationIgnored private var personMonitor: Any?
@@ -160,7 +167,11 @@ final class PluginHost {
         }
         saveWatchers = Set(on.filter { plugin in
             (plugin.manifest?.sidebar ?? []).contains { $0.refresh?.onSave == true } || (plugin.manifest?.statusBar ?? []).contains { $0.refresh?.onSave == true }
+                || (plugin.manifest?.fileMarks ?? []).contains { $0.refresh?.onSave == true }
         }.map(\.name))
+
+        rebuildHighlightRules()
+        editorEvents.listenersChanged(self)
 
         // Whatever belonged to a plugin that's gone or different stops here.
         for name in changedPlugins {
@@ -262,6 +273,16 @@ final class PluginHost {
         }
         guard await stillApproved(plugin) else {
             return RunResult(ok: false, output: "", problem: "\(plugin.title) changed, so it's off until you approve it again.")
+        }
+        var args = args
+        if let inputs = command.input, inputs.contains(where: { args[$0.name] == nil }) {
+            guard let answered = await askForInputs(inputs, plugin: plugin, command: command, args: args, workspace: workspace) else {
+                return RunResult(ok: false, output: "", problem: "Cancelled.")
+            }
+            args = answered
+        }
+        if let saving = command.save, let failure = saveBeforeRunning(saving, workspace: workspace) {
+            return RunResult(ok: false, output: "", problem: failure)
         }
         let context = runner.context(plugin: plugin, args: args, workspace: workspace, using: (command.exec ?? []) + [command.terminal ?? "", command.ask ?? ""])
         let result: RunResult
@@ -672,7 +693,7 @@ final class PluginHost {
 
     // MARK: Sidebar sections and status items
 
-    private func key(_ plugin: String, _ id: String) -> String { plugin + "/" + id }
+    func key(_ plugin: String, _ id: String) -> String { plugin + "/" + id }
 
     struct Section: Identifiable {
         var plugin: InstalledPlugin
@@ -714,6 +735,10 @@ final class PluginHost {
         for id in sidebarStates.keys where id.hasPrefix(name + "/") { sidebarStates[id] = nil }
         for id in statusStates.keys where id.hasPrefix(name + "/") { statusStates[id] = nil }
         for id in lastRefresh.keys where id.hasPrefix(name + "/") { lastRefresh[id] = nil }
+        if fileMarkStates.keys.contains(where: { $0.hasPrefix(name + "/") }) {
+            for id in fileMarkStates.keys where id.hasPrefix(name + "/") { fileMarkStates[id] = nil }
+            model.pluginFileMarksChanged()
+        }
     }
 
     /// When a section is drawn. A section nobody has unfolded runs nothing.
@@ -734,12 +759,19 @@ final class PluginHost {
             if onlyIfUnloaded, statusStates[key(name, item.id)] != nil { continue }
             refreshStatus(plugin: name, item: item.id)
         }
+        for marks in manifest.fileMarks ?? [] where marks.provider != nil {
+            if onlyIfUnloaded, fileMarkStates[key(name, marks.id)] != nil { continue }
+            refreshFileMarks(plugin: name, marks: marks.id)
+        }
     }
 
-    private func refreshSection(plugin name: String, section id: String) {
+    func refreshSection(plugin name: String, section id: String) {
         guard let plugin = enabledPlugin(named: name), let section = plugin.manifest?.sidebar?.first(where: { $0.id == id }), let provider = section.provider else { return }
         let identity = key(name, id)
-        guard inFlight.insert(identity).inserted else { return }
+        guard inFlight.insert(identity).inserted else {
+            askedAgain.insert(identity)
+            return
+        }
         lastRefresh[identity] = Date()
         var state = sidebarStates[identity] ?? SidebarState()
         state.isLoading = true
@@ -759,6 +791,7 @@ final class PluginHost {
             }
             guard enabledPlugin(named: name) != nil else { return }
             sidebarStates[identity] = state
+            if askedAgain.remove(identity) != nil { refreshSection(plugin: name, section: id) }
         }
     }
 
@@ -768,15 +801,19 @@ final class PluginHost {
         items.map { item in
             var copy = item
             if let command = item.command { copy.command = fullID(plugin: plugin, command: command) }
+            copy.menu = item.menu.map { PluginManifest.MenuItem(title: $0.title, command: fullID(plugin: plugin, command: $0.command), symbol: $0.symbol) }
             copy.children = ownOnly(item.children, plugin: plugin)
             return copy
         }
     }
 
-    private func refreshStatus(plugin name: String, item id: String) {
+    func refreshStatus(plugin name: String, item id: String) {
         guard let plugin = enabledPlugin(named: name), let item = plugin.manifest?.statusBar?.first(where: { $0.id == id }), let provider = item.provider else { return }
         let identity = key(name, id)
-        guard inFlight.insert(identity).inserted else { return }
+        guard inFlight.insert(identity).inserted else {
+            askedAgain.insert(identity)
+            return
+        }
         lastRefresh[identity] = Date()
         Task {
             let answer = await ask(provider, plugin: plugin)
@@ -785,10 +822,11 @@ final class PluginHost {
             if case .success(let value) = answer {
                 statusStates[identity] = PluginStatusContent(value) ?? PluginStatusContent(text: "")
             }
+            if askedAgain.remove(identity) != nil { refreshStatus(plugin: name, item: id) }
         }
     }
 
-    private func ask(_ provider: PluginManifest.Provider, plugin: InstalledPlugin) async -> Result<JSONValue, PluginProcesses.Failure> {
+    func ask(_ provider: PluginManifest.Provider, plugin: InstalledPlugin) async -> Result<JSONValue, PluginProcesses.Failure> {
         guard await stillApproved(plugin) else { return .failure(.init(message: String(localized: "It changed, so it's off until you approve it again."))) }
         let context = runner.context(plugin: plugin, args: [:], using: provider.exec ?? [])
         if let process = provider.process, let method = provider.method {
@@ -815,6 +853,11 @@ final class PluginHost {
     func push(plugin name: String, surface: String, id: String, value: JSONValue) -> String? {
         guard let manifest = enabledPlugin(named: name)?.manifest else { return "\(name) isn't on." }
         let identity = key(name, id)
+        if surface == "marks" {
+            guard manifest.fileMarks?.contains(where: { $0.id == id }) == true else { return "\(name) has no file marks \(id)." }
+            setFileMarks(PluginFileMark.list(from: value, folder: model.active.folders.first), plugin: name, id: id)
+            return nil
+        }
         if surface == "sidebar" {
             guard manifest.sidebar?.contains(where: { $0.id == id }) == true else { return "\(name) has no sidebar section \(id)." }
             sidebarStates[identity] = SidebarState(items: Self.ownOnly(PluginTreeItem.list(from: value), plugin: name), hasLoaded: true)
@@ -828,6 +871,7 @@ final class PluginHost {
     private func updateRefreshTimer() {
         let wanted = enabled.contains { plugin in
             (plugin.manifest?.sidebar ?? []).contains { $0.refresh?.every != nil } || (plugin.manifest?.statusBar ?? []).contains { $0.refresh?.every != nil }
+                || (plugin.manifest?.fileMarks ?? []).contains { $0.refresh?.every != nil }
         }
         if !wanted {
             refreshTimer?.invalidate()
@@ -854,10 +898,15 @@ final class PluginHost {
                 guard let every = item.refresh?.every else { continue }
                 if now.timeIntervalSince(lastRefresh[key(plugin.name, item.id)] ?? .distantPast) >= every { refreshStatus(plugin: plugin.name, item: item.id) }
             }
+            for marks in plugin.manifest?.fileMarks ?? [] {
+                guard let every = marks.refresh?.every else { continue }
+                if now.timeIntervalSince(lastRefresh[key(plugin.name, marks.id)] ?? .distantPast) >= every { refreshFileMarks(plugin: plugin.name, marks: marks.id) }
+            }
         }
     }
 
     func fileSaved(_ path: String) {
+        editorEvents.saved(path, host: self)
         guard !saveWatchers.isEmpty else { return }
         for name in saveWatchers {
             guard let manifest = enabledPlugin(named: name)?.manifest else { continue }
@@ -865,6 +914,7 @@ final class PluginHost {
                 refreshSection(plugin: name, section: section.id)
             }
             for item in manifest.statusBar ?? [] where item.refresh?.onSave == true { refreshStatus(plugin: name, item: item.id) }
+            for marks in manifest.fileMarks ?? [] where marks.refresh?.onSave == true { refreshFileMarks(plugin: name, marks: marks.id) }
         }
     }
 
@@ -986,6 +1036,7 @@ final class PluginHost {
 
     func settingsChanged(plugin name: String) {
         revision += 1
+        if enabledPlugin(named: name)?.manifest?.highlights?.isEmpty == false { rebuildHighlightRules() }
         for controller in model.allPanelControllers() where controller.panel?.plugin.name == name {
             controller.panel?.settingsChanged()
         }

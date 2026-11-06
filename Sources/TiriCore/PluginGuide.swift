@@ -14,8 +14,9 @@ public enum PluginGuide {
       "test": ["bin/test"],
       "commands": [
         { "id": "refresh", "title": "Refresh Problems", "category": "LeetCode", "process": "cli", "method": "refresh" },
-        { "id": "open", "title": "Show Problem", "category": "LeetCode", "panel": "problem", "open": "right" },
-        { "id": "test", "title": "Test This Solution", "category": "LeetCode", "terminal": "bin/lc test ${file}" },
+        { "id": "open", "title": "Show Problem", "category": "LeetCode", "panel": "problem", "open": "right",
+          "input": [{ "name": "id", "prompt": "Problem number or name" }] },
+        { "id": "test", "title": "Test This Solution", "category": "LeetCode", "terminal": "bin/lc test ${file}", "save": "front" },
         { "id": "submit", "title": "Submit This Solution", "category": "LeetCode", "exec": ["bin/lc", "submit", "${file}"], "show": "toast", "timeout": 60 },
         { "id": "hint", "title": "Give Me a Hint", "category": "LeetCode", "key": "cmd+alt+h", "ask": "Give me a hint for ${file}, without the answer." }
       ],
@@ -30,7 +31,8 @@ public enum PluginGuide {
       "sidebar": [
         { "id": "problems", "title": "Problems", "provider": { "process": "cli", "method": "problems" },
           "refresh": { "every": 600 }, "emptyText": "Nothing here yet.",
-          "buttons": [{ "title": "Refresh", "symbol": "arrow.clockwise", "command": "refresh" }] }
+          "buttons": [{ "title": "Refresh", "symbol": "arrow.clockwise", "command": "refresh" }],
+          "menu": [{ "title": "Show Problem", "symbol": "doc.text", "command": "open" }] }
       ],
       "statusBar": [
         { "id": "streak", "symbol": "flame", "command": "open", "provider": { "exec": ["bin/lc", "streak"] }, "refresh": { "every": 3600 } }
@@ -38,8 +40,14 @@ public enum PluginGuide {
       "fileButtons": [
         { "title": "Test", "symbol": "play", "patterns": ["**/leetcode/*.py"], "command": "test" }
       ],
+      "highlights": [
+        { "pattern": "@lc app=leetcode id=\\d+", "files": ["**/leetcode/*"], "color": "orange", "onlyInComments": true }
+      ],
+      "fileMarks": [
+        { "id": "solved", "provider": { "process": "cli", "method": "solved" }, "refresh": { "onFileChange": true } }
+      ],
       "processes": [
-        { "id": "cli", "exec": ["bin/server"], "idleMinutes": 10 }
+        { "id": "cli", "exec": ["bin/server"], "idleMinutes": 10, "events": ["frontFile"] }
       ],
       "agent": { "claude": "." }
     }
@@ -82,6 +90,15 @@ public enum PluginGuide {
     is running, for them to send), or `process` with `method`. They get the palette, shortcuts and `tiri
     run <plugin>.<id> name=value` with no more work. A `key` already taken stays with whatever has it.
 
+    **Asking first:** `input` is a list of questions put in the palette before the command runs, each
+    becoming `${args.name}`: `{"name", "prompt", "type": "text" | "choice", "placeholder", "default",
+    "options": [{"value", "label", "detail", "symbol"}], "optionsFrom": provider}`. A choice's options can come
+    from a provider, which prints `["a", "b"]` or `{"items": [{"value", "label", "detail"}]}`. If the person
+    presses Esc, nothing runs. Args already given, from a row, a panel or `tiri run ... name=value`, aren't
+    asked for, so a panel can ask its own way and pass the answer. `"save": "front"` saves the file in front
+    first, and `"all"` every file with unsaved edits in the workspace. A file that changed on disk under someone's
+    edits isn't saved for you: the command doesn't run, and they're told why.
+
     **Filling in:** `${file}`, `${folder}`, `${line}`, `${selection}`, `${plugin}` (its folder) and
     `${args.name}`. In `exec`, each stays one argument. In `terminal`, each is quoted for you, so never put your
     own quotes around one: the validator refuses it, because a value could then run as a command.
@@ -102,7 +119,30 @@ public enum PluginGuide {
     status item's answer is `{"text", "symbol", "tooltip", "command", "args"}`, and no `text` hides it. They
     run when first shown, after this plugin's commands, and on `refresh`: `every` (at least 30 seconds, only
     while Tiri is in front) and `onSave`. `tiri plugin update <name> sidebar|status <id> <json>` sets them
-    from outside. Symbols are SF Symbols names.
+    from outside. Symbols are SF Symbols names. A row can also have `"color"` (its title and symbol) and
+    `"symbolColor"`, each a name (red, orange, yellow, green, mint, teal, cyan, blue, indigo, purple, pink, brown,
+    gray, accent, which suit light and dark) or `#rrggbb`, and `"menu": [{"title", "command", "symbol"}]`, its own
+    right-click menu. A section's `menu` goes on every row, before the row's own. A menu entry runs with the row's
+    `args`, plus `path` and `title` when its args don't have them.
+
+    `refresh` can also be `"onFrontFile": true`, when a different file comes to the front, and `"onFileChange":
+    true`, when files in the workspace change on disk, by anyone, at most every 3 seconds. Never write into the
+    workspace from a provider that refreshes on changes.
+
+    **fileMarks** put a mark beside files in the explorer: `{"id", "provider", "refresh"}`. The provider prints
+    `{"files": {"src/app.py": {"badge": "3", "color": "orange", "tooltip": "3 TODOs"}}}`, or `{"items":
+    [{"path", "badge", "color", "tooltip"}]}`. Paths are absolute or inside the workspace's first folder. A badge
+    is one or two characters, and a color also tints the file's name unless Git already has. They refresh like a
+    section does, and `tiri plugin update <name> marks <id> <json>` sets them.
+
+    **highlights** color text in the editor. Tiri matches them itself, one line at a time, only on lines on
+    screen, so nothing of yours runs while the person types: `{"pattern", "group", "files": ["*.py"], "color",
+    "background", "underline", "strikethrough", "caseInsensitive", "onlyInComments"}`. `pattern` is a regular
+    expression (ICU, as `NSRegularExpression` reads it), matched within one line, and `group` colors only that
+    group. `${settings.key}` in a pattern is that setting's value as plain text, and a list setting becomes
+    `(?:A|B)`, so people can choose the words. `onlyInComments` keeps it to where the file's language says there's
+    a comment. Lines over 2,000 characters aren't colored. Several highlights can match the same text: the first
+    one listed wins. Use `background` with transparency, like `#ffcc0033`, so the text stays readable.
 
     **Nothing runs while the person types, scrolls or reads a terminal.** There are no events for those, on
     purpose, and a plugin can't slow them down.
@@ -122,7 +162,15 @@ public enum PluginGuide {
     speak one JSON object per line. Tiri writes `{"id": 1, "method": "problems", "params": {...}}` to stdin,
     and you answer with `{"id": 1, "result": ...}` or `{"id": 1, "error": "what went wrong"}`. You can also
     send `{"method": "refresh"}` to refresh this plugin's sidebar and status items, and `{"method": "event",
-    "params": {"name": "...", "data": ...}}` to reach its open panels. stderr goes to `tiri plugin logs`. **Exit
+    "params": {"name": "...", "data": ...}}` to reach its open panels.
+
+    A process with `"events": [...]` is told what happens, as `{"method": "event", "params": {"name", "data"}}`
+    with no `id`, so don't answer: `frontFile` (`{"path"}`, null with no file in front), `openFiles` (`{"paths",
+    "front"}`), `saved` (`{"path"}`, saved in Tiri) and `filesChanged` (`{"paths"}`, changed on disk in the
+    workspace by anyone, gathered for half a second, up to 1,000 with `more` counting the rest; Git's own folder
+    is left out). Telling it starts it, and one that's just been started hears `frontFile` and `openFiles` first,
+    so it always knows where things stand. They're about the workspace in front. On a server, the paths are
+    the server's. stderr goes to `tiri plugin logs`. **Exit
     when stdin closes:** on a server, that's the only way a process is told to stop. There, it only reaches
     panels in that server's workspace, and it's as trustworthy as the server is.
 
@@ -180,9 +228,12 @@ public enum PluginGuide {
       /** A review comment on the file being shown, or this panel. allow.agent. */
       comment(text: string, line?: number): Promise<void>;
       setSetting(key: string, value: unknown): Promise<void>;
+      /** allow.editor. The files open in this workspace, and the one in front. */
+      files(): Promise<{ front: string | null; paths: string[] }>;
       setTitle(title: string): Promise<void>;
       /** "args" when a command shows this panel again, "file" when the viewed file changes, "theme",
-       *  "settings", and whatever your process or `tiri plugin post` sends. */
+       *  "settings", and whatever your process or `tiri plugin post` sends. With allow.editor, also
+       *  "frontFile", "openFiles", "saved" and "filesChanged", as processes get them. */
       on(event: string, handler: (data: unknown) => void): void;
     }
     ```
@@ -209,7 +260,10 @@ public enum PluginGuide {
       than downloading it from the plugin.
     - **Heavy UI:** rewrite it against this API. TreeViews become `sidebar`, webviews become `panels`,
       status items become `statusBar`, CodeLens-like actions become `fileButtons`, `vscode.commands` become
-      `commands`, and `vscode.workspace.getConfiguration` becomes `settings`. Run its logic as a `process`,
+      `commands`, and `vscode.workspace.getConfiguration` becomes `settings`. Text decorations become
+      `highlights`, a FileDecorationProvider becomes `fileMarks`, `showInputBox` and `showQuickPick` become a
+      command's `input`, a tree item's context menu becomes `menu`, and `onDidChangeActiveTextEditor`,
+      `onDidSaveTextDocument` and file watchers become a process's `events` or `refresh`. Run its logic as a `process`,
       or call the CLI it wraps. A webview's inline scripts move to files.
     - **Skills, MCP or hooks:** those already work in the terminal. They need a Claude Code part at most.
 

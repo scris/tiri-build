@@ -318,6 +318,33 @@ public enum CLIParser {
         case "dev-plugin-question":
             return request("dev.plugin-question")
 
+        case "dev-palette":
+            // What's asked in the palette, and answering it: text, a row's number, or --cancel.
+            var options = Options(args)
+            let cancel = options.flag("--cancel")
+            let choose = try options.value("--choose").flatMap(Int.init)
+            let text = try options.value("--text")
+            try options.finish()
+            var payload: [String: JSONValue] = [:]
+            if cancel { payload["cancel"] = .bool(true) }
+            if let choose { payload["choose"] = .int(choose) }
+            if let text { payload["text"] = .string(text) }
+            return request("dev.palette", payload)
+
+        case "dev-plugin-colors":
+            guard args.count == 2, let line = Int(args[1]) else { throw UsageError("usage: tiri dev-plugin-colors <file> <line>   (test copies only)") }
+            return request("dev.plugin-colors", ["path": .string(absolute(args[0], environment)), "line": .int(line)])
+
+        case "dev-plugin-menu":
+            guard args.count >= 2, let row = Int(args[1]) else { throw UsageError("usage: tiri dev-plugin-menu <plugin/section> <row> [<entry>]   (test copies only)") }
+            var payload: [String: JSONValue] = ["section": .string(args[0]), "row": .int(row)]
+            if args.count > 2, let entry = Int(args[2]) { payload["entry"] = .int(entry) }
+            return request("dev.plugin-menu", payload)
+
+        case "dev-file-mark":
+            guard args.count == 1 else { throw UsageError("usage: tiri dev-file-mark <file>   (test copies only)") }
+            return request("dev.file-mark", ["path": .string(absolute(args[0], environment))])
+
         case "dev-plugin-import":
             guard args.count == 1 else { throw UsageError("usage: tiri dev-plugin-import <path>   (test copies only)") }
             return request("dev.plugin-import", ["path": .string(args[0])])
@@ -814,7 +841,7 @@ public enum CLIParser {
                    tiri plugin reload [<name>]    (reads the folder again, with no restart)
                    tiri plugin verify [<name>] [--tests]   (every plugin against this build)
                    tiri plugin logs <name>        (what its programs printed to stderr)
-                   tiri plugin update <name> sidebar|status <id> <json>   (what a section or item shows)
+                   tiri plugin update <name> sidebar|status|marks <id> <json>   (what a section, item or file marks show)
                    tiri plugin post <name>[.<panel>] <event> [<json>]   (tells its open panels)
                    tiri plugin api                (the manifest and panel API, for writing one)
             """
@@ -856,7 +883,7 @@ public enum CLIParser {
                 try options.finish()
                 return request("plugin.reload", name.map { ["name": .string($0)] } ?? [:])
             case "update":
-                guard let name = options.positional(), let surface = options.positional(), ["sidebar", "status"].contains(surface),
+                guard let name = options.positional(), let surface = options.positional(), ["sidebar", "status", "marks"].contains(surface),
                       let id = options.positional(), let text = options.positional() else { throw UsageError(usage) }
                 try options.finish()
                 guard let value = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) else { throw UsageError("That isn't JSON: \(text)") }

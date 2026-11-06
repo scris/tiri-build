@@ -70,6 +70,10 @@ final class PaletteModel {
     var showsChangePanel = false
     /// A prompt's rows, which never come from what's typed.
     @ObservationIgnored private var promptRows: [Row] = []
+    /// Above the field, for a question whose field already holds an answer.
+    var heading: String?
+    /// It closed without an answer: Esc, a click elsewhere, or another palette taking its place.
+    @ObservationIgnored var onCancel: (() -> Void)?
 
     init(mode: Mode, model: AppModel, initialQuery: String = "") {
         self.mode = mode
@@ -197,6 +201,10 @@ final class PaletteModel {
     func finish() {
         previewTarget?.clearPreview()
         if !committed { restoreView?() }
+        if !committed, let cancelled = onCancel {
+            onCancel = nil
+            cancelled()
+        }
         previewTarget = nil
         restoreView = nil
         searchTask?.cancel()
@@ -592,6 +600,7 @@ final class PaletteModel {
                 return
             }
             let value = query
+            committed = true
             model.closePalette()
             commit(value)
             return
@@ -626,6 +635,15 @@ struct PaletteView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let heading = palette.heading {
+                Text(heading)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+            }
             HStack(spacing: 8) {
                 TextField(palette.placeholder, text: $palette.query)
                     .textFieldStyle(.plain)

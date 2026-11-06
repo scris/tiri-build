@@ -692,7 +692,8 @@ struct PluginSidebarSection: View {
 
     private func rows(_ items: [PluginTreeItem], depth: Int) -> AnyView {
         AnyView(ForEach(items) { item in
-            PluginTreeRow(item: item, depth: depth, isExpanded: expanded.contains(item.id)) {
+            PluginTreeRow(item: item, depth: depth, isExpanded: expanded.contains(item.id), menu: model.plugins.menu(for: item, in: section),
+                          choose: { model.plugins.runMenu($0, on: item) }) {
                 if item.children.isEmpty {
                     model.plugins.activate(item, plugin: section.plugin.name)
                 } else if expanded.contains(item.id) {
@@ -710,10 +711,33 @@ struct PluginTreeRow: View {
     let item: PluginTreeItem
     let depth: Int
     let isExpanded: Bool
+    var menu: [PluginManifest.MenuItem] = []
+    var choose: (PluginManifest.MenuItem) -> Void = { _ in }
     let action: () -> Void
     @State private var hovering = false
 
+    private var tint: Color? { PluginColor.ns(item.color).map { Color(nsColor: $0) } }
+    private var symbolTint: Color? { PluginColor.ns(item.symbolColor).map { Color(nsColor: $0) } ?? tint }
+
     var body: some View {
+        row
+            .contextMenu {
+                ForEach(Array(menu.enumerated()), id: \.offset) { _, entry in
+                    Button {
+                        choose(entry)
+                    } label: {
+                        if let symbol = entry.symbol { Label(entry.title, systemImage: symbol) } else { Text(entry.title) }
+                    }
+                }
+            }
+            .accessibilityActions {
+                ForEach(Array(menu.enumerated()), id: \.offset) { _, entry in
+                    Button(entry.title) { choose(entry) }
+                }
+            }
+    }
+
+    private var row: some View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Group {
@@ -729,11 +753,12 @@ struct PluginTreeRow: View {
                 if let symbol = item.symbol {
                     Image(systemName: symbol)
                         .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(symbolTint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
                         .frame(width: 15)
                 }
                 Text(item.title)
                     .font(.system(size: 12))
+                    .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .layoutPriority(1)

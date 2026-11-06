@@ -320,6 +320,9 @@ final class PluginPanelContext: NSObject, WKScriptMessageHandlerWithReply {
             }
             _ = model.setSetting(SettingsSchema.pluginKey(plugin.name, key), to: params["value"] ?? .null)
             return .null
+        case "files":
+            guard allow?.editor == true else { throw Refused(message: "files needs \"editor\": true in this panel's allow") }
+            return model.plugins.editorEvents.current(model.plugins)
         case "setTitle":
             guard let title = params["title"]?.stringValue else { throw Refused(message: "setTitle needs a title") }
             model.setPanelTitle(itemID, to: String(title.prefix(120)))
@@ -399,6 +402,7 @@ enum PluginPanelScripts {
         comment: (text, line) => request('comment', {text, line}),
         setSetting: (key, value) => request('setSetting', {key, value}),
         setTitle: (title) => request('setTitle', {title}),
+        files: () => request('files'),
         on: (event, handler) => {
           if (!handlers.has(event)) handlers.set(event, []);
           handlers.get(event).push(handler);

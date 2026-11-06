@@ -32,6 +32,18 @@ public enum PluginValidator {
         return target
     }
 
+    /// The keys in `${settings.key}`.
+    static func settingReferences(in pattern: String) -> [String] {
+        var keys: [String] = []
+        var rest = Substring(pattern)
+        while let open = rest.range(of: "${settings.") {
+            guard let close = rest[open.upperBound...].firstIndex(of: "}") else { break }
+            keys.append(String(rest[open.upperBound..<close]))
+            rest = rest[rest.index(after: close)...]
+        }
+        return keys
+    }
+
     /// Whether the first word of a command is one of the plugin's own files.
     static func isOwnProgram(_ word: String) -> Bool {
         word.hasPrefix("${plugin}/") || (word.contains("/") && !word.hasPrefix("/") && !word.hasPrefix("~"))
@@ -242,6 +254,52 @@ public enum PluginValidator {
         for button in manifest.fileButtons ?? [] {
             if button.patterns.isEmpty { error("button \"\(button.title)\" has no file patterns") }
             checkOwnCommand(button.command, "button \"\(button.title)\"")
+        }
+        for section in manifest.sidebar ?? [] {
+            for item in section.menu ?? [] { checkOwnCommand(item.command, "sidebar section \"\(section.id)\"'s menu") }
+        }
+        let settingNames = Set((manifest.settings ?? []).map(\.key))
+        for (index, highlight) in (manifest.highlights ?? []).enumerated() {
+            let place = "highlight \(index + 1)"
+            var pattern = highlight.pattern
+            for key in Self.settingReferences(in: pattern) where !settingNames.contains(key) {
+                error("\(place) uses ${settings.\(key)}, which isn't one of its settings")
+            }
+            pattern = PluginHighlightPattern.fill(pattern, settings: Dictionary(uniqueKeysWithValues: (manifest.settings ?? []).map { ($0.key, $0.default ?? .string("")) }))
+            if pattern.isEmpty { error("\(place) has no pattern") }
+            else if let expression = try? NSRegularExpression(pattern: pattern) {
+                if let group = highlight.group, group > expression.numberOfCaptureGroups { error("\(place) colors group \(group), and its pattern has \(expression.numberOfCaptureGroups)") }
+                if expression.firstMatch(in: "", range: NSRange(location: 0, length: 0)) != nil { error("\(place) matches nothing at all, which would color nothing") }
+            } else {
+                error("\(place): \"\(highlight.pattern)\" isn't a regular expression")
+            }
+            if highlight.color == nil, highlight.background == nil, highlight.underline != true, highlight.strikethrough != true {
+                error("\(place) says nothing about how it looks: give it a color, background, underline or strikethrough")
+            }
+            for value in [highlight.color, highlight.background].compactMap({ $0 }) where PluginColor.parse(value) == nil {
+                error("\(place): \"\(value)\" isn't a color. Use #rrggbb, #rrggbbaa or one of \(PluginColor.names.joined(separator: ", "))")
+            }
+        }
+        checkUnique((manifest.fileMarks ?? []).map(\.id), "file marks")
+        for marks in manifest.fileMarks ?? [] {
+            let place = "file marks \"\(marks.id)\""
+            if let provider = marks.provider { checkProvider(provider, place) } else { warn("\(place) has no provider, so it fills only through tiri plugin update") }
+            checkRefresh(marks.refresh, place)
+        }
+        for command in commands {
+            let place = "command \"\(command.id)\""
+            var names = Set<String>()
+            for input in command.input ?? [] {
+                if !names.insert(input.name).inserted { error("\(place) asks for \"\(input.name)\" twice") }
+                if !isPlainID(input.name) { error("\(place): input name \"\(input.name)\" should be letters, numbers, dashes and underscores") }
+                if input.prompt.isEmpty { error("\(place): input \"\(input.name)\" needs a prompt") }
+                if input.type == .text, input.options != nil || input.optionsFrom != nil { error("\(place): input \"\(input.name)\" is text, and has options") }
+                if input.type == .choice, input.options?.isEmpty != false, input.optionsFrom == nil { error("\(place): input \"\(input.name)\" is a choice, and needs options or optionsFrom") }
+                if let provider = input.optionsFrom { checkProvider(provider, "\(place)'s input \"\(input.name)\"") }
+            }
+            if command.input?.isEmpty == false, command.ask != nil {
+                warn("\(place) asks for input and then leaves words in the agent's input: fine, but the person answers twice")
+            }
         }
         for process in processes { checkProgram(process.exec, "process \"\(process.id)\"") }
         if let test = manifest.test { checkProgram(test, "test") }

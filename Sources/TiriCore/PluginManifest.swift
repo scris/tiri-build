@@ -27,6 +27,11 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public var statusBar: [StatusItem]?
     public var fileButtons: [FileButton]?
     public var processes: [BackgroundProcess]?
+    /// Colors on text in the editor, found by Tiri itself, one line at a time, so nothing of the
+    /// plugin's runs while you type.
+    public var highlights: [Highlight]?
+    /// Marks beside files in the explorer.
+    public var fileMarks: [FileMarks]?
     public var agent: AgentHalf?
 
     public var displayName: String { title ?? name }
@@ -41,6 +46,79 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public enum Place: String, Codable, Sendable { case workspace, mac }
     public enum Opening: String, Codable, Sendable { case tab, peek, right, down }
     public enum Display: String, Codable, Sendable { case toast, none }
+    public enum Saving: String, Codable, Sendable { case front, all }
+
+    /// A line of text or a choice, asked for in the palette.
+    public struct Input: Codable, Sendable, Equatable {
+        public enum Kind: String, Codable, Sendable { case text, choice }
+        /// It arrives as `${args.name}`.
+        public var name: String
+        public var prompt: String
+        public var type: Kind?
+        public var placeholder: String?
+        public var `default`: String?
+        public var options: [Choice]?
+        /// Where the choices come from when they aren't known ahead: `exec` printing JSON, or a process.
+        public var optionsFrom: Provider?
+
+        public init(name: String, prompt: String) {
+            self.name = name
+            self.prompt = prompt
+        }
+
+        public var kind: Kind { type ?? (options != nil || optionsFrom != nil ? .choice : .text) }
+    }
+
+    public struct Choice: Codable, Sendable, Equatable {
+        public var value: String
+        public var label: String?
+        public var detail: String?
+        public var symbol: String?
+
+        public init(value: String, label: String? = nil, detail: String? = nil, symbol: String? = nil) {
+            self.value = value
+            self.label = label
+            self.detail = detail
+            self.symbol = symbol
+        }
+
+        /// `["a", "b"]`, `[{"value", "label", "detail"}]` or `{"items": [...]}`, from a program.
+        public static func list(from value: JSONValue, limit: Int = 5_000) -> [Choice] {
+            let entries = value["items"]?.arrayValue ?? value["options"]?.arrayValue ?? value.arrayValue ?? []
+            return entries.prefix(limit).compactMap { entry in
+                if let text = entry.stringValue { return Choice(value: text) }
+                guard let picked = entry["value"].map(PluginTemplate.text) ?? entry["label"]?.stringValue else { return nil }
+                return Choice(value: picked, label: entry["label"]?.stringValue ?? entry["title"]?.stringValue,
+                              detail: entry["detail"]?.stringValue, symbol: entry["symbol"]?.stringValue)
+            }
+        }
+    }
+
+    /// Text in the editor to color. `pattern` is a regular expression, matched within one line.
+    public struct Highlight: Codable, Sendable, Equatable {
+        public var pattern: String
+        /// Only this group of the match is colored.
+        public var group: Int?
+        /// Which files, like `*.py`. All of them if left out.
+        public var files: [String]?
+        public var color: String?
+        public var background: String?
+        public var underline: Bool?
+        public var strikethrough: Bool?
+        public var caseInsensitive: Bool?
+        /// Only where the file's language says it's a comment. In a file with no colors of its own, anywhere.
+        public var onlyInComments: Bool?
+
+        public init(pattern: String) {
+            self.pattern = pattern
+        }
+    }
+
+    public struct FileMarks: Codable, Sendable, Equatable {
+        public var id: String
+        public var provider: Provider?
+        public var refresh: Refresh?
+    }
 
     public struct Command: Codable, Sendable, Equatable {
         public var id: String
@@ -63,6 +141,10 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         public var show: Display?
         public var open: Opening?
         public var timeout: Double?
+        /// Asked for in the palette before it runs, unless they're already in its args.
+        public var input: [Input]?
+        /// What gets saved first: the file in front, or every file with unsaved edits.
+        public var save: Saving?
 
         public init(id: String, title: String) {
             self.id = id
@@ -139,6 +221,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
             public var agent: Bool?
             /// May open files in this workspace.
             public var openFiles: Bool?
+            /// Hears which files are open, which is in front, and what's saved and changed.
+            public var editor: Bool?
         }
         public var id: String
         public var title: String
@@ -174,6 +258,23 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         /// Seconds between looks, at least 30, only while the app is in front.
         public var every: Double?
         public var onSave: Bool?
+        /// When a different file comes to the front.
+        public var onFrontFile: Bool?
+        /// When files in the workspace change on disk, by anyone. At most every few seconds.
+        public var onFileChange: Bool?
+    }
+
+    /// A row's right-click menu. The row's own args go with it.
+    public struct MenuItem: Codable, Sendable, Equatable {
+        public var title: String
+        public var command: String
+        public var symbol: String?
+
+        public init(title: String, command: String, symbol: String? = nil) {
+            self.title = title
+            self.command = command
+            self.symbol = symbol
+        }
     }
 
     public struct ToolbarButton: Codable, Sendable, Equatable {
@@ -189,6 +290,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         public var refresh: Refresh?
         public var emptyText: String?
         public var buttons: [ToolbarButton]?
+        /// On every row's right-click menu, before the row's own.
+        public var menu: [MenuItem]?
     }
 
     public struct StatusItem: Codable, Sendable, Equatable {
@@ -213,6 +316,19 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         public var exec: [String]
         public var `where`: Place?
         public var idleMinutes: Double?
+        /// What it's told as it happens. Telling it starts it.
+        public var events: [Event]?
+    }
+
+    public enum Event: String, Codable, Sendable, CaseIterable {
+        /// `{"path"}`, or a null path when no file is in front.
+        case frontFile
+        /// `{"paths": [...], "front"}`, whenever the files open in the workspace change.
+        case openFiles
+        /// `{"path"}`, after Tiri saves a file.
+        case saved
+        /// `{"paths": [...]}`, files changed on disk in the workspace, a few at a time.
+        case filesChanged
     }
 
     /// The part of a plugin that lives in the agent: skills, hooks and MCP servers.
@@ -264,9 +380,11 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         for command in commands ?? [] {
             if let exec = command.exec { found.append(exec.joined(separator: " ")) }
             if let line = command.terminal { found.append(line) }
+            for input in command.input ?? [] { if let exec = input.optionsFrom?.exec { found.append(exec.joined(separator: " ")) } }
         }
         for section in sidebar ?? [] { if let exec = section.provider?.exec { found.append(exec.joined(separator: " ")) } }
         for item in statusBar ?? [] { if let exec = item.provider?.exec { found.append(exec.joined(separator: " ")) } }
+        for marks in fileMarks ?? [] { if let exec = marks.provider?.exec { found.append(exec.joined(separator: " ")) } }
         for process in processes ?? [] { found.append(process.exec.joined(separator: " ")) }
         for language in languages ?? [] { for command in language.server?.commands ?? [] { found.append(command.joined(separator: " ")) } }
         var seen = Set<String>()
@@ -285,6 +403,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         let panels = panels ?? []
         if panels.contains(where: { $0.allow?.agent == true }) { said.append("Its panels can put words in your agent's input, for you to send.") }
         if panels.contains(where: { $0.allow?.openFiles == true }) { said.append("Its panels can open files in your workspace.") }
+        if panels.contains(where: { $0.allow?.editor == true }) { said.append("Its panels can see which files you have open, and which change.") }
         let own = Set((commands ?? []).flatMap { [$0.id, name + "." + $0.id] })
         let others = panels.flatMap { $0.allow?.commands ?? [] }.filter { !own.contains($0) }
         if !others.isEmpty { said.append("Its panels can run these commands: " + Array(Set(others)).sorted().joined(separator: ", ") + ".") }
@@ -304,6 +423,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         let panels = panels ?? []
         if panels.contains(where: { $0.allow?.agent == true }) { said.append(String(localized: "Its panels can put words in your agent's input, for you to send.")) }
         if panels.contains(where: { $0.allow?.openFiles == true }) { said.append(String(localized: "Its panels can open files in your workspace.")) }
+        if panels.contains(where: { $0.allow?.editor == true }) { said.append(String(localized: "Its panels can see which files you have open, and which change.")) }
         let own = Set((commands ?? []).flatMap { [$0.id, name + "." + $0.id] })
         let others = panels.flatMap { $0.allow?.commands ?? [] }.filter { !own.contains($0) }
         if !others.isEmpty {
@@ -334,6 +454,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
             count(sidebar?.count ?? 0, { String(localized: "1 sidebar section") }, { String(localized: "\($0) sidebar sections") }),
             count(statusBar?.count ?? 0, { String(localized: "1 status bar item") }, { String(localized: "\($0) status bar items") }),
             count(fileButtons?.count ?? 0, { String(localized: "1 button above files") }, { String(localized: "\($0) buttons above files") }),
+            count(highlights?.count ?? 0, { String(localized: "1 color in the editor") }, { String(localized: "\($0) colors in the editor") }),
+            count(fileMarks?.count ?? 0, { String(localized: "marks on files in the explorer") }, { _ in String(localized: "marks on files in the explorer") }),
             count(settings?.count ?? 0, { String(localized: "1 setting") }, { String(localized: "\($0) settings") }),
             count(languages?.count ?? 0, { String(localized: "1 language") }, { String(localized: "\($0) languages") }),
             count(grammars?.count ?? 0, { String(localized: "1 grammar") }, { String(localized: "\($0) grammars") }),
@@ -354,6 +476,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
             count(sidebar?.count ?? 0, "sidebar section", "sidebar sections"),
             count(statusBar?.count ?? 0, "status bar item", "status bar items"),
             count(fileButtons?.count ?? 0, "button above files", "buttons above files"),
+            count(highlights?.count ?? 0, "color in the editor", "colors in the editor"),
+            (fileMarks ?? []).isEmpty ? nil : "marks on files in the explorer",
             count(settings?.count ?? 0, "setting", "settings"),
             count(languages?.count ?? 0, "language", "languages"),
             count(grammars?.count ?? 0, "grammar", "grammars"),
@@ -552,6 +676,12 @@ public struct PluginTreeItem: Sendable, Equatable, Identifiable {
     public var command: String?
     public var args: [String: JSONValue]
     public var children: [PluginTreeItem]
+    /// Tints its title and symbol: a name like `orange`, or `#rrggbb`.
+    public var color: String?
+    /// Tints only its symbol.
+    public var symbolColor: String?
+    /// Its own right-click menu, after the section's.
+    public var menu: [PluginManifest.MenuItem]
 
     /// Reads `{"items":[…]}` or a bare list. A plugin's answer isn't trusted to be well made, or small.
     public static func list(from value: JSONValue, limit: Int = 5_000) -> [PluginTreeItem] {
@@ -569,9 +699,14 @@ public struct PluginTreeItem: Sendable, Equatable, Identifiable {
             var id = parent + "/" + (value["id"].map(PluginTemplate.text) ?? "\(index)")
             if !seen.insert(id).inserted { id += "#\(index)" }
             let children = list(value["children"]?.arrayValue ?? [], parent: id, depth: depth + 1, remaining: &remaining)
+            let menu = (value["menu"]?.arrayValue ?? []).prefix(20).compactMap { entry -> PluginManifest.MenuItem? in
+                guard let title = entry["title"]?.stringValue, let command = entry["command"]?.stringValue else { return nil }
+                return PluginManifest.MenuItem(title: title, command: command, symbol: entry["symbol"]?.stringValue)
+            }
             items.append(PluginTreeItem(id: id, title: title, detail: value["detail"]?.stringValue, symbol: value["symbol"]?.stringValue,
                                         tooltip: value["tooltip"]?.stringValue, path: value["path"]?.stringValue,
-                                        command: value["command"]?.stringValue, args: value["args"]?.objectValue ?? [:], children: children))
+                                        command: value["command"]?.stringValue, args: value["args"]?.objectValue ?? [:], children: children,
+                                        color: value["color"]?.stringValue, symbolColor: value["symbolColor"]?.stringValue, menu: Array(menu)))
         }
         return items
     }

@@ -193,6 +193,8 @@ final class LineHighlighter {
         }
     }
 
+    var hasGrammar: Bool { document != nil }
+
     /// What's known about a character. Plain until its line has been done.
     func kind(at offset: Int) -> TokenKind {
         guard offset >= 0, offset < knownLength else { return .plain }
@@ -206,6 +208,18 @@ final class LineHighlighter {
             if TokenKind.start(of: line[middle]) <= column { low = middle + 1 } else { high = middle }
         }
         return low == 0 ? .plain : TokenKind.of(line[low - 1])
+    }
+
+    /// In a comment. A grammar can mark a word inside one as something else, like TODO, and that's
+    /// still in the comment that started before it on the line.
+    func isInComment(_ offset: Int) -> Bool {
+        let here = kind(at: offset)
+        if here == .comment { return true }
+        guard here != .string, offset >= 0, offset < knownLength else { return false }
+        let index = table.line(containing: offset)
+        guard tokens.indices.contains(index), let line = tokens[index] else { return false }
+        let column = offset - table.starts[index]
+        return line.contains { TokenKind.start(of: $0) <= column && TokenKind.of($0) == .comment }
     }
 
     /// Inside a string or a comment, where brackets and names aren't code.

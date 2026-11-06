@@ -48,35 +48,10 @@ final class PluginProcesses {
     // MARK: Asking
 
     func call(plugin: InstalledPlugin, process id: String, method: String, params: JSONValue, context: PluginContext, timeout: Double = 60, workspace: WorkspaceID? = nil) async -> Result<JSONValue, Failure> {
-        guard let declared = plugin.manifest?.processes?.first(where: { $0.id == id }) else {
-            return .failure(Failure(message: "\(plugin.name) has no process \(id)."))
-        }
-        guard await host.stillApproved(plugin) else { return .failure(Failure(message: "It changed, so it's off until you approve it again.")) }
-        let place = declared.where ?? .workspace
-        let destination = place == .workspace ? host.runner.destination(of: workspace) : nil
-        let key = Key(plugin: plugin.name, process: id, destination: destination)
         let holder: Running
-        if let existing = running[key], existing.process.isRunning {
-            holder = existing
-        } else {
-            guard let target = await host.runner.target(plugin: plugin, context: context, place: place, workspace: workspace) else {
-                return .failure(Failure(message: "Couldn't reach the server this workspace is on."))
-            }
-            await host.runner.ensureUserPath()
-            // That took a while, and it may have been turned off in the meantime.
-            guard host.enabledPlugin(named: plugin.name)?.hash == plugin.hash else {
-                return .failure(Failure(message: "\(plugin.title) is off."))
-            }
-            // Someone else may have started it during that wait.
-            if let existing = running[key], existing.process.isRunning {
-                holder = existing
-            } else {
-                do {
-                    holder = try start(key: key, declared: declared, plugin: plugin, target: target)
-                } catch {
-                    return .failure(Failure(message: "Couldn't start \(declared.exec.first ?? id): \(error.localizedDescription)"))
-                }
-            }
+        switch await running(plugin: plugin, process: id, context: context, workspace: workspace) {
+        case .success(let found): holder = found
+        case .failure(let failure): return .failure(failure)
         }
         holder.lastUsed = Date()
         let requestID = holder.nextID
@@ -103,6 +78,57 @@ final class PluginProcesses {
                 waiting.resume(returning: .failure(Failure(message: "\(method) took longer than \(Int(timeout)) seconds.")))
             }
         }
+    }
+
+    /// The one running for this place, started if it isn't.
+    private func running(plugin: InstalledPlugin, process id: String, context: PluginContext, workspace: WorkspaceID?) async -> Result<Running, Failure> {
+        guard let declared = plugin.manifest?.processes?.first(where: { $0.id == id }) else {
+            return .failure(Failure(message: "\(plugin.name) has no process \(id)."))
+        }
+        guard await host.stillApproved(plugin) else { return .failure(Failure(message: "It changed, so it's off until you approve it again.")) }
+        let place = declared.where ?? .workspace
+        let destination = place == .workspace ? host.runner.destination(of: workspace) : nil
+        let key = Key(plugin: plugin.name, process: id, destination: destination)
+        if let existing = running[key], existing.process.isRunning { return .success(existing) }
+        guard let target = await host.runner.target(plugin: plugin, context: context, place: place, workspace: workspace) else {
+            return .failure(Failure(message: "Couldn't reach the server this workspace is on."))
+        }
+        await host.runner.ensureUserPath()
+        // That took a while, and it may have been turned off in the meantime.
+        guard host.enabledPlugin(named: plugin.name)?.hash == plugin.hash else {
+            return .failure(Failure(message: "\(plugin.title) is off."))
+        }
+        // Someone else may have started it during that wait.
+        if let existing = running[key], existing.process.isRunning { return .success(existing) }
+        do {
+            return .success(try start(key: key, declared: declared, plugin: plugin, target: target))
+        } catch {
+            return .failure(Failure(message: "Couldn't start \(declared.exec.first ?? id): \(error.localizedDescription)"))
+        }
+    }
+
+    /// Something it asked to hear about. No answer is wanted, and it doesn't count as being used, so a
+    /// process that's only listening still stops when it's idle, and starts again with the next one.
+    func notify(plugin: InstalledPlugin, process id: String, event: String, data: JSONValue, workspace: WorkspaceID? = nil) async {
+        let place = plugin.manifest?.processes?.first(where: { $0.id == id })?.where ?? .workspace
+        let key = Key(plugin: plugin.name, process: id, destination: place == .workspace ? host.runner.destination(of: workspace) : nil)
+        let holder: Running
+        // One that's running was approved when it started, and stops when the plugin changes.
+        if let existing = running[key], existing.process.isRunning {
+            holder = existing
+        } else {
+            let context = host.runner.context(plugin: plugin, args: [:], workspace: workspace)
+            guard case .success(let started) = await running(plugin: plugin, process: id, context: context, workspace: workspace) else { return }
+            holder = started
+        }
+        let line = SettingsSchema.json(.object(["method": .string("event"), "params": .object(["name": .string(event), "data": data])])) + "\n"
+        let input = holder.input
+        holder.writes.async { try? input.write(contentsOf: Data(line.utf8)) }
+    }
+
+    /// Whether it's running for this place right now.
+    func isRunning(plugin: String, process id: String, destination: String?) -> Bool {
+        running[Key(plugin: plugin, process: id, destination: destination)]?.process.isRunning == true
     }
 
     private func start(key: Key, declared: PluginManifest.BackgroundProcess, plugin: InstalledPlugin, target: PluginRunner.Target) throws -> Running {

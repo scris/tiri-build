@@ -111,8 +111,12 @@ final class AppModel {
     /// Workspaces on servers.
     @ObservationIgnored lazy var remote = RemoteManager(model: self)
 
-    var workspaces: [Workspace] = []
-    var activeID: WorkspaceID = ""
+    var workspaces: [Workspace] = [] {
+        didSet { plugins.editorEvents.workspaceMaybeChanged(plugins) }
+    }
+    var activeID: WorkspaceID = "" {
+        didSet { plugins.editorEvents.workspaceMaybeChanged(plugins) }
+    }
     var settings = TiriSettings()
     var keybindings: [Keybinding] = Keymap.build(user: [])
     var agentRows: [AgentOverviewRow] = []
@@ -680,6 +684,8 @@ final class AppModel {
     func existingController(for id: ItemID) -> ItemController? { controllers[id] }
 
     /// Everything showing a plugin's page, in any workspace.
+    func allTextControllers() -> [TextController] { controllers.values.compactMap { $0 as? TextController } }
+
     func allPanelControllers() -> [WebController] {
         controllers.values.compactMap { $0 as? WebController }.filter { $0.panel != nil }
     }
@@ -2068,6 +2074,7 @@ final class AppModel {
         languageServers.filesChanged(paths)
         for live in lives.values { live.fileTree.filesChanged(paths) }
         fileIndex.invalidate()
+        plugins.editorEvents.filesChanged(paths, host: plugins)
     }
 
     // MARK: Files
@@ -3237,6 +3244,7 @@ final class AppModel {
     // MARK: Palette
 
     func openPalette(_ mode: PaletteModel.Mode) {
+        palette?.finish()
         palette = PaletteModel(mode: mode, model: self)
     }
 
@@ -3253,6 +3261,7 @@ final class AppModel {
     }
 
     func openPrompt(title: String, initial: String, commit: @escaping (String) -> Void) {
+        palette?.finish()
         palette = PaletteModel(mode: .prompt(title: title, commit: commit), model: self, initialQuery: initial)
     }
 
