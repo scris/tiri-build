@@ -84,5 +84,6 @@ ditto -c -k --keepParent "$APP" "$ZIP"
 
 # The feed's entry for this zip, once it's been put at $BASE. Publishing it is a separate step.
 SHA="$(shasum -a 256 "$ZIP" | cut -d' ' -f1)"
-printf '{\n  "version": "%s",\n  "url": "%s/%s",\n  "sha256": "%s"\n}\n' "$VERSION" "${BASE%/}" "$(basename "$ZIP")" "$SHA" > "$OUT/update.json"
+BUILD="$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Contents/Info.plist")"
+printf '{\n  "version": "%s",\n  "build": "%s",\n  "url": "%s/%s",\n  "sha256": "%s"\n}\n' "$VERSION" "$BUILD" "${BASE%/}" "$(basename "$ZIP")" "$SHA" > "$OUT/update.json"
 echo "Notarized: $DMG ($(du -h "$DMG" | cut -f1)) and $ZIP ($(du -h "$ZIP" | cut -f1)), with $OUT/update.json, submission $ID"

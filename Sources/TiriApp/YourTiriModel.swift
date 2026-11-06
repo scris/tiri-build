@@ -834,7 +834,10 @@ struct ChangeMark {
     /// The feed named in a release. A build from source has none, and a test copy can be given one.
     static var updateFeed: String? {
         if AppModel.isTestCopy, let feed = ProcessInfo.processInfo.environment["TIRI_UPDATE_FEED"], !feed.isEmpty { return feed }
-        guard let feed = Bundle.main.object(forInfoDictionaryKey: "TiriUpdateFeed") as? String, !feed.isEmpty else { return nil }
+        if let feed = Bundle.main.object(forInfoDictionaryKey: "TiriUpdateFeed") as? String, !feed.isEmpty { return feed }
+        // A personal copy is built from source, with no feed of its own. The app it was made from has one.
+        guard let plain = CopyState.load()?.plainPath, plain != Bundle.main.bundlePath,
+              let feed = Bundle(path: plain)?.object(forInfoDictionaryKey: "TiriUpdateFeed") as? String, !feed.isEmpty else { return nil }
         return feed
     }
 

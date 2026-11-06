@@ -87,6 +87,10 @@ enum UpdateInstall {
                 }
             }
             try? FileManager.default.removeItem(at: UpdateStatus.file)
+            // The download is in place now; only the previous app is kept, in case.
+            if let version = Bundle(url: targetURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String, !version.isEmpty, version.allSatisfy({ $0.isNumber || $0 == "." }), version.contains(where: \.isNumber) {
+                try? FileManager.default.removeItem(at: YourTiri.updates.appendingPathComponent(version, isDirectory: true))
+            }
             if var state = CopyState.load(), let installed = Bundle(url: targetURL) {
                 state.plainVersion = installed.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
                 state.plainBundleID = installed.bundleIdentifier
