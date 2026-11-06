@@ -187,7 +187,7 @@ public enum CLIOutput {
             break
         case "plugin.post":
             say("Reached \(response.result?["reached"]?.intValue ?? 0) open panels.")
-        case "theme.show", "theme.list", "theme.use", "theme.import", "theme.set", "theme.delete":
+        case "theme.show", "theme.list", "theme.use", "theme.import", "theme.set", "theme.delete", "theme.new", "theme.rename":
             say(cell(response.result?["text"]))
         case "run":
             if let output = response.result?["output"]?.stringValue, !output.isEmpty { say(output.hasSuffix("\n") ? String(output.dropLast()) : output) }

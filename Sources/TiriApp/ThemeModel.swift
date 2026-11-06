@@ -83,6 +83,62 @@ extension AppModel {
         return nil
     }
 
+    /// A theme of someone's own, starting as a copy of another (the one for that look, unless they say), and put on
+    /// for that look at once so every change after shows.
+    func createTheme(named name: String, from base: String? = nil, for given: ThemeSlot? = nil) -> String? {
+        let slot = given ?? activeThemeSlot
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "A theme needs a name." }
+        guard theme(named: trimmed) == nil else { return "There's already a theme called \(trimmed)." }
+        let start = base.map { theme(named: $0) } ?? theme(named: settings.themeName(for: slot)) ?? (slot.isDark ? .tiriDark : .tiriLight)
+        guard var theme = start else { return "There's no theme called \(base ?? "")." }
+        theme.name = trimmed
+        theme.source = "Tiri"
+        do {
+            try ThemeLibrary().save(theme)
+        } catch {
+            return "Couldn't save the theme: \(error.localizedDescription)"
+        }
+        userThemes = ThemeLibrary().all()
+        return useTheme(trimmed, for: slot)
+    }
+
+    func renameTheme(_ name: String, to newName: String) -> String? {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var theme = userThemes.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+            return self.theme(named: name) == nil ? "There's no theme called \(name)." : "\(name) is built in, so it keeps its name. `tiri theme new` makes one of your own."
+        }
+        guard !trimmed.isEmpty else { return "A theme needs a name." }
+        if let other = self.theme(named: trimmed), other.name != theme.name { return "There's already a theme called \(other.name)." }
+        let old = theme.name
+        let library = ThemeLibrary()
+        theme.name = trimmed
+        do {
+            try library.save(theme)
+            if library.file(for: old) != library.file(for: trimmed) { try? FileManager.default.removeItem(at: library.file(for: old)) }
+        } catch {
+            return "Couldn't rename it: \(error.localizedDescription)"
+        }
+        userThemes = library.all()
+        for slot in slots(using: old) {
+            _ = setSetting(slot.settingKey, to: .string(trimmed))
+            settings.setThemeName(trimmed, for: slot)
+        }
+        repaintForTheme()
+        return nil
+    }
+
+    /// What an agent is asked when someone describes the theme they want.
+    func makeThemePrompt(_ description: String, for slot: ThemeSlot) -> String {
+        let look = slot.title.lowercased()
+        let slotArgument = slot.rawValue.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1-$2", options: .regularExpression).lowercased()
+        return "Make me a Tiri theme for \(look) mode: \(description.trimmingCharacters(in: .whitespacesAndNewlines)). "
+            + "Give it a short name of its own, then run `tiri theme new \"<name>\" --for \(slotArgument)`: it starts as a copy of my \(look) theme and goes on at once, so I'll see every change. "
+            + "Run `tiri theme` to see every color, then set all of them with `tiri theme set <color> <#hex> ...`: the terminal's background, text, cursor, selection and its sixteen colors, the editor's, and the accent. "
+            + "Keep everything readable: text at least 4.5:1 against its background, comments at least 3:1, and the sixteen terminal colors distinct from each other and from the background. "
+            + "Use only `tiri theme`, never the theme files. Tell me the name when it's done."
+    }
+
     func deleteTheme(_ name: String) -> String? {
         guard let theme = userThemes.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
             return Theme.builtIns.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
@@ -182,6 +238,22 @@ extension AppModel {
             }
             return text(before == activeTheme.name ? "Changed \(activeTheme.name)."
                                                     : "\(before) is built in, so this is a copy: \(activeTheme.name), the \(activeThemeSlot.title.lowercased()) theme now.")
+        case "theme.new":
+            guard let name = args["name"]?.stringValue else { throw ControlHandler.ControlFailure("What's it called?") }
+            var slot: ThemeSlot?
+            if let raw = args["for"]?.stringValue {
+                let wanted = raw.replacingOccurrences(of: "-", with: "").lowercased()
+                guard let found = ThemeSlot.allCases.first(where: { $0.rawValue.lowercased() == wanted }) else {
+                    throw ControlHandler.ControlFailure("--for is dark, light, high-contrast-dark or high-contrast-light")
+                }
+                slot = found
+            }
+            if let problem = createTheme(named: name, from: args["from"]?.stringValue, for: slot) { throw ControlHandler.ControlFailure(problem) }
+            return text("Made \(name), a copy of what was there, and put it on for \((slot ?? activeThemeSlot).title.lowercased()). `tiri theme set` changes its colors.")
+        case "theme.rename":
+            guard let name = args["name"]?.stringValue, let new = args["to"]?.stringValue else { throw ControlHandler.ControlFailure("Rename what, to what?") }
+            if let problem = renameTheme(name, to: new) { throw ControlHandler.ControlFailure(problem) }
+            return text("\(name) is \(new) now.")
         case "theme.delete":
             guard let name = args["name"]?.stringValue else { throw ControlHandler.ControlFailure("Which theme?") }
             if let problem = deleteTheme(name) { throw ControlHandler.ControlFailure(problem) }

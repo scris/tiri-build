@@ -2,45 +2,54 @@ import AppKit
 import SwiftUI
 import TiriCore
 
-/// Themes in Settings: a picture of each look's theme, which is also its menu, and its colors to change. The one
-/// showing now has a ring. Nothing here needs reading: the pictures are the themes.
+/// Themes in Settings: the theme for the look you're in, as a picture that's also its menu, and its colors to
+/// change. Only that one: in light mode the dark theme is nothing to look at. When the Mac turns dark, or Increase
+/// Contrast comes on, this shows that look's theme instead.
 struct ThemeSettings: View {
     @Environment(AppModel.self) private var model
-    @AppStorage("settings.themes.highContrastOpen") private var highContrastOpen = false
     @AppStorage("settings.themes.colorsOpen") private var colorsOpen = false
     @State private var bringing = false
+    @State private var making = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                ThemeSlotCard(slot: .dark)
-                ThemeSlotCard(slot: .light)
-            }
-            HStack(spacing: 14) {
-                Button {
-                    bringing = true
-                } label: {
-                    Label("Bring a Theme…", systemImage: "square.and.arrow.down")
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    ThemeSlotCard(slot: model.activeThemeSlot)
+                    actions.padding(.top, 2)
                 }
-                .popover(isPresented: $bringing, arrowEdge: .bottom) { BringThemeList { bringing = false } }
-                Spacer(minLength: 0)
-                fold("High Contrast", isOpen: $highContrastOpen)
-                fold("Colors", isOpen: $colorsOpen)
-            }
-            .controlSize(.small)
-            if highContrastOpen {
-                HStack(alignment: .top, spacing: 12) {
-                    ThemeSlotCard(slot: .highContrastDark)
-                    ThemeSlotCard(slot: .highContrastLight)
+                VStack(alignment: .leading, spacing: 10) {
+                    ThemeSlotCard(slot: model.activeThemeSlot)
+                    actions
                 }
             }
             if colorsOpen { ThemeColorEditor() }
         }
     }
 
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                bringing = true
+            } label: {
+                Label("Bring a Theme…", systemImage: "square.and.arrow.down")
+            }
+            .popover(isPresented: $bringing, arrowEdge: .bottom) { BringThemeList { bringing = false } }
+            Button {
+                making = true
+            } label: {
+                Label("Make One…", systemImage: "sparkles")
+            }
+            .popover(isPresented: $making, arrowEdge: .bottom) { MakeThemeWithAgent(slot: model.activeThemeSlot) { making = false } }
+            fold("Colors", isOpen: $colorsOpen)
+        }
+        .controlSize(.small)
+        .fixedSize()
+    }
+
     private func fold(_ title: String, isOpen: Binding<Bool>) -> some View {
         Button {
-            withAnimation(.snappy(duration: 0.2)) { isOpen.wrappedValue.toggle() }
+            withAnimation(AccessibilityDisplay.shared.motion(.snappy(duration: 0.2))) { isOpen.wrappedValue.toggle() }
         } label: {
             HStack(spacing: 4) {
                 Text(title)
@@ -63,16 +72,12 @@ struct ThemeSlotCard: View {
     var body: some View {
         let name = model.settings.themeName(for: slot)
         let theme = model.theme(named: name) ?? model.theme(named: Theme.defaultName(for: slot)) ?? .tiriDark
-        let showing = model.activeThemeSlot == slot
         Menu {
             themeChoices(selected: theme.name)
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 ThemePreview(theme: theme)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 9)
-                            .strokeBorder(showing ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: showing ? 2 : 0.5)
-                    }
+                    .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5) }
                 HStack(spacing: 5) {
                     Image(systemName: symbol)
                         .font(.system(size: 10))
@@ -92,7 +97,7 @@ struct ThemeSlotCard: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .frame(maxWidth: 220, alignment: .leading)
-        .help("\(slot.title): \(theme.name)\(showing ? ", showing now" : "")")
+        .help("The \(slot.title.lowercased()) theme: \(theme.name)")
         .accessibilityLabel("\(slot.title) theme, \(theme.name)")
     }
 
@@ -194,9 +199,11 @@ struct ThemeColorEditor: View {
     var body: some View {
         let theme = model.activeTheme
         VStack(alignment: .leading, spacing: 12) {
-            Text(theme.isBuiltIn ? "\(theme.name), showing now. Changing it makes your own copy." : "\(theme.name), showing now.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if theme.isBuiltIn {
+                Text("Changing \(theme.name) makes your own copy.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             group("Highlights") {
                 HStack(spacing: 8) {
                     accentChoice(nil, chosen: theme.accent == nil, label: "Your Mac")
@@ -374,7 +381,8 @@ struct BringThemeList: View {
 
     private func bring(_ url: URL, named name: String? = nil) {
         do {
-            try model.importTheme(from: url, named: name)
+            let theme = try model.importTheme(from: url, named: name, use: false)
+            model.useTheme(theme.name, for: model.activeThemeSlot)
             done()
         } catch let failure as ThemeImport.Failure {
             problem = failure.description
@@ -390,5 +398,63 @@ struct BringThemeList: View {
         panel.message = "A Ghostty theme, an iTerm2 .itermcolors file, or a VS Code or Cursor theme"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         bring(url)
+    }
+}
+
+// MARK: - Making one with an agent
+
+/// Say what the theme should be like, and an agent makes it with `tiri theme`, on screen as it goes.
+struct MakeThemeWithAgent: View {
+    let slot: ThemeSlot
+    let done: () -> Void
+    @Environment(AppModel.self) private var model
+    @State private var description = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let presets = model.runnableAgentPresets()
+        let prompt = model.makeThemePrompt(description, for: slot)
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Like a foggy harbor at dawn", text: $description, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(2...4)
+                .focused($focused)
+                .onSubmit { send(presets.first, prompt) }
+            HStack {
+                Text("For \(slot.title.lowercased()) mode")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let first = presets.first {
+                    Menu {
+                        ForEach(presets.dropFirst()) { preset in
+                            Button("Ask \(preset.name)") { send(preset, prompt) }
+                        }
+                        if presets.count > 1 { Divider() }
+                        Button("Copy Prompt") { Clipboard.copy(prompt); done() }
+                    } label: {
+                        Text("Ask \(first.name)")
+                    } primaryAction: {
+                        send(first, prompt)
+                    }
+                    .fixedSize()
+                    .disabled(isEmpty)
+                } else {
+                    Button("Copy Prompt") { Clipboard.copy(prompt); done() }
+                        .disabled(isEmpty)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 320)
+        .onAppear { focused = true }
+    }
+
+    private var isEmpty: Bool { description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private func send(_ preset: TerminalPreset?, _ prompt: String) {
+        guard let preset, !isEmpty else { return }
+        model.askAgent(preset: preset, prompt: prompt)
+        done()
     }
 }

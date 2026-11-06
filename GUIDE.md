@@ -227,15 +227,17 @@ PDF, Office, iWork, RTF, font and web archive previews have no dark mode, so Tir
 
 ### Themes
 
-A theme colors terminals, the editor and highlights (selections, switches, tabs). Like VS Code, you pick one for dark and one for light in **Settings → General**, and two more under **High Contrast** for when Increase Contrast is on. Tiri has its own: **System Dark** and **System Light** highlight in your Mac's accent color, **Tiri Pink Dark** and **Tiri Pink Light** always in Tiri's pink.
+A theme colors terminals, the editor and highlights (selections, switches, tabs). Like VS Code, dark mode and light mode each keep their own, and so does Increase Contrast. **Settings → General** shows the one for the look you're in; switch your Mac to dark to choose the dark one. Tiri has its own: **System Dark** and **System Light** highlight in your Mac's accent color, **Tiri Pink Dark** and **Tiri Pink Light** always in Tiri's pink.
 
-**Bring a Theme…** lists the themes Cursor, VS Code and Ghostty already have on your Mac, so most are one click, or takes a Ghostty theme, an iTerm2 `.itermcolors` file or a VS Code theme `.json`. A terminal theme gives the editor its colors from its palette, and an editor theme without terminal colors gets Tiri's. **Colors** shows every color of the theme showing now to change. Changing one of Tiri's makes your own copy. Or ask your agent: it uses `tiri theme`.
+**Bring a Theme…** lists the themes Cursor, VS Code and Ghostty already have on your Mac, so most are one click, or takes a Ghostty theme, an iTerm2 `.itermcolors` file or a VS Code theme `.json`. A terminal theme gives the editor its colors from its palette, and an editor theme without terminal colors gets Tiri's. **Make One…** takes a few words, like "a foggy harbor at dawn", and your agent makes the theme with `tiri theme`, on screen as it goes. **Colors** shows every color of the theme showing now to change. Changing a built-in one makes your own copy.
 
 ```sh
 tiri theme list --available
 tiri theme import "Solarized Light" --use
 tiri theme set terminal.background '#101014' editor.comment '#9a9aa2'
 tiri theme set accent purple
+tiri theme new "Harbor" --for dark       # your own, starting as a copy, then set its colors
+tiri theme rename "Harbor" "Harbor Night"
 ```
 
 Themes are JSON files in `~/.config/tiri/themes`.

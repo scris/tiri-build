@@ -1045,7 +1045,7 @@ enum ControlHandler {
             if let problem { throw ControlFailure(problem) }
             return .object(["command": .string(command), "key": .string(model.shortcutSymbol(for: command) ?? "")])
 
-        case "theme.show", "theme.list", "theme.use", "theme.import", "theme.set", "theme.delete":
+        case "theme.show", "theme.list", "theme.use", "theme.import", "theme.set", "theme.delete", "theme.new", "theme.rename":
             return try model.handleThemeRequest(request.cmd, request.args)
 
         case "theme":

@@ -556,6 +556,9 @@ public enum CLIParser {
                 "       tiri theme use <name> [--for dark|light|high-contrast-dark|high-contrast-light]",
                 "       tiri theme import <file or available name> [--use]",
                 "       tiri theme set <color> <#hex> [<color> <#hex> ...]   (on the theme showing now; accent takes a Mac accent name)",
+                "       tiri theme new <name> [--from <theme>] [--for dark|light|high-contrast-dark|high-contrast-light]",
+                "                                       (a theme of your own, starting as a copy, put on at once)",
+                "       tiri theme rename <name> <new name>",
                 "       tiri theme delete <name>",
             ].joined(separator: "\n")
             guard let sub = args.first else { return request("theme.show") }
@@ -593,6 +596,19 @@ public enum CLIParser {
                 guard let name = options.positional() else { throw UsageError(usage) }
                 try options.finish()
                 return request("theme.delete", ["name": .string(name)])
+            case "new":
+                let from = try options.value("--from")
+                let slot = try options.value("--for")
+                guard let name = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                var payload: [String: JSONValue] = ["name": .string(name)]
+                if let from { payload["from"] = .string(from) }
+                if let slot { payload["for"] = .string(slot) }
+                return request("theme.new", payload)
+            case "rename":
+                guard let name = options.positional(), let new = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                return request("theme.rename", ["name": .string(name), "to": .string(new)])
             default:
                 throw UsageError(usage)
             }
@@ -880,6 +896,8 @@ public enum CLIParser {
       tiri hooks <agent>        (prints the hooks config)
                                 (agents with hooks: claude, codex, grok)
       tiri theme light|dark|system
+      tiri theme [list [--available] | use <name> [--for <look>] | import <file|name> [--use]
+                 | new <name> [--from <theme>] [--for <look>] | set <color> <#hex> ... | rename <name> <new> | delete <name>]
       tiri web-dark on|off [<item-id>]
       tiri search <text>           (across the workspace's files, as ⌘⇧F does)
       tiri select <item-id> <text> [--to <text>]   (select it in a file, diff or page, to point at it)
@@ -1203,6 +1221,8 @@ public enum AgentGuide {
     tiri theme set terminal.background '#101014' editor.comment '#7f848e'   # change colors of the theme showing now
     tiri theme set accent pink            # the color of selections and switches: mac, or blue, purple, pink, red, orange, yellow, green, graphite
     tiri theme use "Tiri Pink Light" --for light
+    tiri theme new "Harbor" --for dark   # a theme of your own, starting as a copy of the dark one; then `tiri theme set` its colors
+    tiri theme rename "Harbor" "Harbor Night"
     tiri web-dark on [<item-id>]          # force dark on a web preview, PDF or Office file
     ```
 
