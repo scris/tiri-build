@@ -11,6 +11,8 @@
 # TIRI_DEV_A11Y=transparency,contrast,motion makes it act as if Reduce Transparency, Increase Contrast or Reduce
 # Motion were on, without touching this Mac's settings. `cli <name> dev-a11y <list|none>` changes it live.
 # TIRI_UPDATE_FEED=http://127.0.0.1:<port>/update.json gives it a release feed on this Mac.
+# TIRI_DEV_WELCOME=1 shows the first launch's welcome, which test copies otherwise skip. TIRI_DEV_LOOKING=1
+# acts as if someone were looking at its window, which a hidden copy never is, for what waits for that.
 # CLAUDE_CONFIG_DIR, CODEX_HOME, GROK_HOME=<empty folder> make it see an agent with no hooks, as a newcomer's would be.
 # TIRI_DEV_NO_DEVELOPER_TOOLS=1 makes it act as if this Mac had no Command Line Tools, as a fresh Mac doesn't; =all, as if it had no git anywhere.
 #   scripts/dev-app.sh env <name>        prints `export ...` lines; `eval` them to use its CLI
@@ -66,7 +68,8 @@ launch_in_background() {
     ${TIRI_UPDATE_FEED:+--env TIRI_UPDATE_FEED="$TIRI_UPDATE_FEED"} \
     ${TIRI_CONVERSATIONS_HOME:+--env TIRI_CONVERSATIONS_HOME="$TIRI_CONVERSATIONS_HOME"} \
     ${CODEX_HOME:+--env CODEX_HOME="$CODEX_HOME"} ${GROK_HOME:+--env GROK_HOME="$GROK_HOME"} \
-    ${CLAUDE_CONFIG_DIR:+--env CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"}
+    ${CLAUDE_CONFIG_DIR:+--env CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"} \
+    ${TIRI_DEV_WELCOME:+--env TIRI_DEV_WELCOME=1} ${TIRI_DEV_LOOKING:+--env TIRI_DEV_LOOKING=1}
   for _ in $(seq 1 50); do
     pid="$(pgrep -f "$NAME/TiriDev.app/Contents/MacOS/Tiri" | head -1 || true)"
     [ -n "$pid" ] && break
