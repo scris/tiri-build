@@ -336,6 +336,7 @@ final class AppModel {
         }
         FileWatchHub.shared.excludedNames = Set(settings.filesExclude)
         FileWatchHub.shared.onChanges = { [weak self] paths in self?.filesChanged(paths) }
+        FileWatchHub.shared.onRescan = { [weak self] folders in self?.foldersNeedRescan(folders) }
         syncWatchRoots()
         remote.startUp()
         enterActiveWorkspace()
@@ -1003,7 +1004,8 @@ final class AppModel {
     func aliasedPath(_ rawPath: String, in workspaceID: WorkspaceID? = nil) -> String {
         let path = URL(fileURLWithPath: rawPath).standardizedFileURL.path
         guard let workspace = workspaces.first(where: { $0.id == workspaceID ?? activeID }) else { return path }
-        if workspace.folder(containing: path) != nil { return path }
+        // `readme.md` opens `README.md` on a Mac, and is the same tab, watched under the name events use.
+        if let folder = workspace.folder(containing: path) { return workspace.remote == nil ? PathCase.onDisk(path, below: folder) : path }
         let real = Self.realPath(path)
         for folder in workspace.folders {
             let realFolder = Self.realPath(folder)
@@ -2077,6 +2079,12 @@ final class AppModel {
         plugins.editorEvents.filesChanged(paths, host: plugins)
     }
 
+    /// FSEvents lost track under these folders, so what's showing from them is read again.
+    private func foldersNeedRescan(_ folders: [String]) {
+        filesChanged(folders)
+        for live in lives.values { live.fileTree.reload(under: folders) }
+    }
+
     // MARK: Files
 
     func openExternally(path: String, line: Int? = nil, col: Int? = nil) {
@@ -2375,18 +2383,48 @@ final class AppModel {
             alert.messageText = String(localized: "This file changed on disk")
             alert.informativeText = String(localized: "Something else, perhaps an agent, changed it after you started editing. Saving replaces that with what you have here.")
             alert.addButton(withTitle: String(localized: "Replace"))
+            alert.addButton(withTitle: String(localized: "Compare"))
             alert.addButton(withTitle: String(localized: "Cancel"))
-            alert.beginSheetModal(for: window) { response in
+            alert.beginSheetModal(for: window) { [weak self] response in
                 MainActor.assumeIsolated {
                     if response == .alertFirstButtonReturn, case .saved = controller.save(overwriting: true) { done() }
+                    if response == .alertSecondButtonReturn { self?.compareWithDisk(controller.itemID) }
                 }
             }
         }
     }
 
+    /// What's on disk beside what you have here, in the diff viewer.
+    func compareWithDisk(_ id: ItemID) {
+        guard let path = anyItem(id)?.filePath else { return }
+        var spec = DiffSpec(path: path)
+        spec.unsaved = true
+        openDiff(spec, preview: false)
+    }
+
+    /// The edits not saved yet in the editor open on this file, if it has any.
+    func unsavedText(of path: String) -> String? {
+        for (id, controller) in controllers where controller.isDirty && anyItem(id)?.filePath == path {
+            if let text = controller.unsavedText { return text }
+        }
+        return nil
+    }
+
+    /// Save All, as quitting asks. A file something else changed since isn't overwritten: its edits are kept
+    /// unsaved, and come back with it. False if one couldn't be saved or kept.
     func saveAllEdits() -> Bool {
         for controller in controllers.values where controller.isDirty {
-            guard case .saved = controller.save(overwriting: true) else { return false }
+            switch controller.save(overwriting: false) {
+            case .saved:
+                continue
+            case .changedOnDisk:
+                if controller.keepUnsavedEdits() { continue }
+                save(controller) {}
+                return false
+            case .failed(let why):
+                showToast(title: String(localized: "Couldn't save"), detail: why, symbol: "exclamationmark.triangle", tint: .orange)
+                return false
+            }
         }
         return true
     }

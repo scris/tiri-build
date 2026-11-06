@@ -380,6 +380,15 @@ public enum CLIParser {
             guard let text = args.last else { throw UsageError("usage: tiri dev-compose [--commit] <text>   (test copies only)") }
             return request("dev-compose", ["text": .string(text), "commit": .bool(args.first == "--commit")])
 
+        case "dev-editor":
+            // The file in front as a check needs it: its text, cursor, top line and undo. `undo` presses ⌘Z,
+            // `saveall` does what Save All does when quitting, and `press <title>` presses a button of what's being
+            // asked over the window.
+            var payload: [String: JSONValue] = [:]
+            if let action = args.first { payload["action"] = .string(action) }
+            if args.count > 1 { payload["title"] = .string(args.dropFirst().joined(separator: " ")) }
+            return request("dev-editor", payload)
+
         case "agents":
             let usage = "usage: tiri agents [on <agent> | off <agent> | add <name> <command> | remove <agent>]"
             switch args.first {

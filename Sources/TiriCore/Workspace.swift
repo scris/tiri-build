@@ -94,6 +94,8 @@ public struct DiffSpec: Codable, Hashable, Sendable {
     public var branch: Bool?
     /// A branch that isn't checked out here: `from` and `to`, as commits.
     public var range: [String]?
+    /// What's on disk against the edits not saved yet in its open editor.
+    public var unsaved: Bool?
     public init(path: String, turn: String? = nil, commit: String? = nil, branch: Bool? = nil) {
         self.path = path
         self.turn = turn
@@ -113,6 +115,7 @@ public struct DiffSpec: Codable, Hashable, Sendable {
         if let commit { return String(commit.prefix(7)) }
         if range != nil { return String(localized: "branch") }
         if turn != nil { return String(localized: "turn") }
+        if unsaved == true { return String(localized: "unsaved") }
         return branch == true ? String(localized: "branch") : String(localized: "changes")
     }
 
@@ -121,6 +124,7 @@ public struct DiffSpec: Codable, Hashable, Sendable {
         if let commit { return String(commit.prefix(7)) }
         if range != nil { return "branch" }
         if turn != nil { return "turn" }
+        if unsaved == true { return "unsaved" }
         return branch == true ? "branch" : "changes"
     }
 }

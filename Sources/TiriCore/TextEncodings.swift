@@ -74,6 +74,11 @@ public enum TextEncodings {
             // `String(data:encoding: .utf16)` drops the mark from the text, so it goes back on here.
             if original.starts(with: mark), !text.hasPrefix("\u{FEFF}") { body = Data(mark) + body }
             return body
+        case .utf8:
+            guard let body = text.data(using: .utf8) else { return nil }
+            // Reading drops UTF-8's mark from the text as well, and Windows tools write one.
+            let mark: [UInt8] = [0xEF, 0xBB, 0xBF]
+            return original.starts(with: mark) && !text.hasPrefix("\u{FEFF}") ? Data(mark) + body : body
         default:
             return text.data(using: encoding)
         }

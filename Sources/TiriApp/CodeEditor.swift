@@ -135,6 +135,48 @@ final class CodeTextView: NSTextView {
         scrollRangeToVisible(NSRange(location: edit.selection.location, length: 0))
     }
 
+    /// Something else changed the file: one step for undo, as `apply` is, but the cursor stays on the
+    /// text it was on, and so does the top of the view. False if the view won't take it.
+    func applyFromDisk(_ changes: [TextChange], name: String) -> Bool {
+        guard !changes.isEmpty, let textStorage, let layout = layoutManager, let container = textContainer,
+              let clip = enclosingScrollView?.contentView else { return false }
+        dropExtraCursors()
+        let selection = selectedRange()
+        // The first character showing, and how far into its line the view's top is.
+        let top = clip.bounds.origin
+        let topCharacter = textStorage.length == 0 ? 0
+            : layout.characterIndex(for: NSPoint(x: 0, y: max(top.y - textContainerOrigin.y, 0)), in: container, fractionOfDistanceBetweenInsertionPoints: nil)
+        let topLine = layout.lineFragmentRect(forGlyphAt: layout.glyphIndexForCharacter(at: min(topCharacter, max(textStorage.length - 1, 0))), effectiveRange: nil)
+        let intoLine = top.y - (topLine.minY + textContainerOrigin.y)
+        breakUndoCoalescing()
+        registerSelectionStep(restore: selection, afterwards: nil)
+        guard shouldChangeText(inRanges: changes.map { NSValue(range: $0.range) }, replacementStrings: changes.map(\.text)) else { return false }
+        textStorage.beginEditing()
+        for change in changes.reversed() {
+            textStorage.replaceCharacters(in: change.range, with: NSAttributedString(string: change.text, attributes: typingAttributes))
+        }
+        textStorage.endEditing()
+        didChangeText()
+        let length = textStorage.length
+        let start = min(ChangedText.moved(selection.location, by: changes), length)
+        let end = min(max(ChangedText.moved(NSMaxRange(selection), by: changes), start), length)
+        let after = NSRange(location: start, length: end - start)
+        setSelectedRange(after)
+        registerSelectionStep(restore: nil, afterwards: after)
+        undoManager?.setActionName(name)
+        breakUndoCoalescing()
+        // The same text at the top as before, wherever the text above it went.
+        var y = top.y
+        let newTop = ChangedText.moved(topCharacter, by: changes)
+        if changes[0].range.location < topCharacter, length > 0 {
+            let glyph = layout.glyphIndexForCharacter(at: min(newTop, length - 1))
+            y = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + textContainerOrigin.y + intoLine
+        }
+        clip.scroll(to: NSPoint(x: top.x, y: max(y, 0)))
+        enclosingScrollView?.reflectScrolledClipView(clip)
+        return true
+    }
+
     /// Undo runs last to first, so a step registered before the edit runs after undoing it, and
     /// one registered after the edit runs after redoing it. Each hands over to the other.
     private func registerSelectionStep(restore: NSRange?, afterwards: NSRange?) {

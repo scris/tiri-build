@@ -389,6 +389,25 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         roots.forEach(walk)
     }
 
+    /// Everything showing under these folders, read again: the file system lost track of what happened there.
+    func reload(under folders: [String]) {
+        func walk(_ node: FileNode) {
+            guard node.children != nil else { return }
+            refresh(node)
+            node.children?.forEach(walk)
+        }
+        for folder in folders {
+            if folder == "/" {
+                roots.forEach(walk)
+            } else if let node = findLoaded(folder) {
+                walk(node)
+            } else {
+                // A folder above a root covers the whole root.
+                roots.filter { $0.path.hasPrefix(folder + "/") }.forEach(walk)
+            }
+        }
+    }
+
     private func findLoaded(_ path: String) -> FileNode? {
         for root in roots where path == root.path || path.hasPrefix(root.path + "/") {
             var node = root

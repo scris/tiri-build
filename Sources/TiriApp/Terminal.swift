@@ -47,6 +47,8 @@ protocol ItemController: AnyObject {
     var supportsReplace: Bool { get }
     func replaceCurrent(query: String, with replacement: String, caseSensitive: Bool) -> Bool
     func replaceAll(query: String, with replacement: String, caseSensitive: Bool) -> Int
+    /// What its editor holds, when that isn't saved yet.
+    var unsavedText: String? { get }
 }
 
 extension ItemController {
@@ -78,6 +80,7 @@ extension ItemController {
     func clearFind() {}
     var findCount: (current: Int, total: Int)? { nil }
     var findReturnGoesBackwards: Bool { false }
+    var unsavedText: String? { nil }
     var supportsReplace: Bool { false }
     func replaceCurrent(query: String, with replacement: String, caseSensitive: Bool) -> Bool { false }
     func replaceAll(query: String, with replacement: String, caseSensitive: Bool) -> Int { 0 }

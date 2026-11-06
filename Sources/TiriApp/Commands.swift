@@ -1510,6 +1510,42 @@ enum ControlHandler {
             }
             return .object([:])
 
+        case "dev-editor":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only in a test copy.") }
+            if request.args["action"]?.stringValue == "press" {
+                let title = request.args["title"]?.stringValue ?? ""
+                guard let sheet = model.window?.attachedSheet else { throw ControlFailure("Nothing is being asked.") }
+                func buttons(_ view: NSView) -> [NSButton] { ((view as? NSButton).map { [$0] } ?? []) + view.subviews.flatMap(buttons) }
+                let found = sheet.contentView.map(buttons) ?? []
+                guard let button = found.first(where: { $0.title == title }) else {
+                    throw ControlFailure("No button \(title). There's \(found.map(\.title).joined(separator: ", ")).")
+                }
+                button.performClick(nil)
+                return .object([:])
+            }
+            // What Save All does when quitting asks.
+            if request.args["action"]?.stringValue == "saveall" { return .object(["saved": .bool(model.saveAllEdits())]) }
+            guard let editor = model.frontEditor else { throw ControlFailure("No file in front.") }
+            let view = editor.codeView
+            if request.args["action"]?.stringValue == "undo" { view.undoManager?.undo() }
+            let text = view.nsText
+            let selection = view.selectedRange()
+            var top = 0
+            if let layout = view.layoutManager, let container = view.textContainer, let clip = view.enclosingScrollView?.contentView, text.length > 0 {
+                let point = NSPoint(x: 0, y: max(clip.bounds.minY - view.textContainerOrigin.y, 0))
+                top = layout.characterIndex(for: point, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
+            }
+            func line(at location: Int) -> String {
+                text.substring(with: text.lineRange(for: NSRange(location: min(location, text.length), length: 0))).trimmingCharacters(in: .newlines)
+            }
+            return .object(["path": .string(editor.path), "dirty": .bool(editor.isDirty), "length": .int(text.length),
+                            "text": .string(text.length <= 100_000 ? text as String : ""),
+                            "selection": .array([.int(selection.location), .int(selection.length)]),
+                            "cursorLine": .string(line(at: selection.location)), "topLine": .string(line(at: top)),
+                            "scrollY": .double(Double(view.enclosingScrollView?.contentView.bounds.minY ?? 0)),
+                            "canUndo": .bool(view.undoManager?.canUndo == true), "undoName": .string(view.undoManager?.undoActionName ?? ""),
+                            "sheet": .bool(model.window?.attachedSheet != nil)])
+
         case "perf":
             var object: [String: JSONValue] = ["footprintMB": .double(ProcessClock.footprintMegabytes())]
             if let switching = model.lastSwitchMilliseconds { object["lastSwitchMs"] = .double(switching) }

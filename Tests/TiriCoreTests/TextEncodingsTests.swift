@@ -29,6 +29,18 @@ import Testing
         #expect(decoded.roundTrips)
     }
 
+    @Test func utf8WithAByteOrderMarkCanBeEditedAndKeepsIt() throws {
+        let mark = Data([0xEF, 0xBB, 0xBF])
+        let marked = mark + Data("hi\r\n".utf8)
+        let decoded = try #require(TextEncodings.decode(marked))
+        #expect(decoded.encoding == .utf8)
+        #expect(decoded.text == "hi\r\n")
+        #expect(decoded.roundTrips)
+        #expect(TextEncodings.encode("edited", as: .utf8, bom: marked.prefix(4)) == mark + Data("edited".utf8))
+        // One without a mark doesn't get one.
+        #expect(TextEncodings.encode("edited", as: .utf8, bom: Data("hi".utf8)) == Data("edited".utf8))
+    }
+
     @Test func aChoiceThatCantReadItSaysSo() {
         let latin = "été".data(using: .isoLatin1)!
         #expect(TextEncodings.decode(latin, as: .utf8) == nil)

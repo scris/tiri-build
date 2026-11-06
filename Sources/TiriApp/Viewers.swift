@@ -607,6 +607,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
         return AgentSelection(path: path, quote: AgentReference.quotation(from: name, text: selection.text))
     }
     var isDirty: Bool { source?.isDirty ?? false }
+    var unsavedText: String? { source?.unsavedText }
     func save(overwriting: Bool) -> SaveResult { source?.save(overwriting: overwriting) ?? .saved }
     func keepUnsavedEdits() -> Bool { source?.keepEditsNow() ?? true }
 
@@ -752,6 +753,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private(set) var isDirty = false {
         didSet { if isDirty != oldValue { model.controllerRevision += 1 } }
     }
+    var unsavedText: String? { isDirty ? textView.string : nil }
     nonisolated static let maximumBytes = 32 * 1024 * 1024
     /// How the file's bytes are read, and written back. Found when it opens, unless someone chose one.
     private(set) var encoding: String.Encoding = .utf8 {
@@ -1091,7 +1093,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func convertToUTF8() -> String? {
         guard let bytes = textView.string.data(using: .utf8) else { return String(localized: "Couldn't write it as UTF-8.") }
         do {
-            try bytes.write(to: URL(fileURLWithPath: path), options: .atomic)
+            try SafeWrite.write(bytes, to: path)
         } catch {
             return error.localizedDescription
         }
@@ -1163,20 +1165,12 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         // Edits from before a quit or a crash come back over what's on disk, as they were.
         let kept = loadedOnce || !editable ? nil : UnsavedEdits.read(itemID).flatMap { $0.path == path ? $0 : nil }
         let shown = kept?.text ?? text
-        textView.dropExtraCursors()
-        textView.string = shown
-        highlighter.use(language: LanguageCatalog.language(forPath: path, firstLine: Self.firstLine(of: shown)))
-        // What undo remembers is about text that's gone.
-        undo.removeAllActions()
-        reviewChanged()
-        if loadedOnce {
-            // A reload shouldn't lose your place.
-            textView.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
-            scrollView.contentView.scroll(to: origin)
-            scrollView.reflectScrolledClipView(scrollView.contentView)
+        if loadedOnce, kept == nil, editable, replaceChanged(with: shown) {
+            // Only what changed was replaced, as one step undo can take back, and your place is where it was.
+            highlighter.use(language: LanguageCatalog.language(forPath: path, firstLine: Self.firstLine(of: shown)))
+            reviewChanged()
         } else {
-            // A file opens at its top, with the cursor there.
-            textView.setSelectedRange(NSRange(location: 0, length: 0))
+            replaceAll(with: shown, selection: selection, origin: origin)
         }
         loadedOnce = true
         if let kept { cameBack(kept, onDisk: text) }
@@ -1185,6 +1179,34 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         diagnosticsChanged()
         model.languageServers.fileMayHaveChanged(path)
         refreshChangeMarks()
+    }
+
+    /// Past this, in UTF-16 units, a change on disk replaces everything, as comparing would take too long.
+    private static let largestChangedInPlace = 4_000_000
+
+    /// A file you haven't edited, changed by something else: only the lines that changed are replaced.
+    private func replaceChanged(with text: String) -> Bool {
+        let old = textView.nsText, new = text as NSString
+        guard textView.isEditable, old.length <= Self.largestChangedInPlace, new.length <= Self.largestChangedInPlace else { return false }
+        return textView.applyFromDisk(ChangedText.changes(from: old, to: new), name: String(localized: "Change on Disk"))
+    }
+
+    private func replaceAll(with shown: String, selection: NSRange, origin: NSPoint) {
+        textView.dropExtraCursors()
+        textView.string = shown
+        highlighter.use(language: LanguageCatalog.language(forPath: path, firstLine: Self.firstLine(of: shown)))
+        // What undo remembers is about text that's gone.
+        undo.removeAllActions()
+        reviewChanged()
+        if loadedOnce {
+            // A reload shouldn't lose your place.
+            textView.setSelectedRange(NSRange(location: min(selection.location, (shown as NSString).length), length: 0))
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        } else {
+            // A file opens at its top, with the cursor there.
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+        }
     }
 
     private func cameBack(_ kept: UnsavedEdit, onDisk text: String) {
@@ -1347,7 +1369,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             return .failed(String(localized: "\(TextEncodings.name(of: encoding)) can't hold everything typed here. Choose Save as UTF-8 from its encoding above the file."))
         }
         do {
-            try bytes.write(to: URL(fileURLWithPath: path), options: .atomic)
+            try SafeWrite.write(bytes, to: path)
             savedText = textView.string
             diskChangedUnderEdits = false
             isDirty = false
@@ -2888,7 +2910,7 @@ extension MarkdownController {
     private func write(_ change: (Data) throws -> Data) {
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
-            try change(data).write(to: URL(fileURLWithPath: path), options: .atomic)
+            try SafeWrite.write(change(data), to: path)
             model.remote.didSave(path)
         } catch NotebookEditing.Failure.changedMeanwhile {
             model.showNotebookNotice(String(localized: "Something else changed this cell while you were editing it, so your edit wasn't saved."))

@@ -300,7 +300,7 @@ final class PluginPanelContext: NSObject, WKScriptMessageHandlerWithReply {
             let wrote = try await Task.detached(priority: .userInitiated) { () -> Bool in
                 let url = URL(fileURLWithPath: file)
                 guard (try? Data(contentsOf: url)) == lastRead else { return false }
-                try new.write(to: url, options: .atomic)
+                try SafeWrite.write(new, to: file)
                 return true
             }.value
             guard wrote else { throw Refused(message: "The file has changed since you read it. Read it again first") }

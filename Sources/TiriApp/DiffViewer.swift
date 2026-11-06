@@ -162,7 +162,11 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     // MARK: Loading
 
-    func didAttach() { model.languageServers.viewerShown(path) }
+    func didAttach() {
+        model.languageServers.viewerShown(path)
+        // Edits not saved yet may have changed since it was last showing.
+        if spec.unsaved == true, !firstLoad { load() }
+    }
 
     /// Only what this change is answerable for: the lines it added, in the file as it is now.
     /// A finished turn's or a commit's lines may not be the file's any more, so it shows nothing.
@@ -221,13 +225,26 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
         let found = spec.turn.flatMap { model.turn(id: $0) }
         let snapshots = model.snapshots
         let scale = view.window?.backingScaleFactor ?? 2
+        let unsaved = spec.unsaved == true ? model.unsavedText(of: path) : nil
         Task.detached(priority: .userInitiated) { [weak self] in
-            let loaded = Self.read(spec, turn: found, snapshots: snapshots, scale: scale)
+            let loaded = spec.unsaved == true ? Self.read(spec.path, against: unsaved) : Self.read(spec, turn: found, snapshots: snapshots, scale: scale)
             await MainActor.run {
                 guard let self, self.generation == current else { return }
                 self.display(loaded)
             }
         }
+    }
+
+    /// The file on disk, old, against edits not saved yet, new: what saving them would change.
+    nonisolated private static func read(_ path: String, against unsaved: String?) -> Loaded {
+        var loaded = Loaded()
+        let data = FileManager.default.contents(atPath: path) ?? Data()
+        let disk = TextEncodings.decode(data)?.text ?? String(decoding: data, as: UTF8.self)
+        let diff = unsaved.map { ChangedText.fileDiff(from: disk, to: $0) } ?? FileDiff()
+        loaded.diff = diff
+        loaded.pairs = DiffRows.pairs(diff.lines)
+        loaded.starts = DiffRows.changeStarts(diff.lines)
+        return loaded
     }
 
     nonisolated private static func read(_ spec: DiffSpec, turn: AgentTurn?, snapshots: TurnSnapshots, scale: CGFloat) -> Loaded {
@@ -454,7 +471,8 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     /// Hovering over a change offers what you'd want to say about it. Doing it is the agent's job.
     func hover(row: Int?, in pane: DiffPane) {
-        guard let row, row < pane.rows.count, let line = pane.rows[row] ?? (row < pane.counterpart.count ? pane.counterpart[row] : nil),
+        // Asking an agent to undo is for what an agent changed, not for edits of your own.
+        guard spec.unsaved != true, let row, row < pane.rows.count, let line = pane.rows[row] ?? (row < pane.counterpart.count ? pane.counterpart[row] : nil),
               let change = DiffHunks.change(around: line, in: diff.lines) else {
             // On its way to the buttons, the mouse is still over the change.
             if !changeActions.isHidden, changeActions.frame.contains(container.convert(NSEvent.mouseLocationInWindow(of: container), from: nil)) { return }
