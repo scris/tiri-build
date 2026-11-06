@@ -1631,6 +1631,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         sessionUp = false
         knownSessionShell = nil
         if handleEndOverSSH(exitCode: exitCode) { return }
+        if reattachLostSession(exitCode: exitCode) { return }
         exited = true
         // A resume that stops at once either has no conversation to find, or met something that may
         // pass, like the network or a login. A fresh start would replace the stored session with a new
@@ -1660,6 +1661,28 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             guard let self else { return }
             self.model.closeNow(self.itemID)
         })
+    }
+
+    /// The relay to this Mac's session server ended, but the program didn't: the server let go of a view
+    /// that stopped reading, or the relay itself was killed. Only a session that's still there counts, so
+    /// a program that really exits with the same code still shows as exited. Comes back as after a
+    /// relaunch, a few times at most, so two views taking it from each other can't go on for ever.
+    private var lostSessionReattaches: [Double] = []
+    private func reattachLostSession(exitCode: Int32?) -> Bool {
+        guard remoteDestination == nil, throughSession, exitCode == TerminalSessions.lostExitCode || exitCode == nil,
+              TerminalSessions.isAlive(itemID) else { return false }
+        let now = ProcessClock.now()
+        lostSessionReattaches = lostSessionReattaches.filter { now - $0 < 30_000 } + [now]
+        guard lostSessionReattaches.count <= 3 else { return false }
+        // Still running, so it's that, and nothing is run again if it ends before the relay is back.
+        if let command = launchCommand {
+            attachedTo = command
+            launchCommand = nil
+        }
+        // What's on screen is replaced by what the server replays, or it would all appear twice.
+        terminalView.feed(text: "\u{1B}c\u{1B}[3J")
+        spawn()
+        return true
     }
 
     /// Whether `ssh` ending means the program did. It reports its own failures as 255, and a

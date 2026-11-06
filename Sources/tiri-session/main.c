@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -39,9 +40,20 @@
 //   'C' forget the output so far: the view was cleared with ⌘K, and a reattach shouldn't bring it back
 // Frames from the server to the relay: type, then a 32-bit length, then that many bytes.
 //   'D' the program's output    'R' the replay is over              'X' it exited, with this code
+// 'R' carries whether there was anything to replay, then the server's protocol version, then its pid in
+// 32 bits. A server from before versions sends only the first byte, which reads as version 0. Servers
+// outlive many builds of Tiri, so anything new a server can do is asked for only once its version says
+// it can. Version 1 takes SIGUSR1 from the relay as "a Ctrl-C is coming": see drop_waiting_keys.
+//
+// The relay exits with the program's code. It exits with SESSION_LOST when the server hung up without
+// saying the program ended, so Tiri can tell a lost view from a finished program.
 
 #define RING_BYTES (4 * 1024 * 1024)
 #define READ_BYTES 65536
+#define SESSION_PROTOCOL 1
+#define SESSION_LOST 254
+// Input waiting for a program that isn't reading it. Past this, the view isn't read until it's taken.
+#define TYPED_BYTES (1024 * 1024)
 
 static void die(const char *message) {
     fprintf(stderr, "tiri-session: %s: %s\n", message, strerror(errno));
@@ -283,8 +295,10 @@ static int send_replay(int fd) {
         free(flat);
     }
     // The relay needs to know whether there was anything to replay. See relay().
-    unsigned char had_output = ring_count > 0;
-    return send_frame(fd, 'R', &had_output, 1);
+    uint32_t self = (uint32_t)getpid();
+    unsigned char done[6] = {ring_count > 0, SESSION_PROTOCOL, (unsigned char)(self >> 24), (unsigned char)(self >> 16),
+                             (unsigned char)(self >> 8), (unsigned char)self};
+    return send_frame(fd, 'R', done, sizeof done);
 }
 
 static double now_seconds(void) {
@@ -297,6 +311,14 @@ static volatile sig_atomic_t child_changed;
 static void on_child(int signal) {
     (void)signal;
     child_changed = 1;
+}
+
+// SIGUSR1 from the relay: a Ctrl-C is on its way behind a paste the program isn't reading, and the relay
+// has thrown away the rest of the paste. What's ahead of the Ctrl-C goes too. See drop_waiting_keys.
+static volatile sig_atomic_t interrupt_coming;
+static void on_interrupt_coming(int signal) {
+    (void)signal;
+    interrupt_coming = 1;
 }
 
 typedef struct {
@@ -313,6 +335,93 @@ static void remove_files(const char *socket_path) {
     snprintf(pid_path, sizeof pid_path, "%s.pid", socket_path);
     unlink(socket_path);
     unlink(pid_path);
+    snprintf(pid_path, sizeof pid_path, "%s.server", socket_path);
+    unlink(pid_path);
+}
+
+// MARK: Who's running
+
+// Beside the socket, `.pid` holds the program's pid and `.server` the server's. Each is written whole
+// or not at all: a half-written file, on a full disk, must never read as a dead session.
+
+static void write_pid_file(const char *socket_path, const char *suffix, int pid) {
+    char path[1100], temporary[1200], text[32];
+    snprintf(path, sizeof path, "%s%s", socket_path, suffix);
+    snprintf(temporary, sizeof temporary, "%s.%d.tmp", path, (int)getpid());
+    int fd = open(temporary, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) return;
+    int length = snprintf(text, sizeof text, "%d\n", pid);
+    int written = write_all(fd, text, (size_t)length) == 0;
+    if (close(fd) == 0 && written && rename(temporary, path) == 0) return;
+    unlink(temporary);
+}
+
+static int read_pid_file(const char *socket_path, const char *suffix) {
+    char path[1100];
+    snprintf(path, sizeof path, "%s%s", socket_path, suffix);
+    FILE *file = fopen(path, "r");
+    int pid = 0;
+    if (file) {
+        if (fscanf(file, "%d", &pid) != 1) pid = 0;
+        fclose(file);
+    }
+    return pid;
+}
+
+static int parent_of(int pid) {
+#if defined(__APPLE__)
+    struct proc_bsdinfo info;
+    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof info) != (int)sizeof info) return 0;
+    return (int)info.pbi_ppid;
+#else
+    char path[64], text[1024];
+    snprintf(path, sizeof path, "/proc/%d/stat", pid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    ssize_t got = read(fd, text, sizeof text - 1);
+    close(fd);
+    if (got <= 0) return 0;
+    text[got] = 0;
+    // After the name in brackets, which can hold anything: state, then the parent.
+    char *end = strrchr(text, ')');
+    int parent = 0;
+    if (!end || sscanf(end + 1, " %*c %d", &parent) != 1) return 0;
+    return parent;
+#endif
+}
+
+enum { SERVER_UNKNOWN, SERVER_RUNNING, SERVER_GONE };
+
+/// Whether pid is alive, and a session server rather than whatever got the number after it died.
+static int session_process(int pid) {
+    if (kill(pid, 0) != 0 && errno == ESRCH) return SERVER_GONE;
+    char name[256] = "";
+#if defined(__APPLE__)
+    if (proc_name(pid, name, sizeof name) <= 0) return SERVER_UNKNOWN;
+#else
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%d/comm", pid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return SERVER_UNKNOWN;
+    ssize_t got = read(fd, name, sizeof name - 1);
+    close(fd);
+    if (got <= 0) return SERVER_UNKNOWN;
+    name[got] = 0;
+#endif
+    return strncmp(name, "tiri-", 5) == 0 ? SERVER_RUNNING : SERVER_GONE;
+}
+
+/// What the pids beside the socket say about its server, without connecting, which would count as
+/// attaching. A server from before `.server` existed is its program's parent.
+static int server_state(const char *socket_path) {
+    int server = read_pid_file(socket_path, ".server");
+    if (server > 0) return session_process(server);
+    int program = read_pid_file(socket_path, ".pid");
+    if (program <= 0) return SERVER_UNKNOWN;
+    int parent = parent_of(program);
+    // The program outlived its server, or the number now belongs to something else.
+    if (parent == 1) return SERVER_GONE;
+    return parent > 1 ? (session_process(parent) == SERVER_RUNNING ? SERVER_RUNNING : SERVER_UNKNOWN) : SERVER_UNKNOWN;
 }
 
 // MARK: Telling a view over SSH what it can't see for itself
@@ -420,15 +529,120 @@ static void report_state(int client, int master, pid_t child, int force, const c
     send_frame(client, 'D', message, (uint32_t)used);
 }
 
+// MARK: Input for the program
+
+// A program that isn't reading takes about 1 KB before its terminal is full, and a write after that
+// waits. This loop also reads the program's output and hears from the view, so a paste into a dev
+// server would freeze it all. Input waits here instead, and goes in as the program takes it.
+
+static unsigned char *typed;
+static size_t typed_start, typed_count;
+
+static void write_typed(int master) {
+    while (typed_count > 0) {
+        ssize_t written = write(master, typed + typed_start, typed_count);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            // Anything but full means the program's going, and its input with it.
+            if (errno != EAGAIN) typed_count = 0;
+            break;
+        }
+        typed_start += (size_t)written;
+        typed_count -= (size_t)written;
+    }
+    if (typed_count == 0) typed_start = 0;
+}
+
+static void queue_typed(int master, const unsigned char *data, size_t count) {
+    if (typed_start + typed_count + count > TYPED_BYTES) {
+        memmove(typed, typed + typed_start, typed_count);
+        typed_start = 0;
+    }
+    memcpy(typed + typed_start + typed_count, data, count);
+    typed_count += count;
+    write_typed(master);
+}
+
+/// Where the last Ctrl-C, Ctrl-\ or Ctrl-Z is in what was typed, if the terminal takes it as a signal.
+static long interrupt_at(int master, const unsigned char *data, size_t count) {
+    struct termios modes;
+    if (tcgetattr(master, &modes) != 0 || !(modes.c_lflag & ISIG) || (modes.c_lflag & NOFLSH)) return -1;
+    const cc_t keys[3] = {modes.c_cc[VINTR], modes.c_cc[VQUIT], modes.c_cc[VSUSP]};
+    for (size_t index = count; index-- > 0;) {
+        for (int key = 0; key < 3; key++) {
+            if (keys[key] != _POSIX_VDISABLE && data[index] == keys[key]) return (long)index;
+        }
+    }
+    return -1;
+}
+
+/// Throws away what the program was sent and hasn't read. On a Mac this side can do it, but on Linux
+/// flushing this side drops the program's output instead, and only its own side holds its input.
+static void flush_program_input(int master) {
+#if defined(__APPLE__)
+    tcflush(master, TCIFLUSH);
+#endif
+    const char *name = ptsname(master);
+    if (!name) return;
+    int program_side = open(name, O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+    if (program_side < 0) return;
+    tcflush(program_side, TCIFLUSH);
+    close(program_side);
+}
+
+/// Takes typed input for the program, or says there isn't room for it yet. A Ctrl-C can't wait behind a
+/// paste the program isn't reading: the terminal throws away what's waiting when it sees one, so this
+/// does too, and the key goes straight in.
+static int take_input(int master, const unsigned char *data, size_t count) {
+    if (typed_count == 0) {
+        queue_typed(master, data, count);
+        if (typed_count == 0) return 1;
+    } else if (count > TYPED_BYTES - typed_count) {
+        if (interrupt_at(master, data, count) < 0) return 0;
+    } else {
+        queue_typed(master, data, count);
+    }
+    long at = interrupt_at(master, data, count);
+    if (at >= 0) {
+        typed_start = typed_count = 0;
+        flush_program_input(master);
+        queue_typed(master, data + at, count - (size_t)at);
+    }
+    return 1;
+}
+
+/// When typed input has to wait, where the first frame after it holding a Ctrl-C starts, or 0. Frames
+/// from the relay: type, then a 16-bit length, then that many bytes.
+static size_t frame_with_interrupt(int master, const unsigned char *frames, size_t count) {
+    size_t at = 3 + (((size_t)frames[1] << 8) | frames[2]);
+    while (count - at >= 3) {
+        size_t length = ((size_t)frames[at + 1] << 8) | frames[at + 2];
+        if (count - at < 3 + length) break;
+        if (frames[at] == 'D' && interrupt_at(master, frames + at + 3, length) >= 0) return at;
+        at += 3 + length;
+    }
+    return 0;
+}
+
+static int attach_lock = -1;
+
 static void run_server(const launch_options *options, int listener) {
     ring = malloc(RING_BYTES);
-    if (!ring) exit(71);
+    typed = malloc(TYPED_BYTES);
+    if (!ring || !typed) exit(71);
+    // Held by the view that started this. Kept, it would keep every later one waiting.
+    if (attach_lock >= 0) close(attach_lock);
+    attach_lock = -1;
     signal(SIGPIPE, SIG_IGN);
     signal(SIGHUP, SIG_IGN);
     struct sigaction action;
     memset(&action, 0, sizeof action);
     action.sa_handler = on_child;
     sigaction(SIGCHLD, &action, NULL);
+    action.sa_handler = on_interrupt_coming;
+    sigaction(SIGUSR1, &action, NULL);
+    // Before the program starts, so an attach waiting on the lock can see this is here.
+    write_pid_file(options->socket_path, ".server", (int)getpid());
 
     int master = -1;
     struct winsize size = options->size;
@@ -439,6 +653,23 @@ static void run_server(const launch_options *options, int listener) {
         signal(SIGHUP, SIG_DFL);
         signal(SIGPIPE, SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
+        // Whatever started this may have ignored these, and a program inherits that: Ctrl-C would do nothing.
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTTOU, SIG_DFL);
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, NULL);
+#ifdef IUTF8
+        // Off by default, and then Backspace in a plain prompt takes one byte of a character that has three.
+        struct termios modes;
+        if (tcgetattr(STDIN_FILENO, &modes) == 0) {
+            modes.c_iflag |= IUTF8;
+            tcsetattr(STDIN_FILENO, TCSANOW, &modes);
+        }
+#endif
         if (options->directory && chdir(options->directory) != 0) { /* Stay where we are. */ }
         char *path = options->command[0];
         if (options->argv0) options->command[0] = (char *)options->argv0;
@@ -447,26 +678,24 @@ static void run_server(const launch_options *options, int listener) {
         _exit(127);
     }
 
-    char pid_path[1100];
-    snprintf(pid_path, sizeof pid_path, "%s.pid", options->socket_path);
-    FILE *pid_file = fopen(pid_path, "w");
-    if (pid_file) {
-        fprintf(pid_file, "%d\n", (int)child);
-        fclose(pid_file);
-    }
+    write_pid_file(options->socket_path, ".pid", (int)child);
+    fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK);
 
     double last_report_at = 0;
+    double interrupt_heard_at = 0;
     int client = -1;
-    unsigned char input[READ_BYTES + 3];
+    // Room to look past a paste that has to wait, for a Ctrl-C behind it. See frame_with_interrupt.
+    static unsigned char input[4 * READ_BYTES];
     size_t input_count = 0;
     unsigned char buffer[READ_BYTES];
     int exit_code = -1;
     int program_done = 0;
 
     while (!program_done) {
-        struct pollfd fds[3] = {{listener, POLLIN, 0}, {master, POLLIN, 0}, {client, POLLIN, 0}};
-        int count = client >= 0 ? 3 : 2;
-        int ready = poll(fds, (nfds_t)count, 500);
+        // The view isn't read while what it sent can't be taken, so it waits, rather than this.
+        struct pollfd fds[3] = {{listener, POLLIN, 0}, {master, (short)(POLLIN | (typed_count ? POLLOUT : 0)), 0},
+                                {input_count < sizeof input ? client : -1, POLLIN, 0}};
+        int ready = poll(fds, 3, 500);
         if (ready < 0 && errno != EINTR) break;
 
         if (ready > 0 && (fds[0].revents & POLLIN)) {
@@ -476,6 +705,7 @@ static void run_server(const launch_options *options, int listener) {
                 if (client >= 0) close(client);
                 client = fresh;
                 input_count = 0;
+                interrupt_coming = 0;
                 struct timeval timeout = {2, 0};
                 setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
                 // A local socket holds 8 KB by default, so this would wait on the view after every frame.
@@ -512,21 +742,47 @@ static void run_server(const launch_options *options, int listener) {
             }
         }
 
-        if (client >= 0 && ready > 0 && count == 3 && (fds[2].revents & (POLLIN | POLLHUP))) {
+        if (ready > 0 && (fds[1].revents & POLLOUT)) write_typed(master);
+
+        int heard = 0;
+        if (client >= 0 && ready > 0 && (fds[2].revents & (POLLIN | POLLHUP))) {
             ssize_t got = read(client, input + input_count, sizeof input - input_count);
             if (got <= 0) {
                 close(client);
                 client = -1;
+                input_count = 0;
             } else {
                 input_count += (size_t)got;
+                heard = 1;
+            }
+        }
+        // A Ctrl-C that was said to be coming and hasn't, in a while, isn't.
+        if (!interrupt_coming) interrupt_heard_at = 0;
+        else if (interrupt_heard_at == 0) interrupt_heard_at = now_seconds();
+        else if (now_seconds() - interrupt_heard_at > 3) interrupt_coming = 0;
+        // Again after the program takes some input, for what had to wait for room.
+        if (client >= 0 && input_count >= 3 && (heard || interrupt_coming || typed_count < TYPED_BYTES - READ_BYTES)) {
+            {
                 size_t offset = 0;
+                // Typed before a Ctrl-C further on, so thrown away with what the program hasn't taken.
+                size_t dropped_before = 0;
                 while (input_count - offset >= 3) {
                     unsigned char type = input[offset];
                     size_t length = ((size_t)input[offset + 1] << 8) | input[offset + 2];
                     if (input_count - offset < 3 + length) break;
                     const unsigned char *payload = input + offset + 3;
                     if (type == 'D') {
-                        write_all(master, payload, length);
+                        if (offset < dropped_before || (interrupt_coming && !memchr(payload, 3, length))) {
+                            // Gone, with what the program hasn't taken.
+                        } else {
+                            interrupt_coming = 0;
+                            if (!take_input(master, payload, length)) {
+                                dropped_before = frame_with_interrupt(master, input + offset, input_count - offset);
+                                if (!dropped_before) break;
+                                dropped_before += offset;
+                                continue;
+                            }
+                        }
                     } else if (type == 'W' && length == 4) {
                         struct winsize wanted;
                         memset(&wanted, 0, sizeof wanted);
@@ -667,17 +923,138 @@ static int send_input(int fd, char type, const void *data, size_t count) {
 // message, which nothing else sends: it never reaches the program.
 static const char forget_marker[] = "\x1b_tiri:forget\x1b\\";
 
-static int send_keys(int server, const unsigned char *keys, size_t count) {
+// What the relay has for the server, sent as the server takes it. The server stops reading while a
+// program isn't taking its input, and a relay waiting to write would stop reading the server too, which
+// would then give up on the view. So it waits here instead, whole frames from outgoing_head to
+// outgoing_end, the first of them outgoing_written bytes on its way. Memory is only used as it fills,
+// and the view isn't read once it's full. It's that large so a Ctrl-C typed after a paste the program
+// isn't reading reaches the relay, rather than waiting behind the paste in the view.
+#define OUTGOING_BYTES (16 * 1024 * 1024)
+static unsigned char outgoing[OUTGOING_BYTES];
+static size_t outgoing_head, outgoing_end, outgoing_written;
+#define outgoing_count (outgoing_end - outgoing_head)
+
+static size_t frame_length(size_t at) { return 3 + (((size_t)outgoing[at + 1] << 8) | outgoing[at + 2]); }
+
+static void queue_frame(char type, const void *data, size_t count) {
+    if (outgoing_end + 3 + count > OUTGOING_BYTES) {
+        memmove(outgoing, outgoing + outgoing_head, outgoing_count);
+        outgoing_end -= outgoing_head;
+        outgoing_head = 0;
+    }
+    unsigned char *end = outgoing + outgoing_end;
+    end[0] = (unsigned char)type;
+    end[1] = (unsigned char)(count >> 8);
+    end[2] = (unsigned char)count;
+    if (count) memcpy(end + 3, data, count);
+    outgoing_end += 3 + count;
+}
+
+static int send_outgoing(int server) {
+    while (outgoing_count > outgoing_written) {
+        ssize_t written = write(server, outgoing + outgoing_head + outgoing_written, outgoing_count - outgoing_written);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN) break;
+            outgoing_head = outgoing_end = outgoing_written = 0;
+            return -1;
+        }
+        outgoing_written += (size_t)written;
+        while (outgoing_count && frame_length(outgoing_head) <= outgoing_written) {
+            outgoing_written -= frame_length(outgoing_head);
+            outgoing_head += frame_length(outgoing_head);
+        }
+    }
+    if (!outgoing_count) outgoing_head = outgoing_end = outgoing_written = 0;
+    return 0;
+}
+
+/// What the server said it speaks, once its replay is over, and its pid. See SESSION_PROTOCOL.
+static int server_protocol;
+static pid_t server_pid;
+
+/// Ctrl-C while a paste waits here for a program that isn't taking it: what's waiting is thrown away,
+/// as a terminal throws away what's in it on Ctrl-C. Between here and the server there's more, which
+/// the Ctrl-C would wait behind, so a server that knows how is told to throw that away too.
+static void drop_waiting_keys(const unsigned char *keys, size_t count) {
+    if (!memchr(keys, 3, count)) return;
+    size_t on_its_way = outgoing_count && outgoing_written ? frame_length(outgoing_head) : 0;
+    if (outgoing_count <= on_its_way) return;
+    if (server_protocol >= 1 && server_pid > 0) kill(server_pid, SIGUSR1);
+    size_t kept = outgoing_head, at = outgoing_head;
+    while (at < outgoing_end) {
+        size_t length = frame_length(at);
+        // The one on its way has to arrive whole.
+        if (outgoing[at] != 'D' || (at == outgoing_head && outgoing_written)) {
+            memmove(outgoing + kept, outgoing + at, length);
+            kept += length;
+        }
+        at += length;
+    }
+    outgoing_end = kept;
+}
+
+/// Frames for what was typed: at most twice as many bytes, which the caller leaves room for.
+static void send_keys(const unsigned char *keys, size_t count) {
     size_t marker_length = sizeof forget_marker - 1;
     size_t start = 0;
     for (size_t index = 0; index + marker_length <= count; index++) {
         if (keys[index] != 0x1b || memcmp(keys + index, forget_marker, marker_length) != 0) continue;
-        if (index > start && send_input(server, 'D', keys + start, index - start) < 0) return -1;
-        if (send_input(server, 'C', NULL, 0) < 0) return -1;
+        if (index > start) queue_frame('D', keys + start, index - start);
+        queue_frame('C', NULL, 0);
         start = index + marker_length;
         index = start - 1;
     }
-    return count > start ? send_input(server, 'D', keys + start, count - start) : 0;
+    if (count > start) queue_frame('D', keys + start, count - start);
+}
+
+/// Connects to the terminal's server, or starts one when there's none. Two views starting the same
+/// terminal at once take turns here, or both would start one and the second would take the socket
+/// from the first. Only a socket nobody listens on, or no socket, means there's none: a server that's
+/// busy refuses for a moment too, and its pid says it's still there.
+static int attach_or_start(launch_options *options) {
+    if (strlen(options->socket_path) >= sizeof ((struct sockaddr_un *)0)->sun_path) {
+        errno = ENAMETOOLONG;
+        die("socket path");
+    }
+    char lock_path[1100];
+    snprintf(lock_path, sizeof lock_path, "%s.lock", options->socket_path);
+    attach_lock = open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (attach_lock >= 0) {
+        while (flock(attach_lock, LOCK_EX) < 0 && errno == EINTR) {}
+    }
+    int server = -1;
+    for (int attempt = 0; attempt < 250; attempt++) {
+        server = connect_to(options->socket_path);
+        if (server >= 0) break;
+        int refused = errno == ECONNREFUSED;
+        if (!refused && errno != ENOENT) {
+            usleep(20000);
+            continue;
+        }
+        if (refused && server_state(options->socket_path) == SERVER_RUNNING) {
+            usleep(20000);
+            continue;
+        }
+        if (!options->command || !options->command[0]) break;
+        if (ioctl(STDIN_FILENO, TIOCGWINSZ, &options->size) != 0 || options->size.ws_row == 0) {
+            options->size.ws_row = 24;
+            options->size.ws_col = 80;
+        }
+        start_server(options);
+        for (int wait = 0; wait < 100 && server < 0; wait++) {
+            server = connect_to(options->socket_path);
+            if (server < 0) usleep(20000);
+        }
+        // The next attach in line would take a socket that refuses, without the pid, for one that's gone.
+        for (int wait = 0; wait < 100 && server >= 0 && read_pid_file(options->socket_path, ".server") <= 0; wait++) usleep(20000);
+        break;
+    }
+    int saved = errno;
+    if (attach_lock >= 0) close(attach_lock);
+    attach_lock = -1;
+    errno = saved;
+    return server;
 }
 
 static int relay(int server) {
@@ -706,32 +1083,41 @@ static int relay(int server) {
     int size_sent_after_replay = 0;
     // A server that's gone has still left its last output and the exit code to read.
     int can_send = 1;
+    fcntl(server, F_SETFL, fcntl(server, F_GETFL) | O_NONBLOCK);
 
     for (;;) {
-        if (size_changed && (accept_input_after >= 0)) {
+        if (size_changed && (accept_input_after >= 0) && outgoing_count + 7 <= OUTGOING_BYTES) {
             size_changed = 0;
             struct winsize size;
             if (can_send && ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0) {
                 unsigned char payload[4] = {(unsigned char)(size.ws_row >> 8), (unsigned char)size.ws_row,
                                             (unsigned char)(size.ws_col >> 8), (unsigned char)size.ws_col};
-                if (send_input(server, 'W', payload, 4) < 0) can_send = 0;
+                queue_frame('W', payload, 4);
             }
         }
-        struct pollfd fds[2] = {{server, POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
-        int ready = poll(fds, accept_input_after >= 0 ? 2 : 1, 200);
+        if (can_send && outgoing_count && send_outgoing(server) < 0) can_send = 0;
+        // Room for the most that one read of keys can become.
+        int take_keys = accept_input_after >= 0 && outgoing_count + 2 * sizeof keys + 16 <= OUTGOING_BYTES;
+        struct pollfd fds[2] = {{server, (short)(POLLIN | (outgoing_count ? POLLOUT : 0)), 0}, {STDIN_FILENO, POLLIN, 0}};
+        int ready = poll(fds, take_keys ? 2 : 1, 200);
         if (ready < 0) {
             if (errno == EINTR) continue;
             return 0;
         }
-        if (accept_input_after >= 0 && (fds[1].revents & (POLLIN | POLLHUP))) {
+        if (take_keys && (fds[1].revents & (POLLIN | POLLHUP))) {
             ssize_t got = read(STDIN_FILENO, keys, sizeof keys);
             if (got <= 0) return 0;  // The view went away. The server and its program carry on.
             int accepting = accept_input_after >= 0 && now_seconds() >= accept_input_after;
-            if (accepting && can_send && send_keys(server, keys, (size_t)got) < 0) can_send = 0;
+            if (accepting && can_send) {
+                drop_waiting_keys(keys, (size_t)got);
+                send_keys(keys, (size_t)got);
+            }
         }
-        if (fds[0].revents & (POLLIN | POLLHUP)) {
+        if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
             ssize_t got = read(server, incoming + incoming_count, sizeof incoming - incoming_count);
-            if (got <= 0) return 1;
+            if (got < 0 && (errno == EAGAIN || errno == EINTR)) continue;
+            // Gone without saying the program ended: the server dropped this view, or is gone itself.
+            if (got <= 0) return SESSION_LOST;
             incoming_count += (size_t)got;
             size_t offset = 0;
             // Output frames that arrived together go to the view in one write, so it parses one batch.
@@ -755,6 +1141,9 @@ static int relay(int server) {
                 }
                 if (type == 'R') {
                     accept_input_after = length && payload[0] ? now_seconds() + 0.15 : 0;
+                    server_protocol = length >= 2 ? payload[1] : 0;
+                    server_pid = length >= 6 ? (pid_t)(((uint32_t)payload[2] << 24) | ((uint32_t)payload[3] << 16)
+                                                       | ((uint32_t)payload[4] << 8) | payload[5]) : 0;
                     if (!size_sent_after_replay) {
                         size_sent_after_replay = 1;
                         size_changed = 1;
@@ -842,22 +1231,13 @@ int main(int argc, char **argv) {
                 break;
             }
         }
-        int server = connect_to(options.socket_path);
+        int server = attach_or_start(&options);
         if (server < 0) {
             if (!options.command || !options.command[0]) {
                 fprintf(stderr, "tiri-session: nothing is running at %s\n", options.socket_path);
                 return 3;
             }
-            if (ioctl(STDIN_FILENO, TIOCGWINSZ, &options.size) != 0 || options.size.ws_row == 0) {
-                options.size.ws_row = 24;
-                options.size.ws_col = 80;
-            }
-            start_server(&options);
-            for (int attempt = 0; attempt < 100 && server < 0; attempt++) {
-                server = connect_to(options.socket_path);
-                if (server < 0) usleep(20000);
-            }
-            if (server < 0) die("connect");
+            die("connect");
         }
         return relay(server);
     }
@@ -870,17 +1250,17 @@ int main(int argc, char **argv) {
         while (read(server, sink, sizeof sink) > 0) {}
         return 0;
     }
-    // tiri-session alive <socket>: asking the socket would count as attaching, so this reads the pid.
+    // tiri-session alive <socket>: asking the socket would count as attaching, so this reads the pids,
+    // and asks the socket only when they can't say.
     if (argc == 3 && strcmp(argv[1], "alive") == 0) {
-        char pid_path[1100];
-        snprintf(pid_path, sizeof pid_path, "%s.pid", argv[2]);
-        FILE *file = fopen(pid_path, "r");
-        int pid = 0;
-        if (file) {
-            if (fscanf(file, "%d", &pid) != 1) pid = 0;
-            fclose(file);
+        int state = server_state(argv[2]);
+        if (state != SERVER_UNKNOWN) return state == SERVER_RUNNING ? 0 : 1;
+        int server = connect_to(argv[2]);
+        if (server >= 0) {
+            close(server);
+            return 0;
         }
-        return pid > 0 && kill(pid, 0) == 0 ? 0 : 1;
+        return errno == ECONNREFUSED || errno == ENOENT ? 1 : 0;
     }
     fprintf(stderr, "usage: tiri-session attach <socket> [--cwd DIR] [--argv0 NAME] [--report TAG] -- program args...\n");
     return 64;

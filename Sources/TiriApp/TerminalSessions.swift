@@ -49,22 +49,76 @@ enum TerminalSessions {
         return fd
     }
 
-    /// Whether a program is still running for this item. A socket left behind says nothing.
+    /// Whether a program is still running for this item. A socket left behind says nothing. Its files are
+    /// removed only once its server is certainly gone: removing a live one's socket strands its program.
     static func isAlive(_ item: ItemID) -> Bool {
         let path = socketPath(for: item)
         guard FileManager.default.fileExists(atPath: path) else { return false }
-        // Asking the socket would count as attaching, which replaces whoever's attached.
-        guard let pid = shellPID(for: item), kill(pid, 0) == 0 else {
-            try? FileManager.default.removeItem(atPath: path)
-            try? FileManager.default.removeItem(atPath: path + ".pid")
-            return false
+        // Asking the socket would count as attaching, which replaces whoever's attached. So the pids
+        // answer when they can, the way `tiri-session alive` does.
+        var state = serverState(path)
+        if state == nil {
+            state = connectRefused(path).map { !$0 }
         }
-        return true
+        if state == false {
+            for suffix in ["", ".pid", ".server"] { try? FileManager.default.removeItem(atPath: path + suffix) }
+        }
+        return state != false
     }
 
+    /// What the relay exits with when the server hung up without saying the program ended.
+    static let lostExitCode: Int32 = 254
+
     static func shellPID(for item: ItemID) -> pid_t? {
-        guard let text = try? String(contentsOfFile: socketPath(for: item) + ".pid", encoding: .utf8) else { return nil }
-        return pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        readPID(socketPath(for: item) + ".pid")
+    }
+
+    private static func readPID(_ path: String) -> pid_t? {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8),
+              let first = text.split(whereSeparator: \.isNewline).first,
+              let pid = pid_t(first.trimmingCharacters(in: .whitespaces)), pid > 0 else { return nil }
+        return pid
+    }
+
+    /// True for a server that's there, false for one that's certainly gone, nil when the pids can't say.
+    /// A server from before `.server` was written is its program's parent.
+    private static func serverState(_ path: String) -> Bool? {
+        if let server = readPID(path + ".server") { return isSessionProcess(server) }
+        guard let program = readPID(path + ".pid") else { return nil }
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(program, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        // The program outlived its server.
+        if info.pbi_ppid == 1 { return false }
+        return isSessionProcess(pid_t(info.pbi_ppid)) == true ? true : nil
+    }
+
+    /// Alive, and a session server rather than whatever was given the number after it ended.
+    private static func isSessionProcess(_ pid: pid_t) -> Bool? {
+        if kill(pid, 0) != 0, errno == ESRCH { return false }
+        var name = [CChar](repeating: 0, count: 256)
+        guard proc_name(pid, &name, UInt32(name.count)) > 0 else { return nil }
+        return String(cString: name).hasPrefix("tiri-")
+    }
+
+    /// Whether nothing is listening on the socket: true only when connecting proves it. Connecting to
+    /// one that's there counts as attaching, so this is the last resort.
+    private static func connectRefused(_ path: String) -> Bool? {
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else { return nil }
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        if connected == 0 { return false }
+        return errno == ECONNREFUSED || errno == ENOENT ? true : nil
     }
 
     /// Ends the program, because its terminal was closed on purpose.
