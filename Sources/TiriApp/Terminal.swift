@@ -901,6 +901,10 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     func pressNotice() { container.pressNotice() }
     private let spec: TerminalSpec
     private var launchCommand: String?
+    /// The command a session that outlived the last quit was started with. Reattached, nothing is
+    /// launched, but that's still what's running: without it an agent looks like a quiet shell.
+    private var attachedTo: String?
+    private var runningCommand: String? { launchCommand ?? attachedTo }
     /// Typed at the prompt after a relaunch, for a command that shouldn't just run again.
     private var prefill: String?
     private let workspaceID: WorkspaceID
@@ -921,11 +925,12 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     private var sawAgentOutputBurst = false
     private var agentHasWork = false
 
-    init(itemID: ItemID, spec: TerminalSpec, launchCommand: String?, prefill: String? = nil,
+    init(itemID: ItemID, spec: TerminalSpec, launchCommand: String?, attachedTo: String? = nil, prefill: String? = nil,
          workspaceID: WorkspaceID, model: AppModel) {
         self.itemID = itemID
         self.spec = spec
         self.launchCommand = launchCommand
+        self.attachedTo = attachedTo
         self.prefill = prefill
         self.workspaceID = workspaceID
         self.model = model
@@ -1328,8 +1333,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     var foregroundProcessName: String? {
         guard let foreground = foregroundPID, shellPID > 0 else { return nil }
         // `shell -c cmd` runs the agent inside the shell's own process group.
-        if let launchCommand {
-            return launchCommand.split(separator: " ").first.map(String.init)
+        if let runningCommand {
+            return runningCommand.split(separator: " ").first.map(String.init)
         }
         guard foreground != shellPID else { return nil }
         if isRemote { return remoteCommand.first.map { ($0 as NSString).lastPathComponent } ?? "a process" }
@@ -1380,13 +1385,6 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             lastTypedAgent = typed
             model.terminalTypedAgentChanged(item: itemID, agent: typed)
         }
-        if !hookActive, let agent = runningAgent(commandLine: commandLine) {
-            if let remoteDestination {
-                model.remote.offerHooksIfNeeded(agent, on: remoteDestination)
-            } else {
-                model.offerHooksIfNeeded(agent)
-            }
-        }
         let now = ProcessClock.now()
         let quietFor = now - activity.lastOutput
         let current = model.runtimes[itemID]?.status ?? .idle
@@ -1402,7 +1400,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
         // An agent typed at a shell's prompt is judged as an agent. Sitting at its own prompt isn't
         // work, though the shell behind it is waiting, and after a relaunch no hook has spoken yet.
-        if launchCommand == nil, typed == nil {
+        if runningCommand == nil, typed == nil {
             // Plain shells: busy means something other than the shell is in the foreground.
             if isShellBusy {
                 if foregroundBusySince == nil { foregroundBusySince = now }
@@ -1427,9 +1425,18 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             }
             sawAgentOutputBurst = true
         } else if current == .working, quietFor > 6_000 {
-            model.setStatus(itemID, sawAgentOutputBurst ? .done : .idle)
+            let finishedTurn = sawAgentOutputBurst
+            model.setStatus(itemID, finishedTurn ? .done : .idle)
             sawAgentOutputBurst = false
             agentHasWork = false
+            // The first turn that ends on an estimate is when exact status is worth offering.
+            if finishedTurn, let agent = runningAgent(commandLine: commandLine) {
+                if let remoteDestination {
+                    model.remote.offerHooksIfNeeded(agent, on: remoteDestination)
+                } else {
+                    model.offerHooksIfNeeded(agent)
+                }
+            }
         }
     }
 
@@ -1547,7 +1554,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     func bellRang() {
         if hookActive || isReplaying { return }
-        if launchCommand != nil {
+        if runningCommand != nil {
             model.setStatus(itemID, .needsInput)
         } else if !model.isLookingAt(itemID) {
             model.updateRuntime(itemID) { $0.unseen = true }

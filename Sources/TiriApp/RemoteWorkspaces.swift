@@ -679,15 +679,19 @@ final class RemoteManager {
     func offerHooksIfNeeded(_ tool: AgentHooks.Tool, on destination: String) {
         let key = "offeredHooks.\(tool.rawValue).\(destination)"
         guard tool.profile?.hookInstall != nil, model.isAgentEnabled(tool), !UserDefaults.standard.bool(forKey: key),
+              !model.hooksOfferedThisLaunch.contains(key),
               let connection = connections[destination], connection.state.isReady, let path = hookConfigPath(tool) else { return }
-        UserDefaults.standard.set(true, forKey: key)
+        model.hooksOfferedThisLaunch.insert(key)
+        let answered = { UserDefaults.standard.set(true, forKey: key) }
         Task { [weak self] in
             // Couldn't ask isn't the same as isn't there. Nothing's offered on a guess.
             let text = await Task.detached(priority: .utility) { RemoteManager.readConfig(path, on: connection) }.value
             guard let self, let text, !AgentHooks.isInstalled(tool, in: text) else { return }
             let name = SSHConfigFile.displayName(of: destination)
             self.model.showToast(title: "Get exact status from \(tool.title)?", detail: "On \(name), Tiri is estimating when it's working or done.",
-                                 symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up") { [weak self] in
+                                 symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up", duration: nil,
+                                 other: ("Not Now", answered), closed: answered) { [weak self] in
+                answered()
                 self?.confirmHooks(tool, on: destination)
             }
         }

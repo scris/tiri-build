@@ -76,6 +76,8 @@ struct AppToast: Identifiable {
     /// A quieter second choice, shown before the main one.
     var otherTitle: String?
     var otherAction: (() -> Void)?
+    /// Closing it with its ✕, for a question where that's an answer too.
+    var closed: (() -> Void)?
 }
 
 struct FindState: Equatable {
@@ -222,6 +224,8 @@ final class AppModel {
     @ObservationIgnored var lastSearchQuery = ""
     var recordingShortcutFor: String?
     var hooksRevision = 0
+    /// Offers of hooks already up, or pushed out by newer toasts, so one isn't made twice in a launch.
+    @ObservationIgnored var hooksOfferedThisLaunch: Set<String> = []
     let settingsUI = SettingsNavigation()
     /// What's been pressed so far, for the row to show.
     private(set) var recordedStrokes: [KeyStroke] = []
@@ -559,9 +563,12 @@ final class AppModel {
             let restored = restoredItems.remove(id) != nil
             var launch = spec.command
             var prefill: String?
+            var attachedTo: String?
             // Still running from before: what's there now is what counts, so nothing is replayed.
             if settings.terminalKeepRunning || keepTerminalsThroughQuit, TerminalSessions.isAlive(id) {
                 launch = nil
+                // Started with a command, it's still that command running: an agent stays an agent.
+                attachedTo = spec.isShell ? nil : spec.command
             } else if restored, spec.isShell, let typed = spec.typedAgent {
                 // Typed at a prompt, so the prompt should still be there after it exits.
                 if case .run(let command) = TerminalRestore.plan(for: typed, sessionID: spec.sessionID, resume: settings.terminalResume,
@@ -584,7 +591,7 @@ final class AppModel {
                 }
             }
             let workspaceID = workspace(containing: id)?.id ?? activeID
-            controller = TerminalController(itemID: id, spec: spec, launchCommand: launch, prefill: prefill,
+            controller = TerminalController(itemID: id, spec: spec, launchCommand: launch, attachedTo: attachedTo, prefill: prefill,
                                             workspaceID: workspaceID, model: self)
         case .file(let spec):
             // On a server and not here yet. The viewer depends on what's in it, so it waits.
@@ -2694,13 +2701,20 @@ final class AppModel {
         }
     }
 
-    /// Once, the first time an agent runs without hooks. Dismissing it is an answer.
+    /// Asked when an agent without hooks finishes its first turn: that's when you look back to see
+    /// whether it's done, and see an estimate. Not as it starts, when the agent's own first
+    /// screens have you. It stays until it's answered, and closing it is an answer too; quitting
+    /// first isn't, so it's asked again next time.
     func offerHooksIfNeeded(_ tool: AgentHooks.Tool) {
         let key = "offeredHooks.\(tool.rawValue)"
-        guard tool.profile?.hookInstall != nil, isAgentEnabled(tool), !UserDefaults.standard.bool(forKey: key), !hooksInstalled(tool), hooksCoverage(tool) == nil else { return }
-        UserDefaults.standard.set(true, forKey: key)
+        guard tool.profile?.hookInstall != nil, isAgentEnabled(tool), !UserDefaults.standard.bool(forKey: key),
+              !hooksOfferedThisLaunch.contains(key), !hooksInstalled(tool), hooksCoverage(tool) == nil else { return }
+        hooksOfferedThisLaunch.insert(key)
+        let answered = { UserDefaults.standard.set(true, forKey: key) }
         showToast(title: "Get exact status from \(tool.title)?", detail: "Right now Tiri is estimating when it's working or done.",
-                  symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up") { [weak self] in
+                  symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up", duration: nil,
+                  other: ("Not Now", answered), closed: answered) { [weak self] in
+            answered()
             self?.confirmHooks(tool, install: true)
         }
     }
@@ -3111,17 +3125,20 @@ final class AppModel {
 
     @discardableResult
     func showToast(title: String, detail: String?, symbol: String, tint: Color,
-                   actionTitle: String? = nil, duration: TimeInterval = 6, other: (title: String, action: () -> Void)? = nil,
-                   action: (() -> Void)? = nil) -> UUID {
+                   actionTitle: String? = nil, duration: TimeInterval? = 6, other: (title: String, action: () -> Void)? = nil,
+                   closed: (() -> Void)? = nil, action: (() -> Void)? = nil) -> UUID {
         let toast = AppToast(title: title, detail: detail, symbol: symbol, tint: tint, actionTitle: actionTitle, action: action,
-                             otherTitle: other?.title, otherAction: other?.action)
+                             otherTitle: other?.title, otherAction: other?.action, closed: closed)
         withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.25))) {
             toasts.append(toast)
             if toasts.count > 3 { toasts.removeFirst() }
         }
         AccessibilityDisplay.shared.announce([title, detail].compactMap { $0 }.joined(separator: ". "))
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self, id = toast.id] in
-            self?.dismissToast(id)
+        // A question stays until it's answered: nil is for those.
+        if let duration {
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self, id = toast.id] in
+                self?.dismissToast(id)
+            }
         }
         return toast.id
     }
@@ -3210,13 +3227,29 @@ final class Notifier: NSObject, @preconcurrency UNUserNotificationCenterDelegate
         self.onClick = onClick
         // UNUserNotificationCenter needs a real bundle. It throws when run as a bare binary.
         guard Bundle.main.bundleIdentifier != nil else { return }
-        let center = UNUserNotificationCenter.current()
-        center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        // Permission is asked for with the first thing worth saying, not at launch, before Tiri has
+        // shown what its notifications are for.
+        UNUserNotificationCenter.current().delegate = self
     }
 
     func post(title: String, body: String, subtitle: String, workspace: WorkspaceID, item: ItemID) {
         guard Bundle.main.bundleIdentifier != nil else { return }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                    if granted { Self.deliver(title: title, body: body, subtitle: subtitle, workspace: workspace, item: item) }
+                }
+            case .denied:
+                break
+            default:
+                Self.deliver(title: title, body: body, subtitle: subtitle, workspace: workspace, item: item)
+            }
+        }
+    }
+
+    private static func deliver(title: String, body: String, subtitle: String, workspace: WorkspaceID, item: ItemID) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.subtitle = subtitle

@@ -1249,7 +1249,10 @@ struct ToastStack: View {
                             .tiriGlassButton()
                             .controlSize(.small)
                         }
-                        Button { model.dismissToast(toast.id) } label: {
+                        Button {
+                            toast.closed?()
+                            model.dismissToast(toast.id)
+                        } label: {
                             Image(systemName: "xmark").font(.caption2)
                         }
                         .buttonStyle(.plain)
@@ -1271,7 +1274,10 @@ struct ToastStack: View {
     private func textWidth(_ toast: AppToast) -> CGFloat {
         let title = (toast.title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .medium)]).width
         let detail = ((toast.detail ?? "") as NSString).size(withAttributes: [.font: NSFont.preferredFont(forTextStyle: .caption1)]).width
-        return min(max(title, detail).rounded(.up) + 1, toast.actionTitle == nil ? 300 : toast.otherTitle == nil ? 220 : 190)
+        // Buttons leave less room, which the detail can wrap into. The title has one line, so a
+        // question is never cut short of what it asks.
+        let room: CGFloat = toast.actionTitle == nil ? 300 : toast.otherTitle == nil ? 220 : 190
+        return max(min(title, 300), min(detail, room)).rounded(.up) + 1
     }
 }
 
