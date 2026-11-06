@@ -864,13 +864,13 @@ struct ChangeMark {
         }
     }
 
-    /// Only with a feed named in the app, and only when this Mac is plugged in and nobody's using it.
+    /// Only with a feed named in the app, with Look for Updates on, and only when this Mac is plugged in and nobody's using it.
     private func watchForUpdates() {
         guard let feed = Self.updateFeed else { return }
         let tiri = Bundle.main.resourceURL?.appendingPathComponent("bin/tiri").path ?? "tiri"
         let look: @Sendable () -> Void = {
             Task { @MainActor [weak self] in
-                guard let self, Self.isPluggedIn, Self.isIdle else { return }
+                guard let self, self.model?.settings.updatesCheck ?? false, Self.isPluggedIn, Self.isIdle else { return }
                 _ = await Task.detached { Tool.run(tiri, ["update", "check", "--feed", feed]) }.value
                 self.refresh()
             }

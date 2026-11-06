@@ -81,6 +81,8 @@ public struct TiriSettings: Equatable, Sendable {
     public var terminalKeepRunning = true
     /// Whether anything in the app offers to change Tiri. Off, nothing about it appears anywhere, now or later.
     public var changeEntries = true
+    /// Whether Tiri looks for a new version by itself. Off, it never goes online unless you ask.
+    public var updatesCheck = true
     public var perTurnDiffs = true
     public var diffSideBySide = false
     public var conversationsUseMacModel = true
@@ -178,7 +180,10 @@ public struct TiriSettings: Equatable, Sendable {
       // In dark mode, show PDF and Office pages dark too. The moon button shows true colors.
       "documents.forceDark": true,
 
-      "notifications.enabled": true
+      "notifications.enabled": true,
+
+      // Look for a newer Tiri every few hours. Off, Tiri never goes online by itself.
+      "updates.check": true
     }
 
     """
@@ -303,6 +308,7 @@ public struct TiriSettings: Equatable, Sendable {
         try bool("documents.forceDark") { settings.documentsForceDark = $0 }
         try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
         try bool("change.offer") { settings.changeEntries = $0 }
+        try bool("updates.check") { settings.updatesCheck = $0 }
         try bool("changes.perTurn") { settings.perTurnDiffs = $0 }
         try bool("diff.sideBySide") { settings.diffSideBySide = $0 }
         try bool("conversations.useMacModel") { settings.conversationsUseMacModel = $0 }

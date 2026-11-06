@@ -478,7 +478,7 @@ tiri theme import Monokai --use
 
 ### Updates
 
-A downloaded Tiri looks for a newer one every 6 hours while your Mac is plugged in and you're away from it, and offers **Update** in the bottom bar. **Tiri → Check for Updates…** looks right away. Updating keeps your terminals and agents running. A copy you built from source doesn't look; pull and build it instead.
+A downloaded Tiri looks for a newer one every 6 hours while your Mac is plugged in and you're away from it, and offers **Update** in the bottom bar. **Tiri → Check for Updates…** looks right away. Updating keeps your terminals and agents running. A copy you built from source doesn't look; pull and build it instead. Turn off **Look for updates** in **Settings → General** and Tiri never goes online by itself; **Check for Updates…** still looks when you choose it.
 
 ### Reporting a problem
 
