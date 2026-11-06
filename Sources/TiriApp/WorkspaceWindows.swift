@@ -13,8 +13,14 @@ struct WindowScope: Equatable {
     var workspace: WorkspaceID
 }
 
+// Written out rather than with `@Entry`, whose macro plugin ships only inside Xcode. See scripts/swift-setup.sh.
+private struct WindowScopeKey: EnvironmentKey { static let defaultValue: WindowScope? = nil }
+
 extension EnvironmentValues {
-    @Entry var windowScope: WindowScope? = nil
+    var windowScope: WindowScope? {
+        get { self[WindowScopeKey.self] }
+        set { self[WindowScopeKey.self] = newValue }
+    }
 }
 
 /// What Tiri has worked out about a workspace that's showing in a window. Made when a window shows it, and let go
