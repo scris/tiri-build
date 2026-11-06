@@ -2,10 +2,13 @@
 //
 //   session attach|kill|alive …    keeps a terminal's program running when the connection isn't
 //   scan <dir>… [--exclude a,b] [--max N] [--depth N]   lists what's there
-//   watch <dir>… [--exclude a,b]   says what changes, until its stdin closes
+//   watch <dir>… [--exclude a,b] [--heartbeat]   says what changes, until its stdin closes
 //   write <path>                   replaces a file with stdin, in one step, keeping its mode
 //   tiri …  (or run as `tiri`)     relays a `tiri` command to the Mac
-//   relay <socket>                 where those commands arrive, carried over its own stdin and stdout
+//   relay <socket> [--heartbeat]   where those commands arrive, carried over its own stdin and stdout
+//
+// --heartbeat: the Mac sends a newline every 15 seconds, and a minute without one means it's gone, so
+// the process ends rather than waiting for a connection that may never close.
 //
 // C and static so it runs on any Linux, needs nothing installed and takes almost no room.
 // Records from scan and watch end in NUL: type, tab, mtime in ms, tab, size, tab, path.
@@ -19,6 +22,7 @@
 
 #include <dirent.h>
 #include <fnmatch.h>
+#include <sys/file.h>
 #if defined(__linux__)
 #include <limits.h>
 #include <sys/inotify.h>
@@ -133,6 +137,40 @@ static int run_scan(int argc, char **argv) {
     return fflush(stdout) == 0 ? 0 : 1;
 }
 
+// MARK: Hearing from the Mac
+
+#define HEARTBEAT_LIMIT 60.0
+
+static int heartbeat;
+static double last_heard;
+
+static void heard(void) { last_heard = now_seconds(); }
+
+static int mac_gone(void) { return heartbeat && now_seconds() - last_heard > HEARTBEAT_LIMIT; }
+
+// How long a poll may wait: for ever, unless it has to notice the Mac going quiet.
+static int heartbeat_wait(int otherwise) {
+    if (!heartbeat) return otherwise;
+    return otherwise >= 0 && otherwise < 5000 ? otherwise : 5000;
+}
+
+// The watcher has nothing to hear on stdin but the heartbeat, and its end.
+static int drain_stdin_until_gone(void) {
+    char sink[256];
+    for (;;) {
+        struct pollfd input = {STDIN_FILENO, POLLIN, 0};
+        int ready = poll(&input, 1, heartbeat_wait(-1));
+        if (ready < 0 && errno != EINTR) return 0;
+        if (ready > 0) {
+            ssize_t got = read(STDIN_FILENO, sink, sizeof sink);
+            if (got < 0 && errno == EINTR) continue;
+            if (got <= 0) return 0;
+            heard();
+        }
+        if (mac_gone()) return 0;
+    }
+}
+
 // MARK: watch
 
 #if defined(__linux__)
@@ -244,23 +282,24 @@ static int is_git_watch(const char *path) {
 }
 
 static int run_watch(int argc, char **argv) {
+    for (int index = 2; index < argc; index++) {
+        if (strcmp(argv[index], "--exclude") == 0 && index + 1 < argc) add_excludes(argv[++index]);
+        else if (strcmp(argv[index], "--heartbeat") == 0) heartbeat = 1;
+    }
+    heard();
     watcher = inotify_init1(IN_CLOEXEC);
     if (watcher < 0) {
         printf("!limited");
         putchar(0);
         fflush(stdout);
-        char sink[256];
-        while (read(STDIN_FILENO, sink, sizeof sink) > 0) {}
-        return 0;
-    }
-    for (int index = 2; index < argc; index++) {
-        if (strcmp(argv[index], "--exclude") == 0 && index + 1 < argc) add_excludes(argv[++index]);
+        return drain_stdin_until_gone();
     }
     for (int index = 2; index < argc; index++) {
         if (strcmp(argv[index], "--exclude") == 0) {
             index++;
             continue;
         }
+        if (strcmp(argv[index], "--heartbeat") == 0) continue;
         watch_tree(argv[index]);
         watch_repository(argv[index]);
     }
@@ -277,7 +316,7 @@ static int run_watch(int argc, char **argv) {
         if (!waiting) first_pending = 0;
         else if (first_pending == 0) first_pending = now_seconds();
         // Settle a little once something's waiting to be said, but not for ever if it keeps coming.
-        int ready = poll(fds, 2, waiting ? 80 : -1);
+        int ready = poll(fds, 2, heartbeat_wait(waiting ? 80 : -1));
         if (ready < 0) {
             if (errno == EINTR) continue;
             return 1;
@@ -285,7 +324,9 @@ static int run_watch(int argc, char **argv) {
         if (fds[1].revents) {
             char sink[256];
             if (read(STDIN_FILENO, sink, sizeof sink) <= 0) return 0;
+            heard();
         }
+        if (mac_gone()) return 0;
         if (ready == 0 || (first_pending != 0 && now_seconds() - first_pending > 0.5)) {
             flush_changes();
             first_pending = 0;
@@ -332,15 +373,15 @@ static int run_watch(int argc, char **argv) {
 #else
 
 static int run_watch(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+    for (int index = 2; index < argc; index++) {
+        if (strcmp(argv[index], "--heartbeat") == 0) heartbeat = 1;
+    }
+    heard();
     // No inotify here, so Tiri looks again every so often.
     printf("!limited");
     putchar(0);
     fflush(stdout);
-    char sink[256];
-    while (read(STDIN_FILENO, sink, sizeof sink) > 0) {}
-    return 0;
+    return drain_stdin_until_gone();
 }
 
 #endif
@@ -377,6 +418,12 @@ static int run_write(int argc, char **argv) {
     char temporary[8200];
     snprintf(temporary, sizeof temporary, "%s.tiri-XXXXXX", target);
     int fd = mkstemp(temporary);
+    // Only a folder that won't take a new file, or a name with no room for the suffix, is a reason to
+    // write over the old one in place. Any other failure, like a full disk, would leave it emptied.
+    if (fd < 0 && errno != EACCES && errno != EPERM && errno != ENAMETOOLONG) {
+        fprintf(stderr, "%s\n", strerror(errno));
+        return 1;
+    }
     int in_place = fd < 0;
     char *held = NULL;
     if (in_place) {
@@ -450,7 +497,8 @@ static int run_write(int argc, char **argv) {
 // answers come back on its stdin, so it works over a plain SSH session, even on a server that
 // forbids forwarding. It also says its pid first, because it lives exactly as long as the connection.
 //   Out: "P <pid> 0\n"   "R <id> <length>\n" then the request
-//   In:  "A <id> <length>\n" then the answer
+//        "S <now in ms> <length>\n" then what was spooled while the Mac couldn't be reached
+//   In:  "A <id> <length>\n" then the answer   "K 0 0\n" the spool arrived   "\n" the heartbeat
 
 #define RELAY_CLIENTS 64
 
@@ -475,8 +523,142 @@ static int read_line_from(int fd, char *line, size_t room) {
     return 0;
 }
 
+// MARK: The spool
+
+// What an agent's hook says while the Mac is asleep or away would otherwise be lost. It waits in a
+// file beside the socket, which the next relay sends on, and only this user can read.
+#define SPOOL_LIMIT (1024 * 1024)
+
+static long long now_ms(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    return (long long)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static int open_spool(const char *spool, int flags) {
+    int fd = open(spool, flags | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) return -1;
+    struct stat info;
+    if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_uid != getuid()) {
+        close(fd);
+        return -1;
+    }
+    flock(fd, LOCK_EX);
+    return fd;
+}
+
+// Keeps only what follows the first `count` bytes.
+static void spool_drop_front(int fd, size_t count) {
+    struct stat info;
+    if (fstat(fd, &info) != 0) return;
+    size_t size = (size_t)info.st_size;
+    if (count >= size) {
+        if (ftruncate(fd, 0) != 0) {}
+        return;
+    }
+    size_t rest = size - count;
+    char *kept = malloc(rest);
+    if (!kept) return;
+    if (pread(fd, kept, rest, (off_t)count) == (ssize_t)rest && pwrite(fd, kept, rest, 0) == (ssize_t)rest) {
+        if (ftruncate(fd, (off_t)rest) != 0) {}
+    }
+    free(kept);
+}
+
+static void spool_request(const char *socket_path, const char *request, size_t length, long long stamped) {
+    if (length > SPOOL_LIMIT / 4) return;
+    char spool[4200];
+    if (snprintf(spool, sizeof spool, "%s.spool", socket_path) >= (int)sizeof spool) return;
+    int fd = open_spool(spool, O_RDWR | O_CREAT);
+    if (fd < 0) return;
+    fchmod(fd, 0600);
+    struct stat info;
+    if (fstat(fd, &info) == 0 && (size_t)info.st_size + length + 32 > SPOOL_LIMIT) {
+        // Full: the oldest half goes, from a line's start. Only the newest of each terminal counts anyway.
+        size_t size = (size_t)info.st_size;
+        size_t cut = size - SPOOL_LIMIT / 2;
+        char byte;
+        while (cut < size && pread(fd, &byte, 1, (off_t)cut) == 1 && byte != '\n') cut++;
+        spool_drop_front(fd, cut + 1);
+    }
+    char stamp[32];
+    int stamp_length = snprintf(stamp, sizeof stamp, "%lld ", stamped);
+    char *entry = malloc((size_t)stamp_length + length);
+    if (entry) {
+        memcpy(entry, stamp, (size_t)stamp_length);
+        memcpy(entry + stamp_length, request, length);
+        lseek(fd, 0, SEEK_END);
+        write_all(fd, entry, (size_t)stamp_length + length);
+        free(entry);
+    }
+    close(fd);
+}
+
+// This relay's own spool, and the shared one behind `control.sock` when that's now this relay.
+static char spools[2][4200];
+static size_t spool_sent[2];
+
+static void send_spools(const char *path) {
+    snprintf(spools[0], sizeof spools[0], "%s.spool", path);
+    spools[1][0] = 0;
+    const char *slash = strrchr(path, '/');
+    if (slash) {
+        char shared[4200], target[4096];
+        snprintf(shared, sizeof shared, "%.*s/control.sock", (int)(slash - path), path);
+        ssize_t got = readlink(shared, target, sizeof target - 1);
+        if (got > 0) {
+            target[got] = 0;
+            if (strcmp(target, slash + 1) == 0 || strcmp(target, path) == 0) snprintf(spools[1], sizeof spools[1], "%s.spool", shared);
+        }
+    }
+    char *all = NULL;
+    size_t total = 0;
+    for (int index = 0; index < 2; index++) {
+        spool_sent[index] = 0;
+        if (!spools[index][0]) continue;
+        int fd = open_spool(spools[index], O_RDONLY);
+        if (fd < 0) continue;
+        struct stat info;
+        if (fstat(fd, &info) == 0 && info.st_size > 0) {
+            size_t size = (size_t)info.st_size > SPOOL_LIMIT ? SPOOL_LIMIT : (size_t)info.st_size;
+            char *grown = realloc(all, total + size);
+            if (grown) {
+                all = grown;
+                ssize_t got = pread(fd, all + total, size, 0);
+                if (got > 0) {
+                    // Whole lines only. A line still being written waits for the next time.
+                    while (got > 0 && all[total + (size_t)got - 1] != '\n') got--;
+                    total += (size_t)got;
+                    spool_sent[index] = (size_t)got;
+                }
+            }
+        }
+        close(fd);
+    }
+    if (total) {
+        printf("S %lld %zu\n", now_ms(), total);
+        fwrite(all, 1, total, stdout);
+        fflush(stdout);
+    }
+    free(all);
+}
+
+// The Mac has it, so it can go. Whatever was added since stays for next time.
+static void spools_arrived(void) {
+    for (int index = 0; index < 2; index++) {
+        if (!spools[index][0] || !spool_sent[index]) continue;
+        int fd = open_spool(spools[index], O_RDWR);
+        if (fd < 0) continue;
+        spool_drop_front(fd, spool_sent[index]);
+        spool_sent[index] = 0;
+        close(fd);
+    }
+}
+
 static int run_relay_server(int argc, char **argv) {
-    if (argc != 3) return 64;
+    if (argc != 3 && !(argc == 4 && strcmp(argv[3], "--heartbeat") == 0)) return 64;
+    heartbeat = argc == 4;
+    heard();
     const char *path = argv[2];
     signal(SIGPIPE, SIG_IGN);
     struct sockaddr_un address;
@@ -495,6 +677,7 @@ static int run_relay_server(int argc, char **argv) {
     ino_t bound_inode = stat(path, &bound) == 0 ? bound.st_ino : 0;
     printf("P %d 0\n", (int)getpid());
     fflush(stdout);
+    send_spools(path);
 
     relay_client clients[RELAY_CLIENTS];
     for (int index = 0; index < RELAY_CLIENTS; index++) {
@@ -515,13 +698,22 @@ static int run_relay_server(int argc, char **argv) {
                 fds[count++] = (struct pollfd){clients[index].fd, POLLIN, 0};
             }
         }
-        if (poll(fds, count, -1) < 0) {
+        int ready = poll(fds, count, heartbeat_wait(-1));
+        if (ready < 0) {
             if (errno == EINTR) continue;
             break;
         }
+        if (mac_gone()) break;
+        if (ready == 0) continue;
         if (fds[0].revents) {
             char line[128];
             if (read_line_from(STDIN_FILENO, line, sizeof line) < 0) break;
+            heard();
+            if (!line[0]) continue;
+            if (line[0] == 'K') {
+                spools_arrived();
+                continue;
+            }
             unsigned id = 0;
             unsigned long length = 0;
             if (sscanf(line, "A %u %lu", &id, &length) != 2) break;
@@ -709,14 +901,9 @@ static int run_relay(int argc, char **argv) {
         }
     }
 
-    int server = connect_to(socket_path);
-    if (server < 0) {
-        if (quiet) return 0;
-        fprintf(stderr, "tiri: this terminal isn't connected to Tiri right now.\n");
-        return 1;
-    }
-    signal(SIGPIPE, SIG_IGN);
-
+    // When it happened, by this server's clock, live or spooled: the Mac compares the two to tell
+    // what's newest, and a spooled report that something live has overtaken is left out.
+    long long asked_at = now_ms();
     char *request = NULL;
     size_t request_length = 0;
     FILE *out = open_memstream(&request, &request_length);
@@ -726,6 +913,7 @@ static int run_relay(int argc, char **argv) {
         json_string(out, argv[index], strlen(argv[index]));
     }
     fputc(']', out);
+    fprintf(out, ",\"at\":%lld", asked_at);
     char directory[4096];
     if (getcwd(directory, sizeof directory)) json_field(out, "cwd", directory);
     json_field(out, "item", getenv("TIRI_ITEM_ID"));
@@ -738,7 +926,23 @@ static int run_relay(int argc, char **argv) {
     }
     fputs("}\n", out);
     fclose(out);
-    if (write_all(server, request, request_length) < 0) return quiet ? 0 : 1;
+
+    // A hook that can't get through now is kept, and arrives when the Mac's back.
+    int server = connect_to(socket_path);
+    if (server < 0) {
+        if (quiet) {
+            spool_request(socket_path, request, request_length, asked_at);
+            return 0;
+        }
+        fprintf(stderr, "tiri: this terminal isn't connected to Tiri right now.\n");
+        return 1;
+    }
+    signal(SIGPIPE, SIG_IGN);
+    if (write_all(server, request, request_length) < 0) {
+        if (!quiet) return 1;
+        spool_request(socket_path, request, request_length, asked_at);
+        return 0;
+    }
 
     struct timeval timeout = {quiet ? 5 : 60, 0};
     setsockopt(server, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
@@ -772,7 +976,11 @@ static int run_relay(int argc, char **argv) {
         have = 0;
     }
     if (code < 0) {
-        if (quiet) return 0;
+        if (quiet) {
+            // A relay whose Mac has gone quiet. If it did get there, the Mac keeps only the newest.
+            spool_request(socket_path, request, request_length, asked_at);
+            return 0;
+        }
         fprintf(stderr, "tiri: Tiri didn't answer.\n");
         return 1;
     }

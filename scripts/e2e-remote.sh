@@ -29,6 +29,9 @@ git init -q .; git add -A; git -c user.email=a@b -c user.name=a commit -qm first
 # Every run starts from nothing, here and there.
 scripts/dev-app.sh stop "$NAME" >/dev/null 2>&1
 rm -rf "${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}/$NAME/home" "${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}/$NAME/config"
+# A hook's alert would otherwise ask this Mac for permission to notify, on whoever's screen it is.
+mkdir -p "${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}/$NAME/config"
+printf '{ "notifications.enabled": false }\n' > "${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}/$NAME/config/settings.json"
 R 'for s in ~/.tiri/run/*-i-*.sock; do ~/.tiri/bin/tiri-remote session kill "$s" 2>/dev/null; done; true' 2>/dev/null
 scripts/dev-app.sh start "$NAME" >/dev/null 2>&1
 has "connects" "tiri-e2e" "$(T remote connect "$HOST" '~/tiri-e2e')"
@@ -43,6 +46,24 @@ hasnt "no local copy's path in changes" "Remote.noindex" "$(T changes)"
 has "search on the server" "src/app.py" "$(T search hello)"
 hasnt "search speaks the server's paths" "Remote.noindex" "$(T search hello)"
 has "git status" "tiri-e2e" "$(T git)"
+
+# The helper is in a folder of its own version, and that's what a terminal there runs
+VERSION="$(cat Resources/remote/VERSION)"
+has "helper in its version's folder" "/.tiri/bin/$VERSION-" "$(R 'ls -d ~/.tiri/bin/*/tiri-remote' 2>/dev/null)"
+T send "$ID" 'clear; echo "helper=$TIRI_SERVER_HELPER"; echo "$PATH" | tr : "\n" | grep -c "/.tiri/bin/"' --enter
+eventually "a terminal there runs this version's" "/.tiri/bin/$VERSION-" 10 T read "$ID" --lines 4
+
+# A login shell that prints at every start, as some .bashrc files do, mustn't end up in files
+if [ -n "$(R true 2>/dev/null)" ]; then
+  MIRROR="${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}/$NAME/home/Remote.noindex/$HOST"
+  SERVER_HOME="$(R 'printf %s "$HOME"' 2>/dev/null | tail -1)"
+  T open "$MIRROR$SERVER_HOME/tiri-e2e/report.md" >/dev/null 2>&1
+  sleep 3
+  has "a noisy login shell stays out of fetched files" "$(R 'cat ~/tiri-e2e/report.md' 2>/dev/null | tail -1)" "$(cat "$MIRROR$SERVER_HOME/tiri-e2e/report.md" 2>/dev/null)"
+  [ "$(head -c 8 "$MIRROR$SERVER_HOME/tiri-e2e/report.md" 2>/dev/null)" = "# Report" ] && ok "and the file starts where it does there" || bad "and the file starts where it does there" "$(head -c 40 "$MIRROR$SERVER_HOME/tiri-e2e/report.md" | od -c | head -2)"
+else
+  echo "skip  noisy login shell (this server's prints nothing)"
+fi
 
 # tiri inside a terminal there
 T send "$ID" 'clear; which tiri; tiri ping' --enter
@@ -70,21 +91,57 @@ eventually "a hook reports work" "working" 10 T items
 hook Stop
 eventually "and that it's done" "hooked-Stop" 10 T read "$ID" --lines 3
 
+# A hook while the relay is gone, as when the Mac sleeps: it waits on the server and arrives with the next relay
+eventually "done before" "done" 10 sh -c "scripts/dev-app.sh cli '$NAME' items | grep -F '$ID'"
+T send "$ID" "clear; kill \$(pgrep -f \"tiri-remote relay \$TIRI_SOCKET\"); sleep 0.3; printf '{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"s1\",\"cwd\":\"/tmp\"}' | tiri hook claude; echo spooled-\$?; ls \$TIRI_SOCKET.spool" --enter
+eventually "the hook is kept while the relay is gone" "spooled-0" 10 T read "$ID" --lines 4
+eventually "and arrives once it's back" "working" 20 sh -c "scripts/dev-app.sh cli '$NAME' items | grep -F '$ID'"
+T send "$ID" 'clear; echo spool-left-$(wc -c < $TIRI_SOCKET.spool | tr -d " ")' --enter
+eventually "and is gone from the server once it's there" "spool-left-0" 10 T read "$ID" --lines 3
+hook Stop
+
 # Going past sshd's session limit
 for i in $(seq 1 12); do T term --cmd "echo term-$i-up; exec sh" >/dev/null; done
 sleep 8
 ups=0; for item in $(T items | grep -F "[tiri-e2e]" | grep terminal | cut -f1); do T read "$item" --lines 30 2>/dev/null | grep -q 'term-[0-9]*-up' && ups=$((ups + 1)); done
 if [ "$ups" -eq 12 ]; then ok "12 more terminals all run"; else bad "12 more terminals all run" "only $ups"; fi
 has "commands still work with them" "src/app.py" "$(T search hello)"
+# The first extra connection dying while the main one is fine, as after waking on another network: its
+# terminals come back over a new one in the same place, rather than being taken for a session limit.
+APP_PID="$(pgrep -P 1 -f "/$NAME/TiriDev.app/Contents/MacOS/Tiri" | head -1)"
+CP="$( [ -n "$APP_PID" ] && pgrep -P "$APP_PID" -fl "ssh.*-M -N" | head -1 | sed -E 's/.* -S ([^ ]+) .*/\1/')"
+EXTRA="$( [ -n "$CP" ] && pgrep -f -- "-S $CP-t1 " | head -1)"
+if [ -n "$EXTRA" ]; then
+  kill -9 "$EXTRA"; sleep 12
+  ups=0; for item in $(T items | grep -F "[tiri-e2e]" | grep terminal | cut -f1); do T send "$item" "echo still-$((6*7))" --enter >/dev/null 2>&1; done; sleep 3
+  for item in $(T items | grep -F "[tiri-e2e]" | grep terminal | cut -f1); do T read "$item" --lines 6 2>/dev/null | grep -q 'still-42' && ups=$((ups + 1)); done
+  if [ "$ups" -eq 13 ]; then ok "terminals on a dead extra connection come back"; else bad "terminals on a dead extra connection come back" "only $ups of 13"; fi
+  [ -S "$CP-t1" ] && ok "over a new connection in the same place" || bad "over a new connection in the same place" "no $CP-t1"
+  MASTERS="$(pgrep -f -- "-M -N -f -S $CP-t1 " | wc -l | tr -d ' ')"
+  [ "$MASTERS" = 1 ] && ok "just the one, however many terminals asked" || bad "just the one, however many terminals asked" "$MASTERS connections for it"
+  [ ! -S "$CP-t3" ] && ok "not moved along as if the server were full" || bad "not moved along as if the server were full" "$CP-t3 exists"
+else
+  bad "terminals on a dead extra connection come back" "couldn't find the first extra connection"
+fi
 for item in $(T items | grep -F "[tiri-e2e]" | grep terminal | grep -v "$ID" | cut -f1); do T close "$item" >/dev/null 2>&1; done
 sleep 2
-COUNT="$(R 'ls ~/.tiri/run/*.sock 2>/dev/null | grep -c -e -i- ')"
+COUNT="$(R 'ls ~/.tiri/run/*.sock 2>/dev/null | grep -c -e -i- ' | tail -1)"
 [ "$COUNT" -le 3 ] && ok "closing tabs ends their programs" || bad "closing tabs ends their programs" "$COUNT sockets left"
 
 # The connection dying under a running program
 T send "$ID" 'clear; for i in 1 2 3 4 5 6 7 8; do echo tick-$i; sleep 1; done; echo ticks-done' --enter
 sleep 1.5
-pkill -f "ssh.*-M -N.*$HOST" ; has "notices" "Reconnecting" "$(sleep 0.3; T remote)"
+# Only the main connection. The extra ones, still lingering from the terminals above, have to go with it.
+EXTRAS="$( [ -n "${CP:-}" ] && pgrep -f -- "-S $CP-t[0-9] " | tr '\n' ' ')"
+MAIN="$( [ -n "${APP_PID:-}" ] && pgrep -P "$APP_PID" -f "ssh.*-M -N.*$HOST" | head -1)"
+if [ -n "$MAIN" ]; then kill "$MAIN"; else pkill -f "ssh.*-M -N.*$HOST"; fi
+eventually "notices" "Reconnecting" 3 T remote
+if [ -n "$EXTRAS" ]; then
+  sleep 2; alive=""; for pid in $EXTRAS; do kill -0 "$pid" 2>/dev/null && alive="$alive $pid"; done
+  [ -z "$alive" ] && ok "extra connections end with the main one" || bad "extra connections end with the main one" "still up:$alive"
+else
+  echo "skip  extra connections end with the main one (none were up)"
+fi
 eventually "comes back" "Connected" 20 T remote
 eventually "nothing printed meanwhile is lost" "tick-8" 15 T read "$ID" --lines 12
 has "and everything before" "tick-2" "$(T read "$ID" --lines 12)"
@@ -143,6 +200,10 @@ has "and the file is untouched" "full-original-contents" "$W"
 W="$(R 'cd ~/tiri-e2e; printf new | ~/.tiri/bin/tiri-remote write keep.txt 3 --if-modified 12345 2>/dev/null; echo "rc=$?"; cat keep.txt')"
 has "a save that would replace newer work stops" "rc=9" "$W"
 has "and leaves it alone" "full-original-contents" "$W"
+# A folder that won't take a temporary file still lets a writable file in it be saved, in place
+W="$(R 'cd ~/tiri-e2e; mkdir -p locked; printf old > locked/f.txt; chmod 555 locked; printf saved | ~/.tiri/bin/tiri-remote write locked/f.txt 5 >/dev/null 2>&1; echo "rc=$?"; cat locked/f.txt; chmod 755 locked; rm -rf locked')"
+has "a locked folder's file still saves" "rc=0" "$W"
+has "with what was sent" "saved" "$W"
 
 if [ -n "${TIRI_E2E_NO_FORWARDING:-}" ]; then
   # A server that forbids forwarding: everything else still works, and these say so.
@@ -194,6 +255,23 @@ fi
 has "and folders are the server's" "tiri-e2e" "$WS"
 hasnt "with no local paths" "Remote.noindex" "$WS"
 
+fi
+
+# The Mac going quiet with the connection still open, as a sleeping one does: the watcher and the relay there
+# hear no heartbeat and end, rather than waiting for ever, and come back once it's awake. The brackets keep
+# pgrep from finding its own command line.
+APP_PID="$(pgrep -P 1 -f "/$NAME/TiriDev.app/Contents/MacOS/Tiri" | head -1)"
+if [ -n "$APP_PID" ] && [ -n "$(R "pgrep -f '$VERSION-[^/]*/tiri-remote [w]atch'" 2>/dev/null | grep -E '^[0-9]+$')" ]; then
+  kill -STOP "$APP_PID"; sleep 70
+  LEFT="$(R "pgrep -f '$VERSION-[^/]*/tiri-remote [w]atch|$VERSION-[^/]*/tiri-remote [r]elay'" 2>/dev/null | grep -E '^[0-9]+$')"
+  kill -CONT "$APP_PID"
+  [ -z "$LEFT" ] && ok "a quiet Mac's watcher and relay end there" || bad "a quiet Mac's watcher and relay end there" "still running: $LEFT"
+  # Asked again each time: the first may come before the relay is back.
+  eventually "and come back when it wakes" "pong" 30 sh -c "scripts/dev-app.sh cli '$NAME' send '$ID' 'clear; tiri ping' --enter >/dev/null; sleep 2; scripts/dev-app.sh cli '$NAME' read '$ID' --lines 3"
+  R 'echo x > ~/tiri-e2e/after-sleep.txt'
+  eventually "with the tree followed again" "after-sleep.txt" 30 T tree
+else
+  echo "skip  a quiet Mac (no watcher found)"
 fi
 
 # A real outage

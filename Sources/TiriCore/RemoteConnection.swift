@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // MARK: - State
@@ -28,6 +29,8 @@ public struct RemoteResult: Sendable {
     public var status: Int32
     public var output: Data
     public var errors: Data
+    /// The login shell printed something before the command's own output, which was left out.
+    public var noise = false
     public var text: String { String(decoding: output, as: UTF8.self) }
     public var errorText: String { String(decoding: errors, as: UTF8.self) }
     public var succeeded: Bool { status == 0 }
@@ -62,6 +65,8 @@ public final class RemoteConnection: @unchecked Sendable {
     private var _binDirectory: String?
     private var _runDirectory: String?
     private var _hasHelper = false
+    private var _baseDirectory: String?
+    private var noiseReported = false
     private var master: Process?
     private var masterErrors = Data()
     private var wanted = false
@@ -98,6 +103,20 @@ public final class RemoteConnection: @unchecked Sendable {
     public var binDirectory: String? { lock.withLock { _binDirectory } }
     public var runDirectory: String? { lock.withLock { _runDirectory } }
     public var hasHelper: Bool { lock.withLock { _hasHelper } }
+    /// Tiri's own folder there, `~/.tiri` usually. The helper is in a folder of its version under it.
+    public var baseDirectory: String? { lock.withLock { _baseDirectory } }
+    /// Once per connection, when the server's login shell printed something before a command's output.
+    public var onShellNoise: (@Sendable () -> Void)?
+
+    private func noticedNoise() {
+        let first: Bool = lock.withLock {
+            defer { noiseReported = true }
+            return !noiseReported
+        }
+        guard first, let onShellNoise else { return }
+        DispatchQueue.main.async(execute: onShellNoise)
+    }
+
     /// csh and tcsh take neither `-l` with anything else nor `command -v`.
     public var isCShell: Bool { ["csh", "tcsh"].contains((shell as NSString).lastPathComponent) }
 
@@ -147,8 +166,17 @@ public final class RemoteConnection: @unchecked Sendable {
     /// Brings up the extra connection for a slot, if it isn't up. It goes away by itself once idle.
     public func ensureTerminalConnection(slot: Int) -> Bool {
         guard slot > 0 else { return true }
+        // Every terminal of a slot asks at once after it drops. One of them makes the connection and
+        // the rest use it: each making its own would leave all but one holding a connection for ever.
+        let slotLock = terminalConnectionLocks[min(slot, terminalConnectionLocks.count - 1)]
+        slotLock.lock()
+        defer { slotLock.unlock() }
         let path = controlPath + "-t\(slot)"
-        if Self.runProcess(executable: Self.ssh, arguments: configArguments + ["-S", path, "-O", "check", destination], timeout: 5)?.status == 0 { return true }
+        if terminalConnectionAnswers(slot: slot) { return true }
+        // Up here and dead there, as after the Mac slept on another network. It can't recover.
+        if access(path, F_OK) == 0 {
+            _ = Self.runProcess(executable: Self.ssh, arguments: configArguments + ["-S", path, "-O", "exit", destination], timeout: 5)
+        }
         unlink(path)
         var environment = ProcessInfo.processInfo.environment
         if let askpass {
@@ -161,6 +189,18 @@ public final class RemoteConnection: @unchecked Sendable {
         let arguments = configArguments + ["-M", "-N", "-f", "-S", path, "-o", "ControlPersist=60", "-o", "RemoteCommand=none", "-o", "ServerAliveInterval=10",
                                            "-o", "ServerAliveCountMax=3", "-o", "ConnectTimeout=20", "-o", "LogLevel=ERROR", "-o", "ForwardX11=no", "-o", "ClearAllForwardings=yes", destination]
         return Self.runProcess(executable: Self.ssh, arguments: arguments, timeout: 180, environment: environment)?.status == 0
+    }
+
+    private let terminalConnectionLocks = (0...9).map { _ in NSLock() }
+
+    /// A round trip over a slot's own connection. `-O check` only asks the local process, which is
+    /// fine either way. With no usable socket ssh would connect afresh, and the proxy stops it doing that.
+    public func terminalConnectionAnswers(slot: Int) -> Bool {
+        let path = controlPath + "-t\(slot)"
+        guard slot > 0, access(path, F_OK) == 0 else { return slot == 0 }
+        let arguments = configArguments + ["-S", path, "-o", "ControlMaster=no", "-o", "ProxyCommand=/usr/bin/false", "-o", "RemoteCommand=none",
+                                           "-o", "RequestTTY=no", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR", destination, "true"]
+        return Self.runProcess(executable: Self.ssh, arguments: arguments, timeout: 5)?.status == 0
     }
 
     private func endTerminalConnections() {
@@ -206,8 +246,9 @@ public final class RemoteConnection: @unchecked Sendable {
         defer { slots.signal() }
         // A server can set its session limit lower than usual. It's only busy, so wait a moment.
         for attempt in 0..<6 {
-            let result = Self.runProcess(executable: Self.ssh, arguments: clientArguments(tty: false) + [destination, RemoteShell.wrap(script)],
-                                         stdin: stdin, timeout: timeout, outputFile: outputFile)
+            let result = Self.runProcess(executable: Self.ssh, arguments: clientArguments(tty: false) + [destination, RemoteShell.wrap(script, marked: true)],
+                                         stdin: stdin, timeout: timeout, outputFile: outputFile, marked: true)
+            if result?.noise == true { noticedNoise() }
             guard let result, result.status == 255, Self.isSessionRefusal(result.errorText), attempt < 5 else { return result }
             Thread.sleep(forTimeInterval: 0.4 * Double(attempt + 1))
         }
@@ -219,9 +260,10 @@ public final class RemoteConnection: @unchecked Sendable {
         return lower.contains("session open refused") || lower.contains("session request failed") || lower.contains("too many sessions")
     }
 
-    /// Reads both pipes on threads of their own: either can fill while the other waits.
+    /// Reads both pipes on threads of their own: either can fill while the other waits. `marked` is for
+    /// a script from `RemoteShell.wrap(_:marked:)`: what came before its marker is left out.
     static func runProcess(executable: String, arguments: [String], stdin: Data? = nil, timeout: TimeInterval,
-                           outputFile: URL? = nil, environment: [String: String]? = nil) -> RemoteResult? {
+                           outputFile: URL? = nil, environment: [String: String]? = nil, marked: Bool = false) -> RemoteResult? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
@@ -233,7 +275,8 @@ public final class RemoteConnection: @unchecked Sendable {
         if let outputFile {
             FileManager.default.createFile(atPath: outputFile.path, contents: nil)
             outputHandle = try? FileHandle(forWritingTo: outputFile)
-            process.standardOutput = outputHandle ?? FileHandle.nullDevice
+            // Through a pipe when the start has to be found, or it would be in the file.
+            process.standardOutput = marked ? outputPipe : outputHandle ?? FileHandle.nullDevice
         } else {
             process.standardOutput = outputPipe
         }
@@ -250,7 +293,34 @@ public final class RemoteConnection: @unchecked Sendable {
         if outputFile == nil {
             group.enter()
             DispatchQueue.global(qos: .utility).async {
-                box.output = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                let output = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                if marked {
+                    let (own, noise) = RemoteOutputStart.strip(output)
+                    box.output = own
+                    box.noise = noise
+                } else {
+                    box.output = output
+                }
+                group.leave()
+            }
+        } else if marked {
+            // This thread owns the file from here, and closes it, even after a timeout.
+            let handle = outputHandle
+            outputHandle = nil
+            group.enter()
+            DispatchQueue.global(qos: .utility).async {
+                var start = RemoteOutputStart()
+                let reading = outputPipe.fileHandleForReading
+                while true {
+                    let chunk = reading.availableData
+                    if chunk.isEmpty { break }
+                    let own = start.feed(chunk)
+                    if !own.isEmpty { try? handle?.write(contentsOf: own) }
+                }
+                let rest = start.finish()
+                if !rest.isEmpty { try? handle?.write(contentsOf: rest) }
+                try? handle?.close()
+                box.noise = start.noise
                 group.leave()
             }
         }
@@ -279,16 +349,25 @@ public final class RemoteConnection: @unchecked Sendable {
             try? outputHandle?.close()
             return RemoteResult(status: 124, output: box.output, errors: Data("Timed out.".utf8))
         }
-        // A daemon started over the connection can hold a pipe open forever. Don't wait for it.
-        _ = group.wait(timeout: .now() + 2)
+        // A daemon started over the connection can hold a pipe open forever. Don't wait for it. A file
+        // being written does have to be all there, though.
+        let writingFile = outputFile != nil && marked
+        if group.wait(timeout: .now() + (writingFile ? 30 : 2)) == .timedOut, writingFile {
+            return RemoteResult(status: 124, output: Data(), errors: Data("Timed out.".utf8))
+        }
         try? outputHandle?.close()
-        return RemoteResult(status: process.terminationStatus, output: box.output, errors: box.errors)
+        return RemoteResult(status: process.terminationStatus, output: box.output, errors: box.errors, noise: box.noise)
     }
 
     private final class OutputBox: @unchecked Sendable {
         private let lock = NSLock()
         private var _output = Data()
         private var _errors = Data()
+        private var _noise = false
+        var noise: Bool {
+            get { lock.withLock { _noise } }
+            set { lock.withLock { _noise = newValue } }
+        }
         var output: Data {
             get { lock.withLock { _output } }
             set { lock.withLock { _output = newValue } }
@@ -351,6 +430,8 @@ public final class RemoteConnection: @unchecked Sendable {
                     let alive = exec("true", stdin: nil, timeout: 6)?.succeeded == true
                     queue.async { [self] in
                         guard !alive, current == generation, let master, master.isRunning else { return }
+                        // Terminals past the third have connections of their own, on the same dead network.
+                        endTerminalConnections()
                         master.terminate()
                     }
                 }
@@ -370,6 +451,7 @@ public final class RemoteConnection: @unchecked Sendable {
             master = nil
             stopWatcher()
             stopRelay()
+            stopHeartbeat()
             endTerminalConnections()
             setState(.idle)
         }
@@ -383,6 +465,7 @@ public final class RemoteConnection: @unchecked Sendable {
             generation += 1
             stopWatcher()
             stopRelay()
+            stopHeartbeat()
             endTerminalConnections()
             _ = Self.runProcess(executable: Self.ssh, arguments: configArguments + ["-S", controlPath, "-O", "exit", destination], timeout: 2)
             if let master, master.isRunning { master.terminate() }
@@ -500,6 +583,9 @@ public final class RemoteConnection: @unchecked Sendable {
         generation += 1
         stopWatcher()
         stopRelay()
+        // Whatever ended the main connection ended these too, even if they don't know it yet. Once
+        // the state says so, which nothing should wait on.
+        defer { endTerminalConnections() }
         let wasUp: Bool
         switch state {
         case .ready, .reconnecting: wasUp = true
@@ -583,44 +669,41 @@ public final class RemoteConnection: @unchecked Sendable {
         }
     }
 
-    /// Named by version, so an update doesn't pull it out from under a running session, and a
-    /// server with it already needs nothing sent.
+    /// In a folder of its version, so an update doesn't pull it out from under a running session,
+    /// another Tiri on the same server keeps its own, and a server with it already needs nothing sent.
     private func installHelper(kind: String, home: String, uid: String) {
         let version = (try? String(contentsOfFile: helperDirectory + "/VERSION", encoding: .utf8))?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "dev"
-        // The usual place, then a place for a home folder that won't run programs.
-        for base in [home + "/.tiri", "/tmp/.tiri-" + uid] {
-            let bin = base + "/bin"
-            // Sockets have short paths, and a deep home folder can go past them.
-            let run = (base + "/run").utf8.count < 70 ? base + "/run" : "/tmp/.tiri-" + uid + "/run"
-            let quoted = ShellQuote.quote(bin + "/tiri-remote-" + version)
-            // Only a folder that's really this user's. Under /tmp, someone else could have made it first.
-            let quotedBase = ShellQuote.quote(base)
-            let ours = "mkdir -p \(quotedBase) && [ -O \(quotedBase) ] && [ ! -L \(quotedBase) ] && chmod 700 \(quotedBase)"
-            let check = "\(ours) && mkdir -p \(ShellQuote.quote(bin)) \(ShellQuote.quote(run)) \(ShellQuote.quote(base + "/tmp")) && chmod 700 \(ShellQuote.quote(run)) && \(quoted) version"
-            var works = exec(check, stdin: nil, timeout: 20)?.text.trimmingCharacters(in: .whitespacesAndNewlines) == version
-            if !works, let name = Self.helperName(kind: kind),
-               let binary = try? Data(contentsOf: URL(fileURLWithPath: helperDirectory + "/" + name)) {
-                let temporary = ShellQuote.quote(bin + "/.upload-" + UUID().uuidString.prefix(8))
-                let upload = "\(ours) && cat > \(temporary) && chmod 755 \(temporary) && mv \(temporary) \(quoted) && \(quoted) version"
-                works = exec(upload, stdin: binary, timeout: 120)?.text.trimmingCharacters(in: .whitespacesAndNewlines) == version
-            }
-            if works {
-                let links = """
-                cd \(ShellQuote.quote(bin)) && ln -sf tiri-remote-\(version) tiri-remote && ln -sf tiri-remote-\(version) tiri
-                for old in tiri-remote-*; do [ "$old" = tiri-remote-\(version) ] || rm -f "$old"; done
-                """
-                _ = exec(links, stdin: nil, timeout: 20)
-                lock.withLock {
-                    _binDirectory = bin
-                    _runDirectory = run
-                    _hasHelper = true
+        // A home folder can be shared by machines of different kinds, so the kind is in the name too.
+        if let name = Self.helperName(kind: kind) {
+            let folder = version + "-" + name.dropFirst("tiri-remote-".count)
+            // The usual place, then a place for a home folder that won't run programs.
+            for base in [home + "/.tiri", "/tmp/.tiri-" + uid] {
+                let versioned = base + "/bin/" + folder
+                // Sockets have short paths, and a deep home folder can go past them.
+                let run = (base + "/run").utf8.count < 70 ? base + "/run" : "/tmp/.tiri-" + uid + "/run"
+                let check = RemoteHelperScripts.check(base: base, versioned: versioned, run: run)
+                var works = exec(check, stdin: nil, timeout: 20)?.text.trimmingCharacters(in: .whitespacesAndNewlines) == version
+                if !works, let binary = try? Data(contentsOf: URL(fileURLWithPath: helperDirectory + "/" + name)) {
+                    let sum = SHA256.hash(data: binary).map { String(format: "%02x", $0) }.joined()
+                    let upload = RemoteHelperScripts.upload(base: base, versioned: versioned, size: binary.count, sha256: sum)
+                    works = exec(upload, stdin: binary, timeout: 120)?.text.trimmingCharacters(in: .whitespacesAndNewlines) == version
                 }
-                return
+                if works {
+                    _ = exec(RemoteHelperScripts.tidy(versioned: versioned), stdin: nil, timeout: 20)
+                    lock.withLock {
+                        _baseDirectory = base
+                        _binDirectory = versioned
+                        _runDirectory = run
+                        _hasHelper = true
+                    }
+                    return
+                }
             }
         }
         // Some other kind of machine. Terminals and files still work, just without what needs it.
         lock.withLock {
+            _baseDirectory = nil
             _binDirectory = nil
             _runDirectory = nil
             _hasHelper = false
@@ -634,11 +717,51 @@ public final class RemoteConnection: @unchecked Sendable {
 
     private func afterReady() {
         isQuiet = false
+        startHeartbeat()
         startRelay()
         rescan()
         startWatcher()
         retryPendingSaves()
         if let onReady { DispatchQueue.global(qos: .userInitiated).async(execute: onReady) }
+    }
+
+    // MARK: Saying this Mac is still here
+
+    private var heartbeatTimer: DispatchSourceTimer?
+
+    /// The watcher and the relay on the server hear a newline every 15 seconds, and go after a
+    /// minute without one. Otherwise a Mac that slept away from its network leaves them for ever.
+    /// Runs on queue, which is also where their pipes open and close.
+    private func startHeartbeat() {
+        guard heartbeatTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 15, repeating: 15, leeway: .seconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.state.isReady else { return }
+            if let watcherInput = self.watcherInput { Self.beat(watcherInput) }
+            // Between the relay's answers, never inside one. One that's being written says enough.
+            if let relayInput = self.relayInput, self.relayWrites.try() {
+                Self.beat(relayInput)
+                self.relayWrites.unlock()
+            }
+        }
+        heartbeatTimer = timer
+        timer.resume()
+    }
+
+    /// Only into a pipe with room: one nobody's reading, on a dead network, would hold this queue up.
+    private static func beat(_ pipe: Pipe) {
+        let fd = pipe.fileHandleForWriting.fileDescriptor
+        var room = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        guard poll(&room, 1, 0) == 1, room.revents & Int16(POLLOUT) != 0 else { return }
+        var newline: UInt8 = 10
+        _ = Darwin.write(fd, &newline, 1)
+    }
+
+    /// Runs on queue.
+    private func stopHeartbeat() {
+        heartbeatTimer?.cancel()
+        heartbeatTimer = nil
     }
 
     // MARK: `tiri` on the server
@@ -647,6 +770,9 @@ public final class RemoteConnection: @unchecked Sendable {
     private var relayInput: Pipe?
     private var relayPID: Int?
     private let relayWrites = NSLock()
+    /// When each terminal's agent last reported live, by the server's clock, so nothing older from a
+    /// spool overtakes it.
+    private var lastLiveStatus: [String: Int64] = [:]
 
     /// A `tiri` command from a terminal on the server: its JSON, and what to send back.
     public var onRelayRequest: (@Sendable (Data) async -> Data)?
@@ -662,14 +788,14 @@ public final class RemoteConnection: @unchecked Sendable {
         if let bin = binDirectory, let socket = relaySocket, let run = runDirectory {
             script = """
             ln -sf \(ShellQuote.quote((socket as NSString).lastPathComponent)) \(ShellQuote.quote(run + "/control.sock"))
-            exec \(ShellQuote.quote(bin + "/tiri-remote")) relay \(ShellQuote.quote(socket))
+            exec \(ShellQuote.quote(bin + "/tiri-remote")) relay \(ShellQuote.quote(socket)) --heartbeat
             """
         } else {
             script = "echo P $$ 0; exec tail -f /dev/null"
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: Self.ssh)
-        process.arguments = clientArguments(tty: false) + [destination, RemoteShell.wrap(script)]
+        process.arguments = clientArguments(tty: false) + [destination, RemoteShell.wrap(script, marked: true)]
         let output = Pipe.notInherited()
         let input = Pipe.notInherited()
         process.standardInput = input
@@ -677,13 +803,14 @@ public final class RemoteConnection: @unchecked Sendable {
         process.standardError = FileHandle.nullDevice
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         let reader = RelayFrames()
+        let start = RemoteOutputStream { [weak self] in self?.noticedNoise() }
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
                 return
             }
-            for frame in reader.read(data) { self?.relayFrame(frame, input: input) }
+            for frame in reader.read(start.feed(data)) { self?.relayFrame(frame, input: input) }
         }
         process.terminationHandler = { [weak self] ended in
             guard let self else { return }
@@ -714,11 +841,24 @@ public final class RemoteConnection: @unchecked Sendable {
             let id = frame.id
             let body = frame.body
             let writes = relayWrites
+            if let status = RemoteSpool.status(body), let at = status.at {
+                lock.withLock { lastLiveStatus[status.item] = max(lastLiveStatus[status.item] ?? 0, at) }
+            }
             Task.detached {
                 let answer = await onRelayRequest(body)
                 var message = Data("A \(id) \(answer.count)\n".utf8)
                 message.append(answer)
                 writes.withLock { try? input.fileHandleForWriting.write(contentsOf: message) }
+            }
+        case "S":
+            // What agents said while this Mac couldn't hear. Only the newest of each terminal is news.
+            let writes = relayWrites
+            writes.withLock { try? input.fileHandleForWriting.write(contentsOf: Data("K 0 0\n".utf8)) }
+            guard let onRelayRequest else { return }
+            let live = lock.withLock { lastLiveStatus }
+            let chosen = RemoteSpool.choose(frame.body, serverNow: Int64(frame.id), lastLive: live)
+            Task.detached {
+                for request in chosen { _ = await onRelayRequest(request) }
             }
         default:
             break
@@ -1057,23 +1197,25 @@ public final class RemoteConnection: @unchecked Sendable {
                 setLimited(true)
                 return
             }
-            let script = "exec \(helper(bin)) watch \(RemoteShell.arguments(folders)) --exclude \(ShellQuote.quote(excludeArgument))"
+            let script = "exec \(helper(bin)) watch \(RemoteShell.arguments(folders)) --exclude \(ShellQuote.quote(excludeArgument)) --heartbeat"
             let process = Process()
             process.executableURL = URL(fileURLWithPath: Self.ssh)
-            process.arguments = clientArguments(tty: false) + [destination, RemoteShell.wrap(script)]
+            process.arguments = clientArguments(tty: false) + [destination, RemoteShell.wrap(script, marked: true)]
             let input = Pipe.notInherited()
             let output = Pipe.notInherited()
             process.standardInput = input
             process.standardOutput = output
             process.standardError = FileHandle.nullDevice
+            _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
             let reader = RecordStream()
+            let start = RemoteOutputStream { [weak self] in self?.noticedNoise() }
             output.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 if data.isEmpty {
                     handle.readabilityHandler = nil
                     return
                 }
-                let events = reader.read(data)
+                let events = reader.read(start.feed(data))
                 guard let self else { return }
                 self.mirrorQueue.async { self.handleWatch(events) }
             }

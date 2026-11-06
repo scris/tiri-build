@@ -1698,7 +1698,10 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
                 self.showExit(code: exitCode, resumeFailed: false)
                 return
             }
-            self.model.remote.moveToNextSlot(self.itemID, on: destination)
+            // Unless this terminal's own connection is the one that died: then the same slot gets a new one.
+            let slot = self.model.remote.terminalSlot(self.itemID, on: destination)
+            let ownAnswers = await Task.detached(priority: .userInitiated) { connection.terminalConnectionAnswers(slot: slot) }.value
+            if ownAnswers { self.model.remote.moveToNextSlot(self.itemID, on: destination) }
             self.beginReattach(keepingRetries: true)
         }
         return true

@@ -1708,3 +1708,5 @@
 "Moving Tiri to Applications…" = "正在将 Tiri 移到“应用程序”…";
 "Couldn't move Tiri" = "无法移动 Tiri";
 "This file's changes are too large to show." = "这个文件的更改太大，无法显示。";
+"The shell on %@ prints text at login" = "%@ 上的 shell 登录时会输出文字";
+"Tiri skips it, but scp and rsync may not." = "Tiri 会跳过这些文字，但 scp 和 rsync 可能不会。";

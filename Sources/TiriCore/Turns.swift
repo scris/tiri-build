@@ -109,8 +109,8 @@ public final class TurnSnapshots: Sendable {
         let hash = SHA256.hash(data: Data(root.utf8)).prefix(10).map { String(format: "%02x", $0) }.joined()
         // On a server, git runs there, so its snapshots live there. Named as local paths here, and
         // translated like every other path that goes to it.
-        if let connection = RemoteRegistry.shared.connection(forLocal: root), let bin = connection.binDirectory {
-            let base = (bin as NSString).deletingLastPathComponent + "/snapshots/" + hash
+        if let connection = RemoteRegistry.shared.connection(forLocal: root), let tiri = connection.baseDirectory {
+            let base = tiri + "/snapshots/" + hash
             return URL(fileURLWithPath: connection.map.local(base), isDirectory: true)
         }
         return directory.appendingPathComponent(hash, isDirectory: true)

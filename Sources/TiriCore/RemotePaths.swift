@@ -304,11 +304,17 @@ public enum SSHConfigFile {
 // MARK: - Speaking to `sh` on the other side
 
 public enum RemoteShell {
+    public static let outputMarker = "\u{1E}tiri-out\u{1E}"
+
     /// Whatever the user's login shell is, the script runs in `sh`. It travels encoded, because ssh
     /// hands it to that shell first, and fish and tcsh don't read quotes the way `sh` does. A file
     /// named to break out of the quotes would otherwise run on the server, as you.
-    public static func wrap(_ script: String) -> String {
-        let encoded = Data(script.utf8).base64EncodedString()
+    ///
+    /// `marked` prints `outputMarker` before the script's own output, so what the login shell's
+    /// setup printed can be told apart from it. Only for output Tiri reads itself. See RemoteOutputStart.
+    public static func wrap(_ script: String, marked: Bool = false) -> String {
+        let body = marked ? "printf '\\036tiri-out\\036'\n" + script : script
+        let encoded = Data(body.utf8).base64EncodedString()
         return "sh -c 'eval \"$(printf %s \(encoded) | base64 -d 2>/dev/null || printf %s \(encoded) | base64 -D)\"'"
     }
 

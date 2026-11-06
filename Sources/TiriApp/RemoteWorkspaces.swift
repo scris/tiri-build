@@ -99,6 +99,12 @@ final class RemoteManager {
         connection.onCaseCollision = { [weak self] name, holder in
             MainActor.assumeIsolated { self?.noteCaseCollision(name, holder: holder, on: destination) }
         }
+        connection.onShellNoise = { [weak self] in
+            MainActor.assumeIsolated {
+                self?.model.showToast(title: String(localized: "The shell on \(SSHConfigFile.displayName(of: destination)) prints text at login"),
+                                      detail: String(localized: "Tiri skips it, but scp and rsync may not."), symbol: "text.bubble", tint: .secondary)
+            }
+        }
         let box = openFiles
         connection.openFiles = { box.value }
         connection.onReady = { [weak self] in
@@ -442,7 +448,7 @@ final class RemoteManager {
             return
         }
         let locals = paths.filter { connection.map.remote($0) == nil }
-        guard !locals.isEmpty, let bin = connection.binDirectory else {
+        guard !locals.isEmpty, let tiri = connection.baseDirectory else {
             done(paths.map { connection.map.remote($0) ?? $0 })
             return
         }
@@ -451,7 +457,7 @@ final class RemoteManager {
         model.showToast(title: sending, detail: nil, symbol: "arrow.up.circle", tint: .secondary)
         Task { [weak self] in
             let (mapped, failed) = await Task.detached(priority: .userInitiated) { () -> ([String], String?) in
-                let base = (bin as NSString).deletingLastPathComponent + "/tmp"
+                let base = tiri + "/tmp"
                 // A week is plenty for anything an agent was shown.
                 _ = connection.run("find \(ShellQuote.quote(base)) -mindepth 1 -mtime +7 -delete 2>/dev/null; true", timeout: 15)
                 var mapped: [String] = []
