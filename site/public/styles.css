@@ -408,8 +408,6 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 .get-download { margin-top: 30px; background: var(--pink); color: #fff; border-radius: 12px; padding: 14px 28px; font: 600 18px/1.2 var(--body); text-decoration: none; }
 .get-download:hover { filter: brightness(1.08); }
 .get-download:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
-.get .get-small { font-size: 15px; }
-.get .get-small a { color: var(--text); }
 .foot { max-width: 1320px; margin: 0 auto; padding: 26px var(--gutter) 40px; border-top: 1px solid #2c2c2e; display: flex; gap: 26px; color: var(--faint); font-size: 13.5px; }
 
 /* ---------- the first screen on a laptop or wider: words in one row, film and chapters side by side ---------- */
@@ -562,3 +560,13 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 /* something already on screen doesn't replay its entrance when the window redraws */
 .win .still { animation: none !important; }
 .spot { transition: opacity 0.3s ease; }
+
+/* ---------- privacy and other plain pages ---------- */
+.doc { max-width: 680px; margin: 0 auto; padding: clamp(60px, 9vw, 120px) var(--gutter) 120px; }
+.doc h1 { font-size: clamp(40px, 5.4vw, 64px); }
+.doc-lead { font-size: 21px; color: var(--dim); margin: 22px 0 0; }
+.doc h2 { font-size: 24px; margin: 52px 0 0; }
+.doc p { margin: 12px 0 0; color: var(--dim); }
+.doc b { color: var(--text); font-weight: 600; }
+.doc .doc-small { margin-top: 56px; font-size: 15px; }
+.doc .doc-small a { color: var(--text); }
