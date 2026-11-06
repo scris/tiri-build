@@ -732,16 +732,12 @@ final class RemoteManager {
     private func installHooks(_ tool: AgentHooks.Tool, path: String, on connection: RemoteConnection) {
         Task { [weak self] in
             let problem: String? = await Task.detached(priority: .userInitiated) { () -> String? in
-                let quoted = "\"$HOME\"/" + ShellQuote.quote(path)
                 // A failed read must never look like an empty file, or their settings would be replaced.
                 guard let existing = RemoteManager.readConfig(path, on: connection) else { return String(localized: "Couldn't read \(path) on the server.") }
                 do {
                     let updated = try AgentHooks.installing(tool, in: existing)
-                    let script = """
-                    mkdir -p "$(dirname \(quoted))"
-                    [ ! -e \(quoted) ] || [ -e \(quoted).tiri-backup ] || cp \(quoted) \(quoted).tiri-backup
-                    cat > \(quoted).tiri-new && mv \(quoted).tiri-new \(quoted)
-                    """
+                    // Through a link to its file, with that file's mode, and never readable by others.
+                    let script = SafeFile.remoteReplaceScript(homeRelativePath: path)
                     guard connection.run(script, stdin: Data(updated.utf8), timeout: 15)?.succeeded == true else { return String(localized: "The server wouldn't take the change.") }
                     return nil
                 } catch {

@@ -1653,3 +1653,4 @@
 "Compare" = "比较";
 "unsaved" = "未保存";
 "Change on Disk" = "磁盘上的更改";
+"%@ isn't UTF-8 text, so Tiri left it alone." = "%@ 不是 UTF-8 文本，所以 Tiri 没有改动它。";

@@ -2800,20 +2800,22 @@ final class AppModel {
         let url = AgentHooks.configURL(for: tool)
         let manager = FileManager.default
         do {
-            let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            // Only a file that isn't there is empty. One that can't be read stays as it is.
+            let existing = try SafeFile.readText(url)
+            let text = existing ?? ""
             let updated = install ? try AgentHooks.installing(tool, in: text) : try AgentHooks.removing(tool, from: text)
             try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if manager.fileExists(atPath: url.path), case .ownFile? = tool.profile?.hookInstall {
+            if existing != nil, case .ownFile? = tool.profile?.hookInstall {
                 // Tiri's own file, with nothing of anyone else's to keep.
-            } else if manager.fileExists(atPath: url.path) {
-                let backup = url.appendingPathExtension("tiri-backup")
-                try? manager.removeItem(at: backup)
-                try manager.copyItem(at: url, to: backup)
+            } else if let existing {
+                // The file as it was before Tiri ever touched it, so removing the hooks doesn't replace it.
+                try SafeFile.keepFirstCopy(Data(existing.utf8), at: url.appendingPathExtension("tiri-backup"))
             }
             if updated.isEmpty, case .ownFile = tool.profile?.hookInstall {
                 try? manager.removeItem(at: url)
-            } else {
-                try updated.write(to: url, atomically: true, encoding: .utf8)
+            } else if updated != existing {
+                // Through a link to the file it leads to, keeping that file's mode.
+                try SafeFile.replace(url, with: Data(updated.utf8))
             }
             hooksRevision += 1
             showToast(title: install ? String(localized: "\(tool.title) hooks are on") : String(localized: "\(tool.title) hooks are off"),

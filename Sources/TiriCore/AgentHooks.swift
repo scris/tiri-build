@@ -91,6 +91,7 @@ public enum AgentHooks {
 
     private static func claudeInstalling(in text: String) throws -> String {
         var root = try parseClaude(text)
+        let original = root
         var hooks = root["hooks"] as? [String: Any] ?? [:]
         for event in claudeEvents {
             var entries = hooks[event] as? [[String: Any]] ?? []
@@ -103,11 +104,12 @@ public enum AgentHooks {
             hooks[event] = entries
         }
         root["hooks"] = hooks
-        return try render(root)
+        return try edited(text, becoming: root) { try claudeInstallingByEdit(in: text, original: original) } ?? render(root)
     }
 
     private static func claudeRemoving(from text: String) throws -> String {
         var root = try parseClaude(text)
+        let original = root
         guard var hooks = root["hooks"] as? [String: Any] else { return text }
         for (event, value) in hooks {
             guard let entries = value as? [[String: Any]] else { continue }
@@ -123,7 +125,7 @@ public enum AgentHooks {
             hooks[event] = kept.isEmpty ? nil : kept
         }
         root["hooks"] = hooks.isEmpty ? nil : hooks
-        return try render(root)
+        return try edited(text, becoming: root) { try claudeRemovingByEdit(from: text, original: original) } ?? render(root)
     }
 
     // MARK: Codex

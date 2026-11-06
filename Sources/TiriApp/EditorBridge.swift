@@ -307,10 +307,10 @@ final class EditorBridge {
         let directory = lockDirectory
         let url = directory.appendingPathComponent("\(port).lock")
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try EditorProtocol.lockFile(pid: ProcessInfo.processInfo.processIdentifier, folders: folders, token: token)
-                .write(to: url, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            // The lock holds the token, so it's private from its first byte, in a private folder.
+            try SafeFile.makePrivateDirectory(directory)
+            try SafeFile.replace(url, with: EditorProtocol.lockFile(pid: ProcessInfo.processInfo.processIdentifier, folders: folders, token: token),
+                                 forcing: 0o600, followingLinks: false)
             lockURL = url
         } catch {
             lockURL = nil

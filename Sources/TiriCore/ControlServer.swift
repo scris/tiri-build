@@ -46,6 +46,23 @@ public final class ControlServer: @unchecked Sendable {
         self.handler = handler
     }
 
+    /// How much one client may make Tiri hold for it, and for how long.
+    struct Limits {
+        /// A request line longer than this is refused, and the connection closed.
+        var maxRequestBytes = 16 << 20
+        /// Past this much unread reply, the client is given up on.
+        var maxPendingBytes = 64 << 20
+        /// Replies waiting this long without a byte taken mean a client that's stopped reading.
+        var stallLimit: TimeInterval = 30
+    }
+
+    /// Kept on the queue, where each connection finds them as it starts.
+    var limits: Limits {
+        get { queue.getSpecific(key: Self.limitsKey) ?? Limits() }
+        set { queue.setSpecific(key: Self.limitsKey, value: newValue) }
+    }
+    private static let limitsKey = DispatchSpecificKey<Limits>()
+
     public func start() throws {
         let directory = (path as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -85,14 +102,18 @@ public final class ControlServer: @unchecked Sendable {
         acceptSource = source
     }
 
+    /// Never waits long: quitting mustn't hang on the queue, whatever a client is doing.
     public func stop() {
-        queue.sync {
+        let done = DispatchSemaphore(value: 0)
+        queue.async { [self] in
             acceptSource?.cancel()
             acceptSource = nil
             listenFD = -1
-            for connection in connections.values { connection.shutdown() }
+            for connection in connections.values { connection.drop() }
             connections.removeAll()
+            done.signal()
         }
+        _ = done.wait(timeout: .now() + 2)
         unlink(path)
     }
 
@@ -108,16 +129,31 @@ public final class ControlServer: @unchecked Sendable {
         connection.start()
     }
 
+    /// One client. Its socket never blocks, so a client that stops reading holds up nobody else:
+    /// replies wait in `pending` and go out as the socket takes them, the way tmux does it.
     private final class Connection: @unchecked Sendable {
+        var limits = Limits()
         let fd: Int32
         let queue: DispatchQueue
         let handler: Handler
         let onClose: (Int32) -> Void
-        var source: DispatchSourceRead?
+        var readSource: DispatchSourceRead?
+        var writeSource: DispatchSourceWrite?
+        var writeSuspended = true
+        /// Both sources' cancel handlers have to run before the descriptor can close.
+        var sourcesRunning = 0
         var buffer = Data()
+        /// How much of `buffer` is known to hold no newline.
+        var scanned = 0
+        var pending: [Data] = []
+        var pendingOffset = 0
+        var pendingBytes = 0
+        var lastProgress = DispatchTime.now()
+        var stallCheckScheduled = false
         var tail: Task<Void, Never>?
-        var writesFinished = false
-        var sourceCancelled = false
+        var readingDone = false
+        var repliesDone = false
+        var finishing = false
         var closed = false
 
         init(fd: Int32, queue: DispatchQueue, handler: @escaping Handler, onClose: @escaping (Int32) -> Void) {
@@ -128,56 +164,105 @@ public final class ControlServer: @unchecked Sendable {
         }
 
         func start() {
-            let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-            source.setEventHandler { [weak self] in self?.readAvailable() }
-            source.setCancelHandler { [self] in
-                sourceCancelled = true
-                closeIfFinished()
-            }
-            source.resume()
-            self.source = source
+            limits = queue.getSpecific(key: ControlServer.limitsKey) ?? Limits()
+            let flags = fcntl(fd, F_GETFL)
+            if flags >= 0 { _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK) }
+            let reader = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+            reader.setEventHandler { [weak self] in self?.readAvailable() }
+            reader.setCancelHandler { [self] in sourceEnded() }
+            // Made suspended, and resumed only while something is waiting to go out.
+            let writer = DispatchSource.makeWriteSource(fileDescriptor: fd, queue: queue)
+            writer.setEventHandler { [weak self] in self?.flush() }
+            writer.setCancelHandler { [self] in sourceEnded() }
+            sourcesRunning = 2
+            readSource = reader
+            writeSource = writer
+            reader.resume()
         }
 
-        func shutdown() {
-            writesFinished = true
-            cancelSource()
-            closeIfFinished()
+        /// Gone at once, with whatever hadn't been written.
+        func drop() {
+            pending.removeAll()
+            pendingBytes = 0
+            pendingOffset = 0
+            repliesDone = true
+            finish()
         }
 
-        private func cancelSource() {
-            source?.cancel()
-            source = nil
-        }
-
-        /// The descriptor closes once reading has been cancelled and all replies are written.
-        private func closeIfFinished() {
-            guard sourceCancelled, writesFinished, !closed else { return }
+        private func sourceEnded() {
+            sourcesRunning -= 1
+            guard sourcesRunning == 0, !closed else { return }
             closed = true
             close(fd)
             onClose(fd)
         }
 
+        private func cancelReading() {
+            readingDone = true
+            readSource?.cancel()
+            readSource = nil
+        }
+
+        /// Stops both sources. The descriptor closes once dispatch has let go of it.
+        private func finish() {
+            guard !finishing else { return }
+            finishing = true
+            cancelReading()
+            if let writer = writeSource {
+                writer.cancel()
+                // A suspended source never runs its cancel handler, and mustn't be released.
+                if writeSuspended {
+                    writeSuspended = false
+                    writer.resume()
+                }
+            }
+            writeSource = nil
+        }
+
+        /// Closes once reading's over, every reply has been made, and all of it has gone out.
+        private func finishIfDone() {
+            guard readingDone, repliesDone, pendingBytes == 0 else { return }
+            finish()
+        }
+
+        /// After the replies already on their way, and one more if given, nothing else is said.
+        private func endAfterReplies(saying last: ControlResponse? = nil) {
+            cancelReading()
+            let previous = tail
+            tail = Task { [weak self] in
+                await previous?.value
+                guard let self else { return }
+                if let last { self.write(last) }
+                self.queue.async { [self] in
+                    repliesDone = true
+                    finishIfDone()
+                }
+            }
+        }
+
         private func readAvailable() {
+            guard !readingDone else { return }
             var chunk = [UInt8](repeating: 0, count: 65536)
             let count = read(fd, &chunk, chunk.count)
+            if count < 0, errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR { return }
             if count <= 0 {
-                cancelSource()
                 // The client may have half-closed: let in-flight requests finish and reply.
-                let last = tail
-                Task { [self] in
-                    await last?.value
-                    queue.async { [self] in
-                        writesFinished = true
-                        closeIfFinished()
-                    }
-                }
+                endAfterReplies()
                 return
             }
             buffer.append(contentsOf: chunk[0..<count])
-            while let newline = buffer.firstIndex(of: 0x0A) {
+            // Only what just arrived is searched, so a long line costs once, not once per read.
+            while let newline = buffer[(buffer.startIndex + scanned)...].firstIndex(of: 0x0A) {
                 let line = buffer.subdata(in: buffer.startIndex..<newline)
                 buffer.removeSubrange(buffer.startIndex...newline)
+                scanned = 0
                 if !line.isEmpty { dispatch(line) }
+            }
+            scanned = buffer.count
+            if buffer.count > limits.maxRequestBytes {
+                buffer = Data()
+                scanned = 0
+                endAfterReplies(saying: .failure(id: "", "Request too long: over \(limits.maxRequestBytes >> 20) MB without a newline"))
             }
         }
 
@@ -200,14 +285,67 @@ public final class ControlServer: @unchecked Sendable {
         private func write(_ response: ControlResponse) {
             guard let data = try? ControlCoding.encodeLine(response) else { return }
             queue.async { [self] in
-                guard !closed, !writesFinished else { return }
-                data.withUnsafeBytes { raw in
-                    var offset = 0
-                    while offset < raw.count {
-                        let written = Foundation.write(fd, raw.baseAddress!.advanced(by: offset), raw.count - offset)
-                        if written <= 0 { break }
-                        offset += written
-                    }
+                guard !finishing, !data.isEmpty else { return }
+                if pendingBytes == 0 { lastProgress = .now() }
+                pending.append(data)
+                pendingBytes += data.count
+                if pendingBytes > limits.maxPendingBytes {
+                    drop()
+                    return
+                }
+                flush()
+            }
+        }
+
+        /// Writes what the socket takes now, and waits for it to take more only if there's more.
+        private func flush() {
+            while let first = pending.first, !finishing {
+                let written = first.withUnsafeBytes { raw in
+                    // MSG_NOSIGNAL as well as SO_NOSIGPIPE: a client that hung up before it was accepted leaves a socket
+                    // that refuses SO_NOSIGPIPE (EINVAL), and a plain write to it would end Tiri with SIGPIPE.
+                    Darwin.send(fd, raw.baseAddress!.advanced(by: pendingOffset), raw.count - pendingOffset, MSG_NOSIGNAL)
+                }
+                if written < 0 {
+                    if errno == EINTR { continue }
+                    if errno == EAGAIN || errno == EWOULDBLOCK { break }
+                    drop()
+                    return
+                }
+                lastProgress = .now()
+                pendingOffset += written
+                pendingBytes -= written
+                if pendingOffset == first.count {
+                    pending.removeFirst()
+                    pendingOffset = 0
+                }
+            }
+            guard !finishing else { return }
+            if pendingBytes > 0 {
+                if writeSuspended {
+                    writeSuspended = false
+                    writeSource?.resume()
+                }
+                scheduleStallCheck()
+            } else {
+                if !writeSuspended {
+                    writeSuspended = true
+                    writeSource?.suspend()
+                }
+                finishIfDone()
+            }
+        }
+
+        private func scheduleStallCheck() {
+            guard !stallCheckScheduled else { return }
+            stallCheckScheduled = true
+            queue.asyncAfter(deadline: lastProgress + limits.stallLimit) { [weak self] in
+                guard let self else { return }
+                self.stallCheckScheduled = false
+                guard !self.finishing, self.pendingBytes > 0 else { return }
+                if DispatchTime.now() >= self.lastProgress + self.limits.stallLimit {
+                    self.drop()
+                } else {
+                    self.scheduleStallCheck()
                 }
             }
         }
