@@ -96,3 +96,38 @@ import Testing
         #expect(path?.hasPrefix("/custom/with space:") == true)
     }
 }
+
+@Suite(.serialized) struct DeveloperToolsTests {
+    @Test func appleStandInsAreTheSameFileAsGit() {
+        // On every Mac, these are Apple's one stand-in program, installed or not.
+        #expect(DeveloperTools.isStandIn("/usr/bin/git"))
+        #expect(DeveloperTools.isStandIn("/usr/bin/clangd"))
+        #expect(DeveloperTools.isStandIn("/usr/bin/python3"))
+        #expect(!DeveloperTools.isStandIn("/bin/zsh"))
+        #expect(!DeveloperTools.isStandIn("/usr/bin/xcode-select"))
+        #expect(!DeveloperTools.isStandIn("/opt/homebrew/bin/git"))
+    }
+
+    @Test func aStandInIsOnlyFoundWhenTheToolsAre() {
+        let text = "tiri-found:clangd=/usr/bin/clangd\ntiri-found:zsh=/bin/zsh\n"
+        let found = ShellLookup.locations(in: text)
+        #expect(found["zsh"] == "/bin/zsh")
+        #expect((found["clangd"] != nil) == DeveloperTools.areInstalled)
+    }
+
+    @Test func gitFromAnyInstallWhenApplesIsOnlyAStandIn() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("tiri-git-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        // Somewhere only a shell's setup knows about, like a Nix profile or a version manager.
+        try FileManager.default.createSymbolicLink(atPath: folder.path + "/git", withDestinationPath: "/bin/echo")
+        setenv("TIRI_DEV_NO_DEVELOPER_TOOLS", "1", 1)
+        defer { unsetenv("TIRI_DEV_NO_DEVELOPER_TOOLS"); DeveloperTools.shellPath = nil }
+        DeveloperTools.shellPath = "/usr/bin:" + folder.path
+        // Apple's stand-in comes first on the PATH, and is passed over.
+        #expect(DeveloperTools.git == folder.path + "/git")
+        let candidates = DeveloperTools.gitCandidates(path: "/a:/b")
+        #expect(Array(candidates.prefix(2)) == ["/a/git", "/b/git"])
+        #expect(candidates.contains("/opt/local/bin/git"))
+    }
+}

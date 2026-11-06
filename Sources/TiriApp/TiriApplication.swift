@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         AppModel.shared.finishLaunching()
+        AppModel.shared.offerCrashReport()
         CopyHealth.startWatching()
         // After a crash or a force quit, SwiftUI can start without opening its window. Terminals have
         // reattached by then, but nothing shows until the Dock icon is clicked, so do that for it.
@@ -111,6 +112,7 @@ struct TiriMenus: Commands {
         // App menu: About with credits (who made it, the website, the source).
         CommandGroup(replacing: .appInfo) {
             Button("About \(AboutPanel.appName)") { AboutPanel.show() }
+            item("checkForUpdates")
         }
         CommandGroup(replacing: .appSettings) {
             item("openSettings")
@@ -177,6 +179,8 @@ struct TiriMenus: Commands {
         CommandGroup(replacing: .help) {
             Button("Tiri Agent Guide") { model.showAgentGuide() }
             Button("Tiri Website") { NSWorkspace.shared.open(AboutPanel.websiteURL) }
+            Divider()
+            Button("Report a Problem…") { model.reportProblem() }
         }
     }
 }

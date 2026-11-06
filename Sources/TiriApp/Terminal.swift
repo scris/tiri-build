@@ -762,6 +762,12 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     var view: NSView { container }
 
     private let container = TerminalContainer()
+    /// A line over the terminal, for something about what runs in it rather than its connection.
+    func showNotice(_ text: String?, busy: Bool = false, actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        container.showNotice(text, busy: busy, actionTitle: actionTitle, action: action)
+    }
+    var noticeText: String? { container.noticeText }
+    func pressNotice() { container.pressNotice() }
     private let spec: TerminalSpec
     private var launchCommand: String?
     /// Typed at the prompt after a relaunch, for a command that shouldn't just run again.
@@ -1620,12 +1626,16 @@ final class TerminalContainer: NSView {
 
     private var noticeAction: (() -> Void)?
     @objc private func noticePressed() { noticeAction?() }
+    /// For a test copy, which takes no clicks: what the notice says, and its button pressed.
+    private(set) var noticeText: String?
+    func pressNotice() { noticeAction?() }
 
     /// A quiet line over the terminal about its connection. Never in the way of reading it.
     func showNotice(_ text: String?, busy: Bool = true, actionTitle: String? = nil, action: (() -> Void)? = nil) {
         notice?.removeFromSuperview()
         notice = nil
         noticeAction = action
+        noticeText = text
         guard let text else { return }
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = .systemFont(ofSize: 12)

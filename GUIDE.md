@@ -132,7 +132,7 @@ Agents make branches and worktrees for themselves, and Tiri finds them. A line u
 
 ### Changes
 
-When a workspace folder is in a Git repository, the sidebar's **Changes** section lists every file changed since the last commit, updating live as agents work. Click a file to see its diff as a tab, or double-click to keep the tab. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.
+When a workspace folder is in a Git repository, the sidebar's **Changes** section lists every file changed since the last commit, updating live as agents work. Tiri uses whatever Git you have: Apple's, Homebrew's, MacPorts', Nix's, GitHub Desktop's, or the one on your shell's PATH. With none at all, Changes offers **Install** for Apple's free Command Line Tools. Tiri never brings up Apple's installer unless you press it. Click a file to see its diff as a tab, or double-click to keep the tab. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.
 
 The menu in the section's header narrows or widens what you see:
 
@@ -356,7 +356,7 @@ A plugin's commands also reach the palette, the Plugins menu and keyboard shortc
 Tiri can be changed the way it was made: by asking.
 
 1. **Ask.** Choose **Change Tiri…** from the Tiri menu, the command palette or the start screen. You can also ask when a palette or settings search finds nothing, or just tell any agent in a Tiri terminal. Drag a box around the part of the screen you mean, so your agent can see it.
-2. **Watch.** Your agent starts in its own tab, in a workspace called **Your Tiri** that holds the exact source of the version you're running. You can follow along in Tiri's own file tree and Changes.
+2. **Watch.** Your agent starts in its own tab, in a workspace called **Your Tiri** that holds the exact source of the version you're running. You can follow along in Tiri's own file tree and Changes. The first time, Claude Code asks whether it may work in that folder, with "No, exit" chosen; press **Trust Tiri's Code** on the tab to answer yes.
 3. **Try it.** When the agent is done, a card on its tab says what changed and how big the change is. Press **Try It**. Tiri closes and reopens in about half a second with everything still running, including the agent that made the change, now inside what it made.
 4. **Keep it or go back.** For ten minutes, the card offers **Keep** and **Back**. Back takes one click and loses nothing.
 
@@ -452,6 +452,14 @@ tiri theme dark
 ```
 
 `tiri --help` lists every command, and `tiri --skill` prints a guide written for agents. Terminals inside Tiri have `TIRI_SOCKET`, `TIRI_WORKSPACE` and `TIRI_ITEM_ID` set.
+
+### Updates
+
+A downloaded Tiri looks for a newer one every 6 hours while your Mac is plugged in and you're away from it, and offers **Update** in the bottom bar. **Tiri → Check for Updates…** looks right away. Updating keeps your terminals and agents running. A copy you built from source doesn't look; pull and build it instead.
+
+### Reporting a problem
+
+**Help → Report a Problem…** opens a new issue on GitHub, filled in with Tiri's version, macOS and Mac, the agents you use, how many of your own changes are on, and where Tiri last crashed in the past week, if it did. Only the crash's error and its top frames go in, not the file's identifiers or paths. Nothing is sent until you send it on GitHub, where you can edit all of it. After a crash, the next launch offers **Report** once. Agents can use `tiri report`, which prints the same issue, and `--open` shows it to you.
 
 `tiri` works in every terminal inside Tiri. To use it in other terminals, go to **Settings → General** and press **Install**. That adds a link at `~/.local/bin/tiri` that keeps working when the app updates. If your shell doesn't look there, Tiri gives you the line to add.
 

@@ -151,6 +151,8 @@ extension AppModel {
             AppCommand(id: "manageLanguageServers", title: "Language Servers…", category: "Settings") { $0.openLanguageServerSettings() },
             AppCommand(id: "newPlugin", title: "New Plugin…", category: "Settings") { $0.promptForNewPlugin() },
             AppCommand(id: "changeTiri", title: "Change Tiri…", category: "Settings") { $0.yourTiri.beginChange(surface: nil) },
+            AppCommand(id: "reportProblem", title: "Report a Problem…", category: "Help") { $0.reportProblem() },
+            AppCommand(id: "checkForUpdates", title: "Check for Updates…", category: "Help") { $0.yourTiri.checkForUpdatesNow() },
             AppCommand(id: "showYourTiri", title: "Your Tiri", category: "Settings") { $0.openSettings(pane: .yourTiri) },
             AppCommand(id: "managePlugins", title: "Plugins…", category: "Settings") { $0.openPluginSettings() },
             AppCommand(id: "importPlugin", title: "Import Plugin…", category: "Settings") {
@@ -941,6 +943,13 @@ enum ControlHandler {
             }
             return .object([:])
 
+        case "report":
+            let facts = model.problemFacts(crash: ProblemReport.latestCrash(bundleID: AppModel.reportBundleID, since: Date().addingTimeInterval(-7 * 86400)))
+            let body = ProblemReport.body(facts)
+            let url = ProblemReport.issueURL(title: request.args["title"]?.stringValue ?? "", body: body)
+            if request.args["open"]?.boolValue == true { NSWorkspace.shared.open(url) }
+            return .object(["body": .string(body), "url": .string(url.absoluteString)])
+
         case "change.facts":
             model.yourTiri.recordFacts()
             return .object([:])
@@ -976,6 +985,10 @@ enum ControlHandler {
                 yours.finishMarking(CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3]))
             case "unfold": UserDefaults.standard.set(true, forKey: "YourTiri.open.\(value ?? "")")
             case "where": break
+            case "notice", "press-notice":
+                guard let item = value ?? yours.draft?.item, let terminal = model.existingController(for: item) as? TerminalController else { throw ControlFailure("No change is being made.") }
+                if request.args["action"]?.stringValue == "press-notice" { terminal.pressNotice() }
+                return .object(["notice": .string(terminal.noticeText ?? ""), "item": .string(item)])
             default: throw ControlFailure("Unknown action.")
             }
             yours.refresh()

@@ -19,7 +19,7 @@ struct SidebarView: View {
         GeometryReader { geometry in
         // With the explorer folded, what's still open takes the room it left.
         // In a repository, always: with everything committed, a branch and its commits are still there to read.
-        let hasChangesSection = model.barHasRepositories || !model.changes.isEmpty || !model.offeredTurns.isEmpty
+        let hasChangesSection = model.barHasRepositories || !model.changes.isEmpty || !model.offeredTurns.isEmpty || model.needsGit
         let rowHeight: CGFloat = {
             if case .recentCommits = model.changesScope { return 37 }
             if case .otherWork = model.changesScope { return 37 }
@@ -56,12 +56,16 @@ struct SidebarView: View {
             if hasChangesSection {
                 Divider()
                 sectionHeader("Changes", isOpen: $changesOpen) {
-                    ChangesScopeMenu()
-                    Text("\(model.visibleChangesCount)")
-                        .foregroundStyle(.tertiary)
-                        .font(.caption)
+                    if !model.needsGit {
+                        ChangesScopeMenu()
+                        Text("\(model.visibleChangesCount)")
+                            .foregroundStyle(.tertiary)
+                            .font(.caption)
+                    }
                 }
-                if changesOpen {
+                if changesOpen, model.needsGit {
+                    NeedsGitRow()
+                } else if changesOpen {
                     if let turn = model.scopedTurn {
                         TurnCaption(turn: turn)
                     } else if case .branch = model.changesScope, !model.branchBases.isEmpty {
@@ -501,5 +505,43 @@ struct AgentOverviewRowView: View {
             model.focusItem(row.item)
         }
         .help(row.agent + (row.files.isEmpty ? "" : ": " + row.files.map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")))
+    }
+}
+
+/// In place of the changes when a folder is a repository and this Mac has no git yet. Apple's installer only ever
+/// comes up from this button, never from Tiri looking at a folder.
+struct NeedsGitRow: View {
+    @Environment(AppModel.self) private var model
+    @State private var installing = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
+            Text(installing ? "Installing Apple's tools…" : "Changes need Git, from Apple's free tools")
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if !installing {
+                Button("Install") { install() }
+                    .controlSize(.small)
+            }
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+    }
+
+    private func install() {
+        installing = true
+        Task.detached { Tool.run("/usr/bin/xcode-select", ["--install"]) }
+        // Apple's installer takes minutes and says nothing to Tiri when it's done.
+        Task { @MainActor in
+            for _ in 0..<360 {
+                try? await Task.sleep(for: .seconds(10))
+                if await Task.detached(operation: { DeveloperTools.git != nil }).value { break }
+            }
+            installing = false
+            model.refreshChanges()
+        }
     }
 }

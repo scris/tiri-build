@@ -93,6 +93,9 @@ public enum CLIOutput {
                 let folders = workspace["folders"]?.arrayValue?.compactMap(\.stringValue).joined(separator: ", ") ?? ""
                 say("\(marker) \(cell(workspace["name"]))\t\(folders)")
             }
+        case "report":
+            say(cell(response.result?["body"]))
+            say(cell(response.result?["url"]))
         case "git":
             for repository in response.result?.arrayValue ?? [] {
                 let head = cell(repository["head"]) + (repository["dirty"]?.boolValue == true ? "*" : "")

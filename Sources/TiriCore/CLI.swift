@@ -353,6 +353,14 @@ public enum CLIParser {
             guard args.isEmpty else { throw UsageError("usage: tiri git") }
             return request("git")
 
+        case "report":
+            var options = Options(args)
+            let open = options.flag("--open")
+            let title = try options.value("--title")
+            var payload: [String: JSONValue] = ["open": .bool(open)]
+            if let title { payload["title"] = .string(title) }
+            return request("report", payload)
+
         case "diff":
             var options = Options(args)
             let tab = options.flag("--tab")
@@ -827,6 +835,7 @@ public enum CLIParser {
       tiri log [--limit N]         (recent commits)
       tiri turns                   (agents' recent turns)
       tiri git                     (each repository's branch, and commits to pull and push)
+      tiri report [--title T] [--open]   (a GitHub issue about a problem with Tiri, filled in; --open shows it in the browser to send)
       tiri diff <path> [--tab] [--branch | --commit <rev> | --turn <id|latest>]
                                    (what changed in one file; floats as a Peek)
       tiri review [add <path>[:line[-line]] <text> | remove <id> | clear | send [--to <item-id>]]

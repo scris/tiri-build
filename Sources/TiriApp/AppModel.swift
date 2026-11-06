@@ -173,6 +173,8 @@ final class AppModel {
     /// Whether this workspace has repositories, as of the last look. `repositories` empties for a
     /// moment on every switch, and the bar shouldn't go and come back, resizing every terminal.
     var barHasRepositories = false
+    /// A folder here is a repository, but this Mac has no git to read it with until Apple's tools are installed.
+    var needsGit = false
     @ObservationIgnored lazy var languageServers = LanguageServerHub(model: self)
     @ObservationIgnored lazy var plugins = PluginHost(model: self)
     @ObservationIgnored lazy var yourTiri = YourTiriModel(model: self)
@@ -194,7 +196,13 @@ final class AppModel {
     /// Fetches and pushes under way, by repository.
     var repositoryTransfers: [String: RepositoryTransfer] = [:]
     @ObservationIgnored private var repositoryTokens: [String: FileWatchHub.Token] = [:]
-    @ObservationIgnored var userPath: String?
+    @ObservationIgnored var userPath: String? {
+        didSet {
+            DeveloperTools.shellPath = userPath
+            // A git that only the shell knows about.
+            if needsGit, userPath != oldValue { refreshChanges() }
+        }
+    }
     var detachedItems: Set<ItemID> = []
     @ObservationIgnored private var detachedWindows: [ItemID: NSWindow] = [:]
     @ObservationIgnored private var detachedDelegates: [ItemID: DetachedWindowDelegate] = [:]
@@ -2311,6 +2319,18 @@ final class AppModel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
+    /// Once: git may be somewhere only the person's shell setup puts on the PATH.
+    private func learnUserPath() {
+        guard !askedShellForPath else { return }
+        askedShellForPath = true
+        let shell = settings.terminalShell.isEmpty ? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh" : settings.terminalShell
+        Task { [weak self] in
+            let path = await ShellLookup.path(shell: shell)
+            if let path, self?.userPath == nil { self?.userPath = path }
+        }
+    }
+    @ObservationIgnored private var askedShellForPath = false
+
     func refreshChanges() {
         guard !changesInFlight else {
             changesAgain = true
@@ -2324,9 +2344,12 @@ final class AppModel {
         Task.detached(priority: .userInitiated) { [weak self] in
             let found = Git.changesAcross(folders)
             let repositories = Git.repositoriesAcross(folders)
+            let needsGit = DeveloperTools.git == nil && folders.contains(where: Git.looksLikeRepository)
             await MainActor.run {
                 guard let self else { return }
                 self.changesInFlight = false
+                if self.activeID == workspace { self.needsGit = needsGit }
+                if needsGit, self.userPath == nil { self.learnUserPath() }
                 self.refreshReviewLines()
                 self.refreshScopedChanges()
                 self.refreshOtherWork()
