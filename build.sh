@@ -8,6 +8,8 @@
 # scripts/release.sh is the way to a notarized build. It sets the other two:
 #   TIRI_BUILD_DIR    somewhere other than build/, so a running Tiri isn't deleted, with no CLI installed
 #   TIRI_SIGN_TIMESTAMP=1    a secure timestamp, which notarization requires and which needs the network
+#   TIRI_UPDATE_FEED  the feed the app looks at for updates, written into it as TiriUpdateFeed
+# TIRI_BUNDLE_ID gives it another bundle ID, as for a test release (see scripts/stamp-bundle.sh).
 # A copy made for someone's own Tiri (see Sources/TiriCore/YourTiriChanges.swift) sets TIRI_COPY=personal,
 # TIRI_BUNDLE_ID, TIRI_RELEASE_COMMIT and TIRI_SIGN_KEYCHAIN too.
 set -euo pipefail
@@ -30,6 +32,8 @@ cp "$BIN_DIR/tiri" "$APP/Contents/Resources/bin/tiri"
 cp "$BIN_DIR/tiri-session" "$APP/Contents/Resources/bin/tiri-session"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 scripts/stamp-bundle.sh "$APP" "$APP/Contents/Info.plist"
+# Only a release looks for updates: one built from source is updated by building it again.
+if [ -n "${TIRI_UPDATE_FEED:-}" ]; then /usr/libexec/PlistBuddy -c "Add :TiriUpdateFeed string $TIRI_UPDATE_FEED" "$APP/Contents/Info.plist"; fi
 cp Resources/AppIcon.icns Resources/Assets.car "$APP/Contents/Resources/"
 cp -R Resources/textmate Resources/grammars Resources/language-servers "$APP/Contents/Resources/"
 cp -R Resources/remote "$APP/Contents/Resources/remote"
