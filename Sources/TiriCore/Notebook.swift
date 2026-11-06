@@ -70,8 +70,11 @@ public struct Notebook: Sendable, Equatable {
         let metadata = root["metadata"] as? [String: Any]
         let language = (metadata?["language_info"] as? [String: Any])?["name"] as? String
             ?? (metadata?["kernelspec"] as? [String: Any])?["language"] as? String
-        return Notebook(cells: cells.compactMap { ($0 as? [String: Any]).map(cell) }, language: language)
+        // What isn't an object still takes its place, so that a cell's number is its place in the file.
+        return Notebook(cells: cells.map { ($0 as? [String: Any]).map(cell) ?? placeholder }, language: language)
     }
+
+    private static let placeholder = Cell(kind: .raw, source: "", executionCount: nil, outputs: [], attachments: [:])
 
     private static func errorLine(_ error: Error) -> Int? {
         let text = (error as NSError).userInfo[NSDebugDescriptionErrorKey] as? String ?? ""
@@ -126,6 +129,12 @@ public struct Notebook: Sendable, Equatable {
             }
             // Sizes are per type, and retina images are drawn at half their pixels.
             let metadata = raw["metadata"] as? [String: Any] ?? [:]
+            // Where the kernel's runner left outputs out. It says so in words for other viewers too.
+            if let count = ((metadata["tiri"] as? [String: Any])?["left_out"] as? NSNumber)?.intValue {
+                let words = count == 1 ? String(localized: "Tiri left out 1 output here: there were too many to keep.")
+                    : String(localized: "Tiri left out \(count) outputs here: there were too many to keep.")
+                return .display(data: ["text/plain": words], width: nil, height: nil)
+            }
             var width: Int?
             var height: Int?
             for type in ["image/png", "image/jpeg", "image/svg+xml"] {

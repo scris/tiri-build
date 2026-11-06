@@ -221,11 +221,11 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
     private var editingBase: String?
     private var renderAfterEditing = false
     private var editAfterRender: Int?
-    private var outputGenerations: [Int: Int] = [:]
     /// What the page showing was rendered from, so selecting and going to a line don't read and parse the file again.
     private var renderedSource: RenderedMarkdownSource?
     private var goToRequest = 0
     private var crashes = CrashRecovery()
+    private let outputPieces = NotebookOutputPieces()
 
     var view: NSView { container }
 
@@ -2903,6 +2903,7 @@ extension MarkdownController {
         webView.evaluateJavaScript(NotebookPage.script, in: nil, in: .defaultClient) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
+                self.outputPieces.reset()
                 if let currentCell = self.currentCell, self.editAfterRender == nil { self.callPage("tiriNB.select(cell)", ["cell": currentCell]) }
                 self.kernelStatusChanged(self.kernel)
                 if let cell = self.editAfterRender {
@@ -3032,21 +3033,14 @@ extension MarkdownController {
         }
     }
 
-    func kernelOutput(index: Int, count: Int?, running: Bool, outputs: [Notebook.Output]) {
+    func kernelOutput(index: Int, count: Int?, running: Bool, outputs: [Notebook.Output], from: Int, run: Int?) {
         guard hasRenderedPageForKernel else { return }
         if shownCells.indices.contains(index) {
             shownCells[index].outputs = outputs
             shownCells[index].executionCount = running ? nil : count
         }
-        let generation = (outputGenerations[index] ?? 0) + 1
-        outputGenerations[index] = generation
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let extras = DocumentExtras(renderMath: { MathEngine.shared.markup(tex: $0, display: $1, document: UUID()) }, mathStylesheet: { MathEngine.stylesheet })
-            let html = NotebookRenderer.outputsHTML(outputs, extras: extras)
-            await MainActor.run {
-                guard let self, self.outputGenerations[index] == generation else { return }
-                self.callPage("tiriNB.outputs(cell, html, count)", ["cell": index, "html": html, "count": count as Any? ?? NSNull()])
-            }
+        outputPieces.show(index: index, outputs: outputs, from: from, run: run, count: count) { [weak self] code, arguments, done in
+            self?.webView.callNotebookPage(code, arguments, done: done)
         }
     }
 

@@ -10,19 +10,37 @@ private func shellQuoted(_ word: String) -> String { RemoteShell.arguments([word
 private nonisolated final class LineBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var pending = Data()
+    /// How much of `pending` is known to have no newline in it. A message of many megabytes arrives in many
+    /// reads, and looking through all of it again on each would take seconds.
+    private var scanned = 0
 
-    func reset() { lock.withLock { pending = Data() } }
+    func reset() { lock.withLock { pending = Data(); scanned = 0 } }
 
     func add(_ data: Data) -> [Data] {
         lock.withLock {
             pending.append(data)
-            guard pending.contains(10) else { return [] }
-            var result: [Data] = []
-            while let end = pending.firstIndex(of: 10) {
-                result.append(Data(pending[pending.startIndex..<end]))
-                pending.removeSubrange(pending.startIndex...end)
+            var ends: [Int] = []
+            pending.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+                guard let base = buffer.baseAddress else { return }
+                var from = scanned
+                while from < buffer.count, let found = memchr(base + from, 10, buffer.count - from) {
+                    let end = base.distance(to: UnsafeRawPointer(found))
+                    ends.append(end)
+                    from = end + 1
+                }
             }
-            pending = Data(pending)
+            guard let last = ends.last else {
+                scanned = pending.count
+                return []
+            }
+            var result: [Data] = []
+            var start = 0
+            for end in ends {
+                result.append(pending.subdata(in: (pending.startIndex + start)..<(pending.startIndex + end)))
+                start = end + 1
+            }
+            pending = pending.subdata(in: (pending.startIndex + last + 1)..<pending.endIndex)
+            scanned = pending.count
             return result
         }
     }
@@ -57,6 +75,7 @@ final class NotebookKernel {
     @ObservationIgnored private var wantsAttachment = false
     @ObservationIgnored private var retries = 0
     @ObservationIgnored private let lines = LineBuffer()
+    @ObservationIgnored private var liveOutputs = NotebookLiveOutputs()
 
     init(path: String, kernels: NotebookKernels) {
         self.path = path
@@ -99,7 +118,16 @@ final class NotebookKernel {
 
     func run(cells: [Int]) {
         guard !cells.isEmpty else { return }
-        send(["op": "run", "cells": .array(cells.map(JSONValue.int))])
+        var message: [String: JSONValue] = ["op": "run", "cells": .array(cells.map(JSONValue.int))]
+        // A place in the list goes stale while the kernel starts, if cells are added meanwhile. Which cell it
+        // was, by its id and its code as they are now, lets the kernel find it wherever it's gone.
+        if let notebook = (try? Data(contentsOf: URL(fileURLWithPath: path))).flatMap({ try? Notebook.parse($0) }) {
+            let asked = cells.map { notebook.cells.indices.contains($0) ? notebook.cells[$0] : nil }
+            message["ids"] = .array(asked.map { $0?.id.map(JSONValue.string) ?? .null })
+            message["sources"] = .array(asked.map { $0.map { .string($0.source) } ?? .null })
+            message["count"] = .int(notebook.cells.count)
+        }
+        send(message)
     }
 
     func runAll() { send(["op": "run", "all": true]) }
@@ -271,6 +299,7 @@ final class NotebookKernel {
         process.standardError = FileHandle.nullDevice
         let lines = self.lines
         lines.reset()
+        liveOutputs = NotebookLiveOutputs()
         fromProcess.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             for line in lines.add(data) {
@@ -309,6 +338,7 @@ final class NotebookKernel {
             state = .off
             running = nil
             queued = []
+            kernels.statusChanged(self)
             return
         }
         // Over SSH, this is usually only the connection. The kernel's still working.
@@ -335,10 +365,21 @@ final class NotebookKernel {
                 attach()
             } else {
                 wantsAttachment = false
-                state = .off
-                running = nil
-                queued = []
+                runnerWentAway()
             }
+        }
+    }
+
+    /// What was running it stopped without saying so, so the page mustn't go on showing a cell running.
+    private func runnerWentAway() {
+        let wasWorking = running != nil || !queued.isEmpty
+        state = .off
+        running = nil
+        queued = []
+        question = nil
+        kernels.statusChanged(self)
+        if wasWorking {
+            kernels.tell(path: path, String(localized: "The kernel stopped"), detail: String(localized: "Running a cell starts it again."))
         }
     }
 
@@ -361,13 +402,15 @@ final class NotebookKernel {
             kernels.statusChanged(self)
             asked(message["input"] as? [String: Any])
         case "output":
+            let delta = liveOutputs.received(message)
             kernels.output(self, index: (message["index"] as? NSNumber)?.intValue ?? -1,
                            count: (message["count"] as? NSNumber)?.intValue, running: message["running"] as? Bool ?? false,
-                           outputs: (message["outputs"] as? [[String: Any]] ?? []).compactMap(Notebook.output))
+                           outputs: delta.outputs, from: delta.from, run: delta.run)
         case "input":
             asked(message)
         case "problem":
-            kernels.tell(path: path, message["message"] as? String ?? String(localized: "The kernel had a problem"), detail: nil)
+            let words = NotebookRunnerWords(message)
+            kernels.tell(path: path, words.title ?? String(localized: "The kernel had a problem"), detail: words.detail)
         default:
             break
         }
@@ -418,9 +461,9 @@ final class NotebookKernels {
         for viewer in viewers.allObjects where viewer.path == kernel.path { viewer.kernelStatusChanged(kernel) }
     }
 
-    func output(_ kernel: NotebookKernel, index: Int, count: Int?, running: Bool, outputs: [Notebook.Output]) {
+    func output(_ kernel: NotebookKernel, index: Int, count: Int?, running: Bool, outputs: [Notebook.Output], from: Int, run: Int?) {
         for viewer in viewers.allObjects where viewer.path == kernel.path {
-            viewer.kernelOutput(index: index, count: count, running: running, outputs: outputs)
+            viewer.kernelOutput(index: index, count: count, running: running, outputs: outputs, from: from, run: run)
         }
     }
 
@@ -793,19 +836,36 @@ enum NotebookPage {
           queued.forEach((index) => mark(index, '[-]'));
           if (running !== null) mark(running, '[*]');
         },
-        outputs(index, html, count) {
+        // A running cell's outputs come in pieces: the first `keep` stay, and `html` goes after them.
+        // False when this page doesn't have them, and needs all of it.
+        outputs(index, html, count, keep) {
           const cell = cellAt(index);
-          if (!cell) return;
+          if (!cell) return true;
           const body = cell.querySelector('.nb-body');
           let place = body.querySelector(':scope > .nb-outputs');
+          keep = keep || 0;
+          const pieces = (place && place.tiriPieces) || [];
+          if (keep > pieces.length) return false;
+          if (place && keep > 0) {
+            const kept = pieces.slice(0, keep).reduce((sum, nodes) => sum + nodes, 0);
+            while (place.childNodes.length > kept) place.lastChild.remove();
+            place.tiriPieces = pieces.slice(0, keep);
+          } else if (place) {
+            place.replaceChildren();
+            place.tiriPieces = [];
+          }
           if (html) {
             if (!place) {
               place = document.createElement('div');
               place.className = 'nb-outputs';
+              place.tiriPieces = [];
               body.appendChild(place);
             }
-            place.setHTMLUnsafe(html);
-          } else if (place) {
+            const parsed = document.createElement('div');
+            parsed.setHTMLUnsafe(html);
+            place.tiriPieces.push(parsed.childNodes.length);
+            place.append(...parsed.childNodes);
+          } else if (place && !place.childNodes.length) {
             place.remove();
           }
           if (count !== null) {
@@ -815,6 +875,7 @@ enum NotebookPage {
               delete label.dataset.shown;
             }
           }
+          return true;
         },
       };
     })();

@@ -1669,3 +1669,23 @@
 "Showing the first %lld changes" = "只显示前 %lld 项更改";
 "Git is taking too long here" = "Git 在这里太慢了";
 "It took longer than 2 minutes." = "超过了 2 分钟。";
+
+/* Notebook kernels: what the app and the kernel's runner say */
+"The kernel stopped" = "内核已停止";
+"Running a cell starts it again." = "运行一个单元格即可重新启动它。";
+"Tiri left out 1 output here: there were too many to keep." = "Tiri 在这里略去了 1 个输出：输出太多，无法全部保留。";
+"Tiri left out %lld outputs here: there were too many to keep." = "Tiri 在这里略去了 %lld 个输出：输出太多，无法全部保留。";
+"Couldn't read this notebook: %@" = "无法读取此笔记本：%@";
+"Couldn't save this cell's output: %@" = "无法保存此单元格的输出：%@";
+"Something went wrong running this notebook: %@" = "运行此笔记本时出错：%@";
+"That cell isn't in the notebook any more, so it didn't run." = "该单元格已不在笔记本中，因此没有运行。";
+"That cell isn't in the notebook any more, so its output wasn't saved." = "该单元格已不在笔记本中，因此它的输出没有保存。";
+"That cell isn't in the notebook any more." = "该单元格已不在笔记本中。";
+"The kernel crashed in native code (%@)." = "内核在原生代码中崩溃（%@）。";
+"The kernel didn't restart: %@" = "内核没有重新启动：%@";
+"The kernel didn't start: %@" = "内核没有启动：%@";
+"The kernel exited with code %@." = "内核已退出，代码为 %@。";
+"The kernel exited." = "内核已退出。";
+"The kernel stopped." = "内核已停止。";
+"The kernel was killed, likely out of memory." = "内核被强制终止，可能是内存不足。";
+"The kernel was stopped by %@." = "内核被 %@ 停止。";

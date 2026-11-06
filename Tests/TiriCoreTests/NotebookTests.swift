@@ -59,9 +59,10 @@ private let stub = DocumentExtras(renderMath: { tex, display in
 
     @Test func oddCellsDontStopTheRest() throws {
         let notebook = try parse("{\"nbformat\":4,\"cells\":[1,{\"cell_type\":\"mystery\",\"source\":\"s\"},{\"cell_type\":\"code\",\"source\":5,\"outputs\":[7,{\"output_type\":\"new\"}]}]}")
-        #expect(notebook.cells.map(\.kind) == [.raw, .code])
-        #expect(notebook.cells[1].source == "")
-        #expect(notebook.cells[1].outputs.isEmpty)
+        // The 1 still counts, so that each cell's number is its place in the file.
+        #expect(notebook.cells.map(\.kind) == [.raw, .raw, .code])
+        #expect(notebook.cells[2].source == "")
+        #expect(notebook.cells[2].outputs.isEmpty)
     }
 
     @Test func acceptsNaNFromPython() throws {

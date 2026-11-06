@@ -1669,3 +1669,23 @@
 "Showing the first %lld changes" = "只顯示前 %lld 項變更";
 "Git is taking too long here" = "Git 在這裡太慢了";
 "It took longer than 2 minutes." = "超過了 2 分鐘。";
+
+/* Notebook kernels: what the app and the kernel's runner say */
+"The kernel stopped" = "核心已停止";
+"Running a cell starts it again." = "執行一個儲存格即可重新啟動它。";
+"Tiri left out 1 output here: there were too many to keep." = "Tiri 在這裡略去了 1 個輸出：輸出太多，無法全部保留。";
+"Tiri left out %lld outputs here: there were too many to keep." = "Tiri 在這裡略去了 %lld 個輸出：輸出太多，無法全部保留。";
+"Couldn't read this notebook: %@" = "無法讀取此筆記本：%@";
+"Couldn't save this cell's output: %@" = "無法儲存此儲存格的輸出：%@";
+"Something went wrong running this notebook: %@" = "執行此筆記本時出錯：%@";
+"That cell isn't in the notebook any more, so it didn't run." = "該儲存格已不在筆記本中，因此沒有執行。";
+"That cell isn't in the notebook any more, so its output wasn't saved." = "該儲存格已不在筆記本中，因此它的輸出沒有儲存。";
+"That cell isn't in the notebook any more." = "該儲存格已不在筆記本中。";
+"The kernel crashed in native code (%@)." = "核心在原生程式碼中當機（%@）。";
+"The kernel didn't restart: %@" = "核心沒有重新啟動：%@";
+"The kernel didn't start: %@" = "核心沒有啟動：%@";
+"The kernel exited with code %@." = "核心已結束，代碼為 %@。";
+"The kernel exited." = "核心已結束。";
+"The kernel stopped." = "核心已停止。";
+"The kernel was killed, likely out of memory." = "核心被強制終止，可能是記憶體不足。";
+"The kernel was stopped by %@." = "核心被 %@ 停止。";
