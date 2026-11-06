@@ -187,6 +187,8 @@ Agents often print paths that don't exist as written, like `/resume/index.html` 
 
 Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes a file while you're editing it, your text stays on screen and Tiri tells you, so nothing is overwritten without your choice. Editing a Peek turns it into a tab.
 
+A file that isn't UTF-8, like Latin-1, Windows 1252, GB 18030, Big 5 or Shift JIS, opens the way it was written, and saves the same way. Its encoding shows above it. Click that, or choose **Reopen with Encoding…**, to read it another way or **Save as UTF-8**.
+
 The keys are VS Code's:
 
 | | |

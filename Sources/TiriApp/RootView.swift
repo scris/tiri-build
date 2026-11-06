@@ -770,6 +770,17 @@ struct FileActions: View {
             .disabled(!FileManager.default.fileExists(atPath: path))
             .help("Show the file itself")
         }
+        if case .file = item.content, let text = model.controller(for: item.id) as? TextController, text.encoding != .utf8 {
+            Button {
+                model.chooseEncoding(for: item.id)
+            } label: {
+                Text(TextEncodings.name(of: text.encoding))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .font(.caption)
+            .help("This file isn't UTF-8. Click to read it another way, or save it as UTF-8")
+        }
         if case .file = item.content, model.hasChanges(path) {
             Button {
                 model.toggleChangesForFront()
