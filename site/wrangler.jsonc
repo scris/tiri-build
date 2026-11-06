@@ -1,0 +1,18 @@
+// tiri.build: a static site served as a Cloudflare Worker with static assets.
+// Deploy from this folder with: npx wrangler deploy
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "tiri-site",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "routes": [
+    { "pattern": "tiri.build", "custom_domain": true },
+    { "pattern": "www.tiri.build", "custom_domain": true }
+  ],
+  "workers_dev": false,
+  "preview_urls": false
+}
