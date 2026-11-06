@@ -152,6 +152,7 @@ extension AppModel {
             AppCommand(id: "newPlugin", title: "New Plugin…", category: "Settings") { $0.promptForNewPlugin() },
             AppCommand(id: "changeTiri", title: "Change Tiri…", category: "Settings") { $0.yourTiri.beginChange(surface: nil) },
             AppCommand(id: "reportProblem", title: "Report a Problem…", category: "Help") { $0.reportProblem() },
+            AppCommand(id: "checkForUpdates", title: "Check for Updates…", category: "Help") { $0.yourTiri.checkForUpdatesNow() },
             AppCommand(id: "showYourTiri", title: "Your Tiri", category: "Settings") { $0.openSettings(pane: .yourTiri) },
             AppCommand(id: "managePlugins", title: "Plugins…", category: "Settings") { $0.openPluginSettings() },
             AppCommand(id: "importPlugin", title: "Import Plugin…", category: "Settings") {

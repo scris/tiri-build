@@ -112,6 +112,7 @@ struct TiriMenus: Commands {
         // App menu: About with credits (who made it, the website, the source).
         CommandGroup(replacing: .appInfo) {
             Button("About \(AboutPanel.appName)") { AboutPanel.show() }
+            item("checkForUpdates")
         }
         CommandGroup(replacing: .appSettings) {
             item("openSettings")

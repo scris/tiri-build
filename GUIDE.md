@@ -453,6 +453,10 @@ tiri theme dark
 
 `tiri --help` lists every command, and `tiri --skill` prints a guide written for agents. Terminals inside Tiri have `TIRI_SOCKET`, `TIRI_WORKSPACE` and `TIRI_ITEM_ID` set.
 
+### Updates
+
+A downloaded Tiri looks for a newer one every 6 hours while your Mac is plugged in and you're away from it, and offers **Update** in the bottom bar. **Tiri → Check for Updates…** looks right away. Updating keeps your terminals and agents running. A copy you built from source doesn't look; pull and build it instead.
+
 ### Reporting a problem
 
 **Help → Report a Problem…** opens a new issue on GitHub, filled in with Tiri's version, macOS and Mac, the agents you use, how many of your own changes are on, and where Tiri last crashed in the past week, if it did. Only the crash's error and its top frames go in, not the file's identifiers or paths. Nothing is sent until you send it on GitHub, where you can edit all of it. After a crash, the next launch offers **Report** once. Agents can use `tiri report`, which prints the same issue, and `--open` shows it to you.

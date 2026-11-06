@@ -831,9 +831,39 @@ struct ChangeMark {
         NSApp.terminate(nil)
     }
 
+    /// The feed named in a release. A build from source has none, and a test copy can be given one.
+    static var updateFeed: String? {
+        if AppModel.isTestCopy, let feed = ProcessInfo.processInfo.environment["TIRI_UPDATE_FEED"], !feed.isEmpty { return feed }
+        guard let feed = Bundle.main.object(forInfoDictionaryKey: "TiriUpdateFeed") as? String, !feed.isEmpty else { return nil }
+        return feed
+    }
+
+    /// Check for Updates…: now, whatever the power or the hour, and it says what it found.
+    func checkForUpdatesNow() {
+        guard let feed = Self.updateFeed else {
+            model?.showToast(title: "This copy doesn't look for updates", detail: "It was built from source. Pull and build to update it.", symbol: "arrow.down.circle", tint: .secondary)
+            return
+        }
+        let tiri = Bundle.main.resourceURL?.appendingPathComponent("bin/tiri").path ?? "tiri"
+        let checking = model?.showToast(title: "Looking for a newer Tiri…", detail: nil, symbol: "arrow.down.circle", tint: .secondary, duration: 60)
+        Task { [weak self] in
+            let result = await Task.detached { Tool.run(tiri, ["update", "check", "--feed", feed]) }.value
+            guard let self, let model = self.model else { return }
+            if let checking { model.dismissToast(checking) }
+            self.refresh()
+            let said = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !result.ok {
+                model.showToast(title: "Couldn't look for updates", detail: said.isEmpty ? nil : said, symbol: "exclamationmark.triangle", tint: .orange, duration: 10)
+            } else if self.update == nil {
+                model.showToast(title: "You have the newest Tiri", detail: "Tiri \(Self.version)", symbol: "checkmark.circle", tint: .secondary)
+            }
+            // Otherwise the bottom bar now offers it, as it does after a look of its own.
+        }
+    }
+
     /// Only with a feed named in the app, and only when this Mac is plugged in and nobody's using it.
     private func watchForUpdates() {
-        guard let feed = Bundle.main.object(forInfoDictionaryKey: "TiriUpdateFeed") as? String, !feed.isEmpty else { return }
+        guard let feed = Self.updateFeed else { return }
         let tiri = Bundle.main.resourceURL?.appendingPathComponent("bin/tiri").path ?? "tiri"
         let look: @Sendable () -> Void = {
             Task { @MainActor [weak self] in
