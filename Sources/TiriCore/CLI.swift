@@ -537,8 +537,53 @@ public enum CLIParser {
             return .printText(example)
 
         case "theme":
-            guard args.count == 1, ThemeMode(rawValue: args[0]) != nil else { throw UsageError("usage: tiri theme light|dark|system") }
-            return request("theme", ["mode": .string(args[0])])
+            let usage = [
+                "usage: tiri theme                      (the theme showing now, and its colors)",
+                "       tiri theme light|dark|system",
+                "       tiri theme list [--available]   (yours and Tiri's, or ones this Mac's other apps have)",
+                "       tiri theme use <name> [--for dark|light|high-contrast-dark|high-contrast-light]",
+                "       tiri theme import <file or available name> [--use]",
+                "       tiri theme set <color> <#hex> [<color> <#hex> ...]   (on the theme showing now; accent takes a Mac accent name)",
+                "       tiri theme delete <name>",
+            ].joined(separator: "\n")
+            guard let sub = args.first else { return request("theme.show") }
+            if ThemeMode(rawValue: sub) != nil, args.count == 1 { return request("theme", ["mode": .string(sub)]) }
+            var options = Options(Array(args.dropFirst()))
+            switch sub {
+            case "show":
+                try options.finish()
+                return request("theme.show")
+            case "list":
+                let available = options.flag("--available")
+                try options.finish()
+                return request("theme.list", ["available": .bool(available)])
+            case "use":
+                let slot = try options.value("--for")
+                guard let name = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                var payload: [String: JSONValue] = ["name": .string(name)]
+                if let slot { payload["for"] = .string(slot) }
+                return request("theme.use", payload)
+            case "import":
+                let use = options.flag("--use")
+                guard let target = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                let path = absolute(target, environment)
+                let isFile = FileManager.default.fileExists(atPath: path)
+                return request("theme.import", [isFile ? "path" : "name": .string(isFile ? path : target), "use": .bool(use)])
+            case "set":
+                let pairs = Array(args.dropFirst())
+                guard !pairs.isEmpty, pairs.count % 2 == 0 else { throw UsageError(usage) }
+                var colors: [String: JSONValue] = [:]
+                for index in stride(from: 0, to: pairs.count, by: 2) { colors[pairs[index]] = .string(pairs[index + 1]) }
+                return request("theme.set", ["colors": .object(colors)])
+            case "delete":
+                guard let name = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                return request("theme.delete", ["name": .string(name)])
+            default:
+                throw UsageError(usage)
+            }
 
         case "web-dark":
             guard let mode = args.first, mode == "on" || mode == "off", args.count <= 2 else {
@@ -1140,6 +1185,12 @@ public enum AgentGuide {
 
     ```sh
     tiri theme dark                       # light, dark or system
+    tiri theme                            # the theme showing now and every color it has
+    tiri theme list --available           # themes Cursor, VS Code and Ghostty on this Mac already have
+    tiri theme import "Monokai" --use     # bring one in by name, or from a Ghostty, .itermcolors or VS Code .json file
+    tiri theme set terminal.background '#101014' editor.comment '#7f848e'   # change colors of the theme showing now
+    tiri theme set accent pink            # the color of selections and switches: mac, or blue, purple, pink, red, orange, yellow, green, graphite
+    tiri theme use "Tiri Pink Light" --for light
     tiri web-dark on [<item-id>]          # force dark on a web preview, PDF or Office file
     ```
 

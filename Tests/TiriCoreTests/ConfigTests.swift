@@ -366,8 +366,9 @@ import Testing
             let groups = SettingsSchema.groups(in: pane)
             #expect(groups.dropFirst().allSatisfy { !$0.name.isEmpty }, "\(pane)")
         }
-        // Two lists elsewhere on the screen, and no row of their own.
-        #expect(Set(SettingsSchema.all.filter(\.shownElsewhere).map(\.key)) == ["terminal.presets", "terminal.resume"])
+        // Two lists elsewhere on the screen, and three themes the Theme row shows: no rows of their own.
+        #expect(Set(SettingsSchema.all.filter(\.shownElsewhere).map(\.key))
+                == ["terminal.presets", "terminal.resume", "theme.light", "theme.highContrastDark", "theme.highContrastLight"])
     }
 
     /// One line under each title. Anything longer belongs in its note.
@@ -510,21 +511,24 @@ import Testing
         #expect(settings.filesExclude == ["dist", "*.log"])
     }
 
-    @Test func colorTheme() throws {
-        #expect(TiriSettings().colorTheme == .system)
-        #expect(ColorTheme.system.accent == nil)
-        #expect(ColorTheme.pink.accent?.number == 6)
-        #expect(try TiriSettings.parse(#"{ "colorTheme": "pink" }"#).colorTheme == .pink)
-        #expect(try TiriSettings.parse(SettingsFile.setting("colorTheme", to: "pink", in: TiriSettings.defaultFileContents)).colorTheme == .pink)
-        #expect(try SettingsSchema.value(from: "pink", for: "colorTheme") == .string("pink"))
-        #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "teal", for: "colorTheme") }
+    @Test func themeSlots() throws {
+        let defaults = TiriSettings()
+        #expect(defaults.themeName(for: .dark) == "Tiri Dark")
+        #expect(defaults.themeName(for: .highContrastLight) == "Tiri High Contrast Light")
+        // Before themes, pink was its own setting: it becomes Tiri's pink themes.
+        let old = try TiriSettings.parse(#"{ "colorTheme": "pink" }"#)
+        #expect(old.darkTheme == "Tiri Pink Dark" && old.lightTheme == "Tiri Pink Light")
+        #expect(try TiriSettings.parse(#"{ "colorTheme": "pink", "theme.dark": "Dracula" }"#).darkTheme == "Dracula")
+        #expect(try TiriSettings.parse(SettingsFile.setting("theme.light", to: "Solarized Light", in: TiriSettings.defaultFileContents)).lightTheme == "Solarized Light")
+        #expect(try SettingsSchema.value(from: "Nord", for: "theme.dark") == .string("Nord"))
+        #expect(ThemeAccent.pink.system.number == 6)
     }
 
     @Test(arguments: [
         #"{ "theme": "dark""#,
         #"{ "theme": "chartreuse" }"#,
         #"{ "theme": 3 }"#,
-        #"{ "colorTheme": "teal" }"#,
+        #"{ "theme.dark": 3 }"#,
         #"{ "terminal.fontSize": "big" }"#,
         #"{ "explorer.autoReveal": 1 }"#,
         #"[1,2]"#,

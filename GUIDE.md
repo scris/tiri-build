@@ -225,6 +225,21 @@ Choose Dark in Settings, or leave it on System while your Mac is dark, and every
 
 PDF, Office, iWork, RTF, font and web archive previews have no dark mode, so Tiri shows their pages inverted with colors kept. The moon button above a file shows its true colors, and Tiri remembers that for the item. To keep all documents in true colors, turn off **Darken documents** in Settings. Black artwork on a transparent PNG or SVG gets a light plate behind it.
 
+### Themes
+
+A theme colors terminals, the editor and highlights (selections, switches, tabs). Like VS Code, you pick one for dark and one for light in **Settings → General**, and two more under **High Contrast** for when Increase Contrast is on. Tiri has its own: **Tiri Dark** and **Tiri Light** use your Mac's accent, **Tiri Pink Dark** and **Tiri Pink Light** always use Tiri's pink.
+
+**Bring a Theme…** lists the themes Cursor, VS Code and Ghostty already have on your Mac, so most are one click, or takes a Ghostty theme, an iTerm2 `.itermcolors` file or a VS Code theme `.json`. A terminal theme gives the editor its colors from its palette, and an editor theme without terminal colors gets Tiri's. **Colors** shows every color of the theme showing now to change. Changing one of Tiri's makes your own copy. Or ask your agent: it uses `tiri theme`.
+
+```sh
+tiri theme list --available
+tiri theme import "Solarized Light" --use
+tiri theme set terminal.background '#101014' editor.comment '#9a9aa2'
+tiri theme set accent purple
+```
+
+Themes are JSON files in `~/.config/tiri/themes`.
+
 ---
 
 ## Code intelligence
@@ -449,6 +464,7 @@ tiri notify needs-input --message "Which database?"
 tiri review add src/app.ts:12-20 "This doesn't handle an empty list"
 tiri review send --to <item-id>
 tiri theme dark
+tiri theme import Monokai --use
 ```
 
 `tiri --help` lists every command, and `tiri --skill` prints a guide written for agents. Terminals inside Tiri have `TIRI_SOCKET`, `TIRI_WORKSPACE` and `TIRI_ITEM_ID` set.

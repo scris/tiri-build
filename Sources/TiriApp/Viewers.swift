@@ -890,9 +890,11 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         text.textContainerInset = NSSize(width: 6, height: 8)
         text.layoutManager?.allowsNonContiguousLayout = true
         text.drawsBackground = true
-        text.backgroundColor = .textBackgroundColor
+        text.backgroundColor = ThemePalette.editorBackground
+        text.textColor = ThemePalette.editorForeground
+        text.insertionPointColor = ThemePalette.editorCursor
         scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
+        scrollView.backgroundColor = ThemePalette.editorBackground
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         ruler.attach(to: scrollView, textView: text)
@@ -1005,11 +1007,18 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         }
     }
 
+    private static let systemSelection = NSTextView().selectedTextAttributes
+
     func applySettings() {
         let settings = model.settings
         textView.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSizeZoomed))
         ruler.font = TerminalTheme.font(family: settings.codeFontFamily, size: CGFloat(settings.codeFontSizeZoomed) - 1)
         applyWrap()
+        // The theme's colors are looked up as they're drawn: a new one only needs drawing again. Only a theme's own
+        // selection replaces the system's, which also knows to dim when the window isn't in front.
+        textView.selectedTextAttributes = ThemePalette.current == nil ? Self.systemSelection : [.backgroundColor: ThemePalette.editorSelection]
+        textView.needsDisplay = true
+        textView.enclosingScrollView?.needsDisplay = true
         ruler.needsDisplay = true
     }
 
@@ -1593,7 +1602,7 @@ final class LineGutter: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.textBackgroundColor.setFill()
+        ThemePalette.editorBackground.setFill()
         dirtyRect.fill()
         guard let text = textView, let layout = text.layoutManager, let container = text.textContainer else { return }
         let length = (text.string as NSString).length
@@ -1618,7 +1627,7 @@ final class LineGutter: NSView {
             }
             if line.isEmpty, length == 0 { line = NSRect(x: 0, y: 0, width: 0, height: font.pointSize + 4) }
             let y = text.convert(NSPoint(x: 0, y: line.minY + text.textContainerInset.height), to: self).y
-            let color: NSColor = index + 1 == selectedLine ? .secondaryLabelColor : .tertiaryLabelColor
+            let color: NSColor = index + 1 == selectedLine ? ThemePalette.currentLineNumber : ThemePalette.lineNumber
             let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
             let label = "\(index + 1)" as NSString
             let size = label.size(withAttributes: attributes)

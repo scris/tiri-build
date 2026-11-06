@@ -79,7 +79,7 @@ final class CodeTextView: NSTextView {
         super.drawBackground(in: rect)
         drawExtraSelections(in: rect)
         guard selectedRange().length == 0, let found = caretLineRect, found.intersects(rect) else { return }
-        NSColor.labelColor.withAlphaComponent(0.055).setFill()
+        ThemePalette.currentLine.setFill()
         found.fill(using: .sourceOver)
     }
 

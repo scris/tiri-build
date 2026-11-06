@@ -109,6 +109,13 @@ final class AppModel {
     var toasts: [AppToast] = []
     /// What a test copy would have opened in a browser, instead of opening it.
     @ObservationIgnored var sentToBrowser: [String] = []
+    /// Themes someone brought in or made, from the themes folder. The built-in ones are `Theme.builtIns`.
+    var userThemes: [Theme] = []
+    /// The theme showing now, for the look it's for.
+    var activeTheme: Theme = .tiriDark
+    var activeThemeSlot: ThemeSlot = .dark
+    /// Increase Contrast, from Accessibility settings.
+    var increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
     var find: FindState?
     var tabDrag: TabDragState?
     var palette: PaletteModel?
@@ -2862,6 +2869,11 @@ final class AppModel {
         setShortcut(command, key: key, announcing: false)
     }
 
+    /// Every open item takes the settings again: after a theme or a look changes, which don't show in `settings`.
+    func reapplyControllerSettings() {
+        for controller in controllers.values { controller.applySettings() }
+    }
+
     private func applySettings() {
         let previous = settings
         settings = settingsStore.settings
@@ -2896,6 +2908,7 @@ final class AppModel {
         case .light: NSApp?.appearance = NSAppearance(named: .aqua)
         case .dark: NSApp?.appearance = NSAppearance(named: .darkAqua)
         }
+        resolveTheme()
         applyColorTheme()
     }
 
@@ -2905,7 +2918,7 @@ final class AppModel {
     /// the accent changes, which every app hears and answers by redrawing, so it's sent only on a change.
     private func applyColorTheme() {
         guard let domain = Bundle.main.bundleIdentifier else { return }
-        let wanted = settings.colorTheme.accent ?? Self.testCopyMacAccent
+        let wanted = activeTheme.accent?.system ?? Self.testCopyMacAccent
         let stored = UserDefaults.standard.persistentDomain(forName: domain) ?? [:]
         guard stored["AppleAccentColor"] as? Int != wanted?.number || stored["AppleHighlightColor"] as? String != wanted?.highlight else { return }
         if let wanted {
@@ -2951,6 +2964,21 @@ final class AppModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.systemAppearanceRevision += 1
+                // Dark and light can each have their own theme, accent included.
+                self.resolveTheme()
+                self.applyColorTheme()
+                for controller in self.controllers.values { controller.applySettings() }
+            }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let now = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+                guard now != self.increaseContrast else { return }
+                self.increaseContrast = now
+                self.resolveTheme()
+                self.applyColorTheme()
                 for controller in self.controllers.values { controller.applySettings() }
             }
         }

@@ -182,10 +182,11 @@ struct SettingsNavigationColumn: View {
             .scrollIndicators(.never)
             Spacer(minLength: 12)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Your AI can explain or change any of this.")
+                Text("Your AI can change any of this.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                 AskAgentMenu()
             }
         }
@@ -652,7 +653,7 @@ struct SettingRow: View {
     private var isWide: Bool {
         switch definition.kind {
         case .list, .presets, .commandMap: true
-        default: false
+        default: definition.key == ThemeSlot.dark.settingKey
         }
     }
 
@@ -792,8 +793,6 @@ struct SettingRow: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .accessibilityLabel(definition.title)
-        case .choice(let options) where definition.key == "colorTheme":
-            ColorThemePicker(options: options, selection: value.stringValue ?? "") { set(.string($0)) }
         case .choice(let options):
             let picker = Picker("", selection: Binding(get: { value.stringValue ?? "" }, set: { set(.string($0)) })) {
                 ForEach(options, id: \.self) { Text($0.label).tag($0.value) }
@@ -814,6 +813,8 @@ struct SettingRow: View {
         case .font:
             FontPicker(selection: value.stringValue ?? "") { set(.string($0)) }
                 .accessibilityLabel(definition.title)
+        case .text where definition.key == ThemeSlot.dark.settingKey:
+            ThemeSettings()
         case .text(let placeholder):
             CommitField(placeholder: placeholder, text: value.stringValue ?? "") { set(.string($0)) }
                 .frame(maxWidth: rowsStack ? .infinity : 220)
@@ -877,55 +878,6 @@ struct NumberControl: View {
 }
 
 /// Monospaced fonts installed on this Mac, plus whatever's already chosen.
-/// The colors themselves, the way macOS shows its accent colors: a wheel for whatever your Mac
-/// uses, and Tiri's pink.
-struct ColorThemePicker: View {
-    let options: [SettingDefinition.Option]
-    let selection: String
-    let choose: (String) -> Void
-
-    /// The Mac's pink accent, which is the pink of the icon.
-    static let pink = Color(.sRGB, red: 0.969, green: 0.310, blue: 0.620)
-    private static let wheel = AngularGradient(colors: [.red, .orange, .yellow, .green, .blue, .purple, pink, .red], center: .center)
-
-    var body: some View {
-        HStack(spacing: 12) {
-            ForEach(options, id: \.self) { option in
-                let chosen = option.value == selection
-                Button {
-                    choose(option.value)
-                } label: {
-                    VStack(spacing: 3) {
-                        swatch(option.value)
-                            .frame(width: 16, height: 16)
-                            .overlay { Circle().strokeBorder(.black.opacity(0.12), lineWidth: 0.5) }
-                            .overlay { if chosen { Circle().fill(.white).frame(width: 6, height: 6) } }
-                            .padding(3)
-                            .overlay { Circle().strokeBorder(chosen ? Color.primary.opacity(0.45) : .clear, lineWidth: 1.5) }
-                        Text(option.label)
-                            .font(.caption2)
-                            .foregroundStyle(chosen ? .primary : .secondary)
-                            .fixedSize()
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(option.label)
-                .accessibilityAddTraits(chosen ? .isSelected : [])
-            }
-        }
-        .fixedSize()
-    }
-
-    @ViewBuilder private func swatch(_ value: String) -> some View {
-        if value == ColorTheme.pink.rawValue {
-            Circle().fill(Self.pink)
-        } else {
-            Circle().fill(Self.wheel)
-        }
-    }
-}
-
 struct FontPicker: View {
     let selection: String
     let commit: (String) -> Void

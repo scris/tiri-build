@@ -4,20 +4,6 @@ public enum ThemeMode: String, Codable, Sendable, CaseIterable {
     case system, light, dark
 }
 
-/// The color Tiri marks things with: the Mac's accent color, or always the pink of its icon.
-public enum ColorTheme: String, Codable, Sendable, CaseIterable {
-    case system, pink
-
-    /// The Mac's own accent and text highlight it stands for, as `AppleAccentColor` and
-    /// `AppleHighlightColor` store them. None follows the Mac.
-    public var accent: (number: Int, highlight: String)? {
-        switch self {
-        case .system: nil
-        case .pink: (6, "1.000000 0.749020 0.823529 Pink")
-        }
-    }
-}
-
 /// What cmd-clicking a file in a terminal does.
 public enum LinkOpenTarget: String, Codable, Sendable {
     case peek, tab, external
@@ -59,7 +45,29 @@ public enum WordWrap: String, Codable, Sendable, CaseIterable {
 /// so a newer settings file can't break an older app.
 public struct TiriSettings: Equatable, Sendable {
     public var theme: ThemeMode = .system
-    public var colorTheme: ColorTheme = .system
+    /// The themes for each look, by name: built in, or one in the themes folder.
+    public var darkTheme = Theme.tiriDark.name
+    public var lightTheme = Theme.tiriLight.name
+    public var highContrastDarkTheme = Theme.tiriHighContrastDark.name
+    public var highContrastLightTheme = Theme.tiriHighContrastLight.name
+
+    public mutating func setThemeName(_ name: String, for slot: ThemeSlot) {
+        switch slot {
+        case .dark: darkTheme = name
+        case .light: lightTheme = name
+        case .highContrastDark: highContrastDarkTheme = name
+        case .highContrastLight: highContrastLightTheme = name
+        }
+    }
+
+    public func themeName(for slot: ThemeSlot) -> String {
+        switch slot {
+        case .dark: darkTheme
+        case .light: lightTheme
+        case .highContrastDark: highContrastDarkTheme
+        case .highContrastLight: highContrastLightTheme
+        }
+    }
     public var terminalFontFamily = "SF Mono"
     public var terminalFontSize = 13.0
     public var terminalTranslucent = false
@@ -107,8 +115,11 @@ public struct TiriSettings: Equatable, Sendable {
       // Tiri settings. Saved changes apply immediately.
       // "system", "light" or "dark"
       "theme": "system",
-      // "system" uses your Mac's accent color, "pink" always uses Tiri's.
-      "colorTheme": "system",
+      // Colors for terminals, the editor and highlights, by look. `tiri theme` lists them and brings more in.
+      "theme.dark": "Tiri Dark",
+      "theme.light": "Tiri Light",
+      "theme.highContrastDark": "Tiri High Contrast Dark",
+      "theme.highContrastLight": "Tiri High Contrast Light",
 
       "terminal.fontFamily": "SF Mono",
       "terminal.fontSize": 13,
@@ -232,13 +243,15 @@ public struct TiriSettings: Equatable, Sendable {
             }
             settings.theme = theme
         }
-        try string("colorTheme") { _ in }
-        if let raw = object["colorTheme"] as? String {
-            guard let colorTheme = ColorTheme(rawValue: raw) else {
-                throw ParseError.wrongType(key: "colorTheme", expected: "\"system\" or \"pink\"")
-            }
-            settings.colorTheme = colorTheme
+        // Before themes, "colorTheme": "pink" meant Tiri's pink in place of the Mac's accent.
+        if object["colorTheme"] as? String == "pink" {
+            settings.darkTheme = Theme.tiriPinkDark.name
+            settings.lightTheme = Theme.tiriPinkLight.name
         }
+        try string("theme.dark") { if !$0.isEmpty { settings.darkTheme = $0 } }
+        try string("theme.light") { if !$0.isEmpty { settings.lightTheme = $0 } }
+        try string("theme.highContrastDark") { if !$0.isEmpty { settings.highContrastDarkTheme = $0 } }
+        try string("theme.highContrastLight") { if !$0.isEmpty { settings.highContrastLightTheme = $0 } }
         try string("terminal.fontFamily") { settings.terminalFontFamily = $0 }
         try number("terminal.fontSize") { settings.terminalFontSize = min(max($0, 6), 72) }
         try bool("terminal.translucent") { settings.terminalTranslucent = $0 }

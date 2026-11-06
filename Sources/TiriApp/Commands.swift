@@ -1034,6 +1034,9 @@ enum ControlHandler {
             if let problem { throw ControlFailure(problem) }
             return .object(["command": .string(command), "key": .string(model.shortcutSymbol(for: command) ?? "")])
 
+        case "theme.show", "theme.list", "theme.use", "theme.import", "theme.set", "theme.delete":
+            return try model.handleThemeRequest(request.cmd, request.args)
+
         case "theme":
             guard let mode = request.args["mode"]?.stringValue.flatMap(ThemeMode.init(rawValue:)) else {
                 throw ControlFailure("Theme must be light, dark or system")

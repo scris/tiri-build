@@ -1766,6 +1766,15 @@ enum TerminalTheme {
     static let translucentOpacity: CGFloat = 0.72
 
     static func apply(to view: TerminalView, dark: Bool, translucent: Bool) {
+        if let theme = ThemePalette.current {
+            view.nativeBackgroundColor = ThemePalette.color(theme.terminal.background)
+            view.nativeForegroundColor = ThemePalette.color(theme.terminal.foreground)
+            view.caretColor = ThemePalette.color(theme.terminal.cursor)
+            view.selectedTextBackgroundColor = ThemePalette.color(theme.terminal.selection)
+            view.backgroundOpacity = translucent ? 0 : 1
+            view.installColors(theme.terminal.ansi.map(ThemePalette.terminalColor))
+            return
+        }
         view.nativeBackgroundColor = dark ? background(dark: true) : background(dark: false)
         view.nativeForegroundColor = dark ? NSColor(srgbRed: 0.90, green: 0.90, blue: 0.92, alpha: 1)
                                           : NSColor(srgbRed: 0.11, green: 0.11, blue: 0.12, alpha: 1)
@@ -1777,7 +1786,8 @@ enum TerminalTheme {
     }
 
     static func background(dark: Bool) -> NSColor {
-        dark ? NSColor(srgbRed: 0.11, green: 0.11, blue: 0.118, alpha: 1) : .white
+        if let theme = ThemePalette.current { return ThemePalette.color(theme.terminal.background) }
+        return dark ? NSColor(srgbRed: 0.11, green: 0.11, blue: 0.118, alpha: 1) : .white
     }
 
     private static func color(_ hex: UInt32) -> SwiftTerm.Color {

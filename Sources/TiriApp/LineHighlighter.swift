@@ -3,25 +3,8 @@ import TiriCore
 import TiriHighlight
 
 extension TokenKind {
-    private static func dynamic(light: (CGFloat, CGFloat, CGFloat), dark: (CGFloat, CGFloat, CGFloat)) -> NSColor {
-        NSColor(name: nil) { appearance in
-            let (red, green, blue) = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
-            return NSColor(srgbRed: red, green: green, blue: blue, alpha: 1)
-        }
-    }
-
-    private static let palette: [NSColor] = [
-        .labelColor,
-        .secondaryLabelColor,
-        dynamic(light: (0.09, 0.48, 0.2), dark: (0.45, 0.83, 0.56)),
-        dynamic(light: (0.6, 0.4, 0), dark: (0.9, 0.75, 0.48)),
-        dynamic(light: (0.53, 0.2, 0.68), dark: (0.78, 0.57, 0.92)),
-        dynamic(light: (0.1, 0.34, 0.75), dark: (0.51, 0.71, 0.98)),
-        dynamic(light: (0.03, 0.44, 0.47), dark: (0.42, 0.82, 0.82)),
-        dynamic(light: (0.65, 0.27, 0.07), dark: (0.93, 0.62, 0.47)),
-    ]
-
-    var color: NSColor { Self.palette[Int(rawValue)] }
+    /// The theme's color for this kind of code, looked up again each time it's drawn.
+    var color: NSColor { ThemePalette.tokens[Int(rawValue)] }
 }
 
 /// Keeps one text view's colors. It tells the engine about each edit, stores what comes back line
