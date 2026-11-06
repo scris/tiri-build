@@ -1010,7 +1010,7 @@ final class DiffGutter: NSView {
         dirtyRect.intersection(bounds).fill()
         guard let pane else { return }
         let text = pane.textView
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.tertiaryLabelColor]
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.faintLabel]
         markerHits = []
         for row in pane.visibleRows(in: text.visibleRect) {
             let y = text.convert(NSPoint(x: 0, y: pane.y(ofRow: row)), to: self).y
@@ -1385,6 +1385,7 @@ struct CommitRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { model.setChangesScope(.commit(commit)) }
+        .accessibleRow(commit.subject, value: detail) { model.setChangesScope(.commit(commit)) }
         .help(commit.subject + "\n" + commit.author)
         .contextMenu {
             Button("Copy Hash") { Clipboard.copy(commit.oid) }
@@ -1458,15 +1459,16 @@ struct ChangeRow: View {
         }
         .padding(.horizontal, 7)
         .frame(height: 24)
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? Color.primary.opacity(0.1) : (hovering ? Color.primary.opacity(0.05) : .clear))
-        }
+        .currentMark(isActive, hovering: hovering, cornerRadius: 6)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         // One click previews, like the explorer. A second keeps it.
         .onTapGesture { model.openDiff(spec, preview: true) }
         .simultaneousGesture(TapGesture(count: 2).onEnded { model.openDiff(spec, preview: false) })
+        // The letter's color is the only sign of what happened to it, so it's said in words.
+        .accessibleRow(name, value: [statusHelp, detail].filter { !$0.isEmpty }.joined(separator: ", "), selected: isActive) {
+            model.openDiff(spec, preview: false)
+        }
         .contextMenu {
             Button("Open Changes") { model.openDiff(spec, preview: false) }
             if change.status != .deleted {

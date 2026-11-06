@@ -188,7 +188,7 @@ struct AgentRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Button {
-                    withAnimation(.smooth(duration: 0.15)) {
+                    withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.15))) {
                         model.settingsUI.expandedAgent = expanded ? nil : entry.id
                     }
                 } label: {
@@ -199,7 +199,7 @@ struct AgentRow: View {
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                             .frame(width: 12)
                         Image(systemName: entry.profile?.symbol ?? "terminal")
-                            .foregroundStyle(entry.isEnabled ? .secondary : .tertiary)
+                            .foregroundStyle(entry.isEnabled ? .secondary : .faint)
                             .frame(width: 18)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(entry.name)
@@ -221,6 +221,7 @@ struct AgentRow: View {
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                    .accessibilityLabel(entry.name)
                     .help(entry.isEnabled ? "Turn \(entry.name) off" : "Turn \(entry.name) on")
                     .accessibilityLabel("Use \(entry.name)")
             }

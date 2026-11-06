@@ -38,7 +38,7 @@ struct TerminalStatusIcon: View {
         case .working:
             Image(systemName: "circle.dotted.circle")
                 .foregroundStyle(Color.accentColor)
-                .symbolEffect(.rotate, options: .repeat(.continuous))
+                .symbolEffect(.rotate, options: .repeat(.continuous), isActive: !AccessibilityDisplay.shared.reduceMotion)
                 .help("Working")
         case .needsInput:
             Image(systemName: "exclamationmark.circle.fill")
@@ -80,12 +80,14 @@ struct TabBar: View {
                 .padding(.vertical, 3)
             }
             .onChange(of: group.active) { _, new in
-                if let new { withAnimation(.smooth(duration: 0.15)) { proxy.scrollTo(new) } }
+                if let new { withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.15))) { proxy.scrollTo(new) } }
             }
         }
         .frame(height: 34)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
+        .tiriBar()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Tabs")
         .overlay(alignment: .bottom) { Divider() }
         .contentShape(Rectangle())
         .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
@@ -157,10 +159,7 @@ struct TabView: View {
         .padding(.leading, 9)
         .padding(.trailing, 6)
         .frame(height: 26)
-        .background {
-            RoundedRectangle(cornerRadius: 7)
-                .fill(backgroundFill)
-        }
+        .currentMark(isActive, hovering: hovering, cornerRadius: 7, strength: 0.11)
         .overlay {
             if isActive, isFocusedGroup, model.active.groups.count > 1 {
                 RoundedRectangle(cornerRadius: 7)
@@ -175,6 +174,17 @@ struct TabView: View {
             if clickCount >= 2 { model.updateActive { $0.pin(item.id) } }
         })
         .contextMenu { TabContextMenu(item: item, group: group) }
+        // One element for VoiceOver: its name, what state it's in, and pressing it. Close shows
+        // only under the mouse, so it's an action here.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(spokenState)
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { model.focusItem(item.id) }
+        .accessibilityActions {
+            Button("Close") { model.requestClose(item.id) }
+            if item.isPreview { Button("Keep Open") { model.updateActive { $0.pin(item.id) } } }
+        }
         .reportingFrame { frame in
             // A tab that just moved has an outgoing view in its old group. Only the view in the
             // group that holds the item now gets to say where it is.
@@ -185,10 +195,17 @@ struct TabView: View {
         .onDisappear { model.layoutRegistry.removeTab(item.id, owner: owner) }
     }
 
-    private var backgroundFill: Color {
-        if isActive { return Color.primary.opacity(0.11) }
-        if hovering { return Color.primary.opacity(0.05) }
-        return .clear
+    /// What the icon, the dot and the italics say.
+    private var spokenState: String {
+        var parts: [String] = []
+        if case .terminal = item.content {
+            if let status = runtime?.status.spoken { parts.append(status) }
+            if let message = runtime?.message, runtime?.status == .needsInput || runtime?.status == .done { parts.append(message) }
+        }
+        if model.existingController(for: item.id)?.isDirty == true { parts.append("Unsaved changes") }
+        if isDeleted { parts.append("Deleted") }
+        if item.isPreview { parts.append("Preview") }
+        return parts.joined(separator: ", ")
     }
 
     @ViewBuilder

@@ -102,6 +102,14 @@ struct OpenElsewhereButton: View {
             .contentShape(Rectangle())
             .contextMenu { choices(url: url, browser: browser, editor: editor) }
             .help(url != nil ? "Open in \(browser). Hold for more" : "Open in \(editor). Hold for more")
+            // One button to VoiceOver, with the menu's choices as its actions.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(url != nil ? "Open in \(browser)" : "Open in \(editor)")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default) {
+                if let page, url != nil { model.movePageToBrowser(page.itemID) } else if let path { model.openExternally(path: path) }
+            }
+            .accessibilityActions { choices(url: url, browser: browser, editor: editor) }
         }
     }
 

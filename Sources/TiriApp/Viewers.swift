@@ -873,6 +873,8 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         quoteButton?.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         let text = textView
         text.editor = self
+        // VoiceOver says "text area" otherwise, with nothing to say which file it is.
+        text.setAccessibilityLabel((path as NSString).lastPathComponent)
         text.isEditable = true
         text.allowsUndo = true
         text.delegate = self

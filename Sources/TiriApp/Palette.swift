@@ -670,6 +670,10 @@ struct PaletteView: View {
                                     .onAppear { row.appeared?() }
                                     .contentShape(Rectangle())
                                     .onTapGesture { palette.activate(index) }
+                                    .accessibleRow(row.title, value: row.spokenDetail, selected: index == palette.selection) { palette.activate(index) }
+                                    .accessibilityActions {
+                                        if let button = row.button { Button(button.title, action: button.action) }
+                                    }
                             }
                         }
                         .padding(6)
@@ -679,15 +683,19 @@ struct PaletteView: View {
                     .onChange(of: palette.selection) { _, value in
                         if palette.rows.indices.contains(value) {
                             proxy.scrollTo(palette.rows[value].id)
+                            // The keyboard stays in the field, so VoiceOver hears where the arrows went.
+                            AccessibilityDisplay.shared.announce(palette.rows[value].spoken, interrupting: false)
                         }
                     }
                 }
             }
         }
         .frame(width: 620)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .tiriGlass(in: .rect(cornerRadius: 16))
         .shadow(color: .black.opacity(0.22), radius: 22, y: 8)
         .reportingFrame { model.layoutRegistry.paletteFrame = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(palette.placeholder)
         .onAppear {
             focused = true
             // In a window where it's the first thing to appear in a while, once isn't always enough.
@@ -797,7 +805,9 @@ struct PaletteRowView: View {
         .onHover { hovering = $0 }
         .background {
             if selected {
-                RoundedRectangle(cornerRadius: 7).fill(Color.accentColor.opacity(0.22))
+                let contrast = AccessibilityDisplay.shared.increaseContrast
+                RoundedRectangle(cornerRadius: 7).fill(Color.accentColor.opacity(contrast ? 0.4 : 0.22))
+                    .overlay { if contrast { RoundedRectangle(cornerRadius: 7).strokeBorder(Color.accentColor, lineWidth: 1) } }
             }
         }
     }
@@ -805,4 +815,12 @@ struct PaletteRowView: View {
 
 extension PaletteModel.Row {
     fileprivate var isTall: Bool { twoLines || excerpt?.isEmpty == false }
+
+    /// The rest of the row, in words, without the marks around what matched.
+    fileprivate var spokenDetail: String {
+        let excerpt = excerpt.map { $0.replacingOccurrences(of: ConversationIndex.markOpen, with: "").replacingOccurrences(of: ConversationIndex.markClose, with: "") }
+        return [detail, excerpt, shortcut].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+
+    fileprivate var spoken: String { spokenDetail.isEmpty ? title : title + ", " + spokenDetail }
 }

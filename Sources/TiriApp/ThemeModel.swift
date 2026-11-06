@@ -15,6 +15,7 @@ extension AppModel {
         let slot = ThemeSlot.current(dark: effectiveDark, increaseContrast: increaseContrast)
         let chosen = theme(named: settings.themeName(for: slot))
             ?? theme(named: Theme.defaultName(for: slot)) ?? (slot.isDark ? .tiriDark : .tiriLight)
+        ThemePalette.increaseContrast = increaseContrast
         activeThemeSlot = slot
         activeTheme = chosen
         // Tiri's own colors in their own look are drawn with the system's colors, exactly as before themes.

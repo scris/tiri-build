@@ -225,10 +225,7 @@ struct SettingsNavigationRow: View {
             .padding(.horizontal, 8)
             .frame(height: 28)
             .opacity(isEmptySearch ? 0.45 : 1)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isCurrent ? Color.primary.opacity(0.1) : (hovering ? Color.primary.opacity(0.05) : .clear))
-            )
+            .currentMark(isCurrent, hovering: hovering, cornerRadius: 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -342,7 +339,18 @@ struct AskAgentMenu: View {
                     model.askAgentAboutSettings(preset: first)
                 }
                 .help("Sends \(first.name) this prompt: \(SettingsSchema.agentPrompt)")
+                // A split button is two parts to VoiceOver, and the arrow has no name. As one
+                // element, the menu's choices are its actions.
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Ask \(first.name) about your settings")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction(.default) { model.askAgentAboutSettings(preset: first) }
+                .accessibilityActions {
+                    ForEach(presets.dropFirst()) { preset in
+                        Button("Ask \(preset.name)") { model.askAgentAboutSettings(preset: preset) }
+                    }
+                    Button("Copy Prompt") { Clipboard.copy(SettingsSchema.agentPrompt) }
+                }
                 .fixedSize(horizontal: iconOnly, vertical: false)
             } else {
                 Button("Copy Prompt") { Clipboard.copy(SettingsSchema.agentPrompt) }
@@ -366,7 +374,6 @@ struct SettingsContent: View {
     static let page = "settings-page"
     @Environment(AppModel.self) private var model
     @Environment(\.settingsIsTight) private var isTight
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let ui = model.settingsUI
@@ -403,7 +410,7 @@ struct SettingsContent: View {
             .onChange(of: ui.reveal) { _, _ in reveal(proxy) }
             .onChange(of: ui.jumpTarget) { _, target in
                 guard let target else { return }
-                withAnimation(reduceMotion ? nil : .smooth(duration: 0.25)) { proxy.scrollTo(target, anchor: .top) }
+                withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.25))) { proxy.scrollTo(target, anchor: .top) }
                 ui.jumpTarget = nil
             }
             .onPreferenceChange(SectionPositions.self) { positions in
@@ -632,7 +639,7 @@ struct RevealableRow: ViewModifier {
             .background {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.accentColor.opacity(model.settingsUI.highlighted == id ? 0.14 : 0))
-                    .animation(.easeOut(duration: 0.3), value: model.settingsUI.highlighted)
+                    .animation(AccessibilityDisplay.shared.motion(.easeOut(duration: 0.3)), value: model.settingsUI.highlighted)
             }
     }
 }

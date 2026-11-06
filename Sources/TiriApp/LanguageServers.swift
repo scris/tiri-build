@@ -1186,6 +1186,7 @@ struct LanguageServersSection: View {
                 if let managed = definition.managed, canAdd(definition) {
                     Button("Add") { Task { await model.languageServers.add(definition) } }
                         .help("Installs \(managed.title) \(managed.version) into Tiri's own folder, about \(managed.megabytes) MB. Nothing outside it changes.")
+                        .accessibilityLabel("Add \(managed.title)")
                 } else if let preset = model.runnableAgentPresets().first {
                     Button("Ask \(preset.name)") { model.askAgentToInstall(definition, preset: preset) }
                         .help("Prepares a request to install it: \(definition.installHint)")
@@ -1245,7 +1246,7 @@ struct LanguageServersSection: View {
                     if !others.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             Button {
-                                withAnimation(.smooth(duration: 0.15)) { showsMore.toggle() }
+                                withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.15))) { showsMore.toggle() }
                             } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "chevron.right")
@@ -1323,7 +1324,7 @@ struct LanguageStatusItem: View {
                             .foregroundStyle(.secondary)
                     } else if !model.languageServers.isRunning(definition) {
                         Text("\(definition.language): no language server")
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.faint)
                     } else {
                         Text(definition.language)
                             .foregroundStyle(.secondary)

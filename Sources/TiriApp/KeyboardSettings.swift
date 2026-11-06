@@ -141,10 +141,7 @@ struct ShortcutJumpRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 34)
                 .frame(height: 23)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isCurrent ? Color.primary.opacity(0.07) : (hovering ? Color.primary.opacity(0.05) : .clear))
-                )
+                .currentMark(isCurrent, hovering: hovering, cornerRadius: 5, strength: 0.07)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -372,7 +369,7 @@ struct ShortcutFamilyRow: View {
     var body: some View {
         VStack(spacing: 0) {
             Button {
-                withAnimation(.smooth(duration: 0.15)) { expanded.toggle() }
+                withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.15))) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right")

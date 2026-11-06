@@ -83,7 +83,7 @@ struct RepositoryStatusItem: View {
                 if showsName {
                     Text(repository.name)
                         .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.faint)
                         .lineLimit(1)
                 }
             }

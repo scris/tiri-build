@@ -99,13 +99,13 @@ private struct CardShell<Buttons: View>: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: 760)
-        .background(.regularMaterial, in: .rect(cornerRadius: 12))
+        .tiriMaterial(in: .rect(cornerRadius: 12))
         .overlay {
             RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.18), radius: 14, y: 4)
         .padding(14)
-        .transition(.move(edge: .top).combined(with: .opacity))
+        .transition(AccessibilityDisplay.shared.slide(from: .top))
     }
 }
 
@@ -174,7 +174,7 @@ private struct PersonalChangeRow: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 14) {
                 Button {
-                    withAnimation(.smooth(duration: 0.2)) { isOpen.toggle() }
+                    withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.2))) { isOpen.toggle() }
                 } label: {
                     Text(change.sentence)
                         .font(.system(size: 17, weight: .regular))
@@ -192,7 +192,7 @@ private struct PersonalChangeRow: View {
                 }
                 Text(change.date, format: Self.dateFormat)
                     .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.faint)
                 if isBuilding {
                     ProgressView().controlSize(.small).frame(width: 38)
                 } else {
@@ -200,6 +200,7 @@ private struct PersonalChangeRow: View {
                         .toggleStyle(.switch)
                         .labelsHidden()
                         .controlSize(.small)
+                        .accessibilityLabel(change.sentence)
                 }
             }
             if isOpen {
@@ -360,9 +361,9 @@ struct YourTiriCards: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.smooth(duration: 0.25), value: yours.ready)
-        .animation(.smooth(duration: 0.25), value: yours.draft)
-        .animation(.smooth(duration: 0.25), value: yours.state?.trial)
+        .animation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.25)), value: yours.ready)
+        .animation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.25)), value: yours.draft)
+        .animation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.25)), value: yours.state?.trial)
     }
 }
 

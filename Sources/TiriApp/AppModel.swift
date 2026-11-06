@@ -8,6 +8,17 @@ import UserNotifications
 
 enum TerminalStatus: String {
     case idle, working, needsInput = "needs-input", done, exited
+
+    /// What VoiceOver says for it, where the screen shows only an icon or a color.
+    var spoken: String? {
+        switch self {
+        case .idle: nil
+        case .working: "Working"
+        case .needsInput: "Needs input"
+        case .done: "Done"
+        case .exited: "Exited"
+        }
+    }
 }
 
 struct TerminalRuntime: Equatable {
@@ -105,7 +116,12 @@ final class AppModel {
     var agentRows: [AgentOverviewRow] = []
     @ObservationIgnored private var agentRowsPending = false
     var runtimes: [ItemID: TerminalRuntime] = [:] { didSet { scheduleAgentRows() } }
-    var banner: AppBanner?
+    var banner: AppBanner? {
+        didSet {
+            // It appears where the keyboard isn't, so VoiceOver is told.
+            if let banner, banner.message != oldValue?.message { AccessibilityDisplay.shared.announce(banner.message) }
+        }
+    }
     var toasts: [AppToast] = []
     /// What a test copy would have opened in a browser, instead of opening it.
     @ObservationIgnored var sentToBrowser: [String] = []
@@ -115,7 +131,7 @@ final class AppModel {
     var activeTheme: Theme = .tiriDark
     var activeThemeSlot: ThemeSlot = .dark
     /// Increase Contrast, from Accessibility settings.
-    var increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    var increaseContrast: Bool { AccessibilityDisplay.shared.increaseContrast }
     var find: FindState?
     var tabDrag: TabDragState?
     var palette: PaletteModel?
@@ -1618,12 +1634,12 @@ final class AppModel {
 
     // MARK: Moving between things
 
-    private static var motionIsWelcome: Bool { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private static var motionIsWelcome: Bool { !AccessibilityDisplay.shared.reduceMotion }
 
     func setSidebar(visible: Bool) {
         let wanted: NavigationSplitViewVisibility = visible ? .all : .detailOnly
         guard wanted != sidebarVisibility else { return }
-        withAnimation(Self.motionIsWelcome ? .smooth(duration: 0.22) : nil) { sidebarVisibility = wanted }
+        withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.22))) { sidebarVisibility = wanted }
     }
 
     /// Terminals, editors and pages keep their size while the sidebar moves, and take the new one when
@@ -2970,15 +2986,16 @@ final class AppModel {
                 for controller in self.controllers.values { controller.applySettings() }
             }
         }
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
-                                                          object: nil, queue: .main) { [weak self] _ in
+        // Reduce Transparency and Increase Contrast: a translucent terminal goes solid, and back. Increase Contrast
+        // also has its own themes.
+        _ = AccessibilityDisplay.shared
+        NotificationCenter.default.addObserver(forName: AccessibilityDisplay.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                let now = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-                guard now != self.increaseContrast else { return }
-                self.increaseContrast = now
-                self.resolveTheme()
-                self.applyColorTheme()
+                if self.activeThemeSlot != ThemeSlot.current(dark: self.effectiveDark, increaseContrast: self.increaseContrast) {
+                    self.resolveTheme()
+                    self.applyColorTheme()
+                }
                 for controller in self.controllers.values { controller.applySettings() }
             }
         }
@@ -3032,10 +3049,11 @@ final class AppModel {
                    action: (() -> Void)? = nil) -> UUID {
         let toast = AppToast(title: title, detail: detail, symbol: symbol, tint: tint, actionTitle: actionTitle, action: action,
                              otherTitle: other?.title, otherAction: other?.action)
-        withAnimation(.smooth(duration: 0.25)) {
+        withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.25))) {
             toasts.append(toast)
             if toasts.count > 3 { toasts.removeFirst() }
         }
+        AccessibilityDisplay.shared.announce([title, detail].compactMap { $0 }.joined(separator: ". "))
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self, id = toast.id] in
             self?.dismissToast(id)
         }
@@ -3043,7 +3061,7 @@ final class AppModel {
     }
 
     func dismissToast(_ id: UUID) {
-        withAnimation(.smooth(duration: 0.2)) {
+        withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.2))) {
             toasts.removeAll { $0.id == id }
         }
     }

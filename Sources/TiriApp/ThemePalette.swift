@@ -8,6 +8,8 @@ import TiriCore
 nonisolated enum ThemePalette {
     /// The chosen theme, or nil for Tiri's own. Set on the main thread; read while drawing.
     nonisolated(unsafe) static var current: Theme?
+    /// Increase Contrast, for the colors that fall back to the system's: faint ones get less faint.
+    nonisolated(unsafe) static var increaseContrast = false
 
     static func color(_ hex: String) -> NSColor {
         let color = ThemeColor(hex) ?? .black
@@ -25,7 +27,7 @@ nonisolated enum ThemePalette {
 
     static let editorBackground = dynamic({ color($0.editor.background) }, otherwise: { _ in .textBackgroundColor })
     static let editorForeground = dynamic({ color($0.editor.foreground) }, otherwise: { _ in .labelColor })
-    static let lineNumber = dynamic({ color($0.editor.foreground).withAlphaComponent(0.4) }, otherwise: { _ in .tertiaryLabelColor })
+    static let lineNumber = dynamic({ color($0.editor.foreground).withAlphaComponent(0.4) }, otherwise: { _ in increaseContrast ? .secondaryLabelColor : .tertiaryLabelColor })
     static let currentLineNumber = dynamic({ color($0.editor.foreground).withAlphaComponent(0.7) }, otherwise: { _ in .secondaryLabelColor })
     static let currentLine = dynamic({ color($0.editor.foreground).withAlphaComponent(0.055) }, otherwise: { _ in NSColor.labelColor.withAlphaComponent(0.055) })
     static let editorSelection = dynamic({ color($0.editor.selection) }, otherwise: { _ in .selectedTextBackgroundColor })

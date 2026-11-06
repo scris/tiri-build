@@ -450,7 +450,7 @@ struct PluginOffView: View {
             if model.plugins.isLoaded {
                 Image(systemName: "puzzlepiece.extension")
                     .font(.system(size: 30))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.faint)
                 Text(found == nil ? "\(spec.plugin) isn't installed any more" : "\(found?.title ?? spec.plugin) is off")
                     .foregroundStyle(.secondary)
                 if found != nil {
@@ -471,7 +471,7 @@ struct PluginPanelHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "puzzlepiece.extension")
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.faint)
                 .font(.caption)
             Text(model.plugins.plugin(named: spec.plugin)?.title ?? spec.plugin)
                 .font(.caption)
@@ -493,10 +493,11 @@ struct PluginPanelHeader: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .help("Reload")
+            .accessibilityLabel("Reload")
         }
         .padding(.horizontal, 12)
         .frame(height: 28)
-        .background(.bar)
+        .tiriBar()
         .overlay(alignment: .bottom) { Divider() }
     }
 }
