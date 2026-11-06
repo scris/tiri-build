@@ -610,6 +610,9 @@
 "Couldn't change that setting" = "无法更改该设置";
 "New conversation" = "新对话";
 "Couldn't save" = "无法保存";
+"Couldn't save %@" = "无法保存 %@";
+"Save it yourself first, so you choose what's kept." = "请先自己保存，由你决定保留哪个版本。";
+"Nothing to choose from." = "没有可选的项目。";
 "This file changed on disk" = "此文件在磁盘上已更改";
 "Something else, perhaps an agent, changed it after you started editing. Saving replaces that with what you have here." = "在你开始编辑后，有其他程序（可能是智能体）更改了它。保存会用你这里的内容替换那些更改。";
 "Nothing to fetch from" = "没有可获取的来源";
@@ -1225,6 +1228,7 @@
 /* PluginManifest.swift */
 "Its panels can put words in your agent's input, for you to send." = "它的面板可以把文字放进智能体的输入框，由你发送。";
 "Its panels can open files in your workspace." = "它的面板可以打开工作区中的文件。";
+"Its panels can see which files you have open, and which change." = "它的面板可以看到你打开了哪些文件，以及哪些文件有改动。";
 "Its panels can run these commands: %@." = "它的面板可以运行这些命令：%@。";
 "Its viewer can read and change %@ files you open." = "它的查看器可以读取和修改你打开的 %@ 文件。";
 "Its viewer can read %@ files you open." = "它的查看器可以读取你打开的 %@ 文件。";
@@ -1240,6 +1244,9 @@
 "1 status bar item" = "1 个状态栏项目";
 "%lld status bar items" = "%lld 个状态栏项目";
 "1 button above files" = "1 个文件上方的按钮";
+"1 color in the editor" = "编辑器中的 1 种颜色";
+"%lld colors in the editor" = "编辑器中的 %lld 种颜色";
+"marks on files in the explorer" = "文件列表中文件旁的标记";
 "%lld buttons above files" = "%lld 个文件上方的按钮";
 "1 setting" = "1 项设置";
 "%lld settings" = "%lld 项设置";

@@ -8,6 +8,10 @@ final class FileTreeCell: NSTableCellView {
     /// What the name is tinted, unless the row is selected.
     var tint: NSColor? { didSet { applyColors() } }
     var plainColor: NSColor = .labelColor { didSet { applyColors() } }
+    private var markText = ""
+    /// What a plugin says about this file, before the change letter.
+    private var pluginText = ""
+    private var pluginColor: NSColor?
 
     override var backgroundStyle: NSView.BackgroundStyle {
         didSet { applyColors() }
@@ -16,15 +20,37 @@ final class FileTreeCell: NSTableCellView {
     private func applyColors() {
         // On a selection's color, a tint is hard to read.
         let selected = backgroundStyle == .emphasized
-        textField?.textColor = selected ? .alternateSelectedControlTextColor : (tint ?? plainColor)
-        badge.textColor = selected ? .alternateSelectedControlTextColor : (tint ?? plainColor)
+        let nameColor = selected ? .alternateSelectedControlTextColor : (tint ?? pluginColor ?? plainColor)
+        textField?.textColor = nameColor
+        let changeColor = selected ? .alternateSelectedControlTextColor : (tint ?? plainColor)
+        guard !pluginText.isEmpty else {
+            badge.attributedStringValue = NSAttributedString(string: markText, attributes: [.foregroundColor: changeColor, .font: markFont(markText)])
+            return
+        }
+        let shown = NSMutableAttributedString(string: pluginText, attributes: [
+            .foregroundColor: selected ? .alternateSelectedControlTextColor : (pluginColor ?? .secondaryLabelColor),
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .semibold),
+        ])
+        if !markText.isEmpty {
+            shown.append(NSAttributedString(string: " " + markText, attributes: [.foregroundColor: changeColor, .font: markFont(markText)]))
+        }
+        badge.attributedStringValue = shown
+    }
+
+    private func markFont(_ text: String) -> NSFont {
+        text == "●" ? .systemFont(ofSize: 7) : .monospacedSystemFont(ofSize: 10.5, weight: .semibold)
     }
 
     /// `letter` for a file, and a dot for a folder with something changed under it.
     func showMark(_ text: String, tint: NSColor?) {
-        badge.stringValue = text
-        badge.font = text == "●" ? .systemFont(ofSize: 7) : .monospacedSystemFont(ofSize: 10.5, weight: .semibold)
+        markText = text
         self.tint = tint
+    }
+
+    func showPluginMark(_ mark: PluginFileMark?) {
+        pluginText = mark?.badge ?? ""
+        pluginColor = PluginColor.ns(mark?.color)
+        applyColors()
     }
 }
 
@@ -248,6 +274,18 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         for row in visible.lowerBound..<NSMaxRange(visible) {
             guard let node = outline.item(atRow: row) as? FileNode, node !== editingNode else { continue }
             if node.isDirectory ? oldFolders[node.path] != folders[node.path] : oldFiles[node.path] != files[node.path] { rows.insert(row) }
+        }
+        if !rows.isEmpty { outline.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0)) }
+    }
+
+    /// Plugins said something new about files. Rows out of sight pick it up as they come into view.
+    func pluginMarksChanged() {
+        let visible = outline.rows(in: outline.visibleRect)
+        guard visible.length > 0 else { return }
+        var rows = IndexSet()
+        for row in visible.lowerBound..<NSMaxRange(visible) {
+            guard let node = outline.item(atRow: row) as? FileNode, node !== editingNode, !node.isRoot else { continue }
+            rows.insert(row)
         }
         if !rows.isEmpty { outline.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0)) }
     }
@@ -855,14 +893,18 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             cell.imageView?.image = FileIcons.image(forName: node.name, isDirectory: node.isDirectory)
             cell.imageView?.contentTintColor = node.isDirectory ? .controlAccentColor : .secondaryLabelColor
         }
+        let pluginMark = node.isRoot ? nil : model?.plugins.fileMark(for: node.path)
+        cell.showPluginMark(pluginMark)
         if node.isDirectory {
             let status = folderChanges[node.path]
             // A root row keeps its heading's color.
             cell.showMark(status == nil ? "" : "●", tint: node.isRoot ? nil : status.map(ChangeTint.color))
+            cell.badge.toolTip = pluginMark?.tooltip
         } else {
             let status = fileChanges[node.path]
             cell.showMark(status?.letter ?? "", tint: status.map(ChangeTint.color))
-            cell.badge.toolTip = status?.title
+            let tips = [pluginMark?.tooltip, status?.title].compactMap { $0 }
+            cell.badge.toolTip = tips.isEmpty ? nil : tips.joined(separator: "\n")
         }
         return cell
     }

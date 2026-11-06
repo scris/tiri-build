@@ -610,6 +610,9 @@
 "Couldn't change that setting" = "無法更改該設定";
 "New conversation" = "新對話";
 "Couldn't save" = "無法儲存";
+"Couldn't save %@" = "無法儲存 %@";
+"Save it yourself first, so you choose what's kept." = "請先自己儲存，由你決定保留哪個版本。";
+"Nothing to choose from." = "沒有可選的項目。";
 "This file changed on disk" = "此檔案在磁碟上已變更";
 "Something else, perhaps an agent, changed it after you started editing. Saving replaces that with what you have here." = "在你開始編輯後，有其他程式（可能是代理）變更了它。儲存會以你這裡的內容取代那些變更。";
 "Nothing to fetch from" = "沒有可擷取的來源";
@@ -1225,6 +1228,7 @@
 /* PluginManifest.swift */
 "Its panels can put words in your agent's input, for you to send." = "它的面板可以把文字放進代理的輸入欄位，由你送出。";
 "Its panels can open files in your workspace." = "它的面板可以打開工作區中的檔案。";
+"Its panels can see which files you have open, and which change." = "它的面板可以看到你打開了哪些檔案，以及哪些檔案有變更。";
 "Its panels can run these commands: %@." = "它的面板可以執行這些指令：%@。";
 "Its viewer can read and change %@ files you open." = "它的檢視器可以讀取和修改你打開的 %@ 檔案。";
 "Its viewer can read %@ files you open." = "它的檢視器可以讀取你打開的 %@ 檔案。";
@@ -1240,6 +1244,9 @@
 "1 status bar item" = "1 個狀態列項目";
 "%lld status bar items" = "%lld 個狀態列項目";
 "1 button above files" = "1 個檔案上方的按鈕";
+"1 color in the editor" = "編輯器中的 1 種顏色";
+"%lld colors in the editor" = "編輯器中的 %lld 種顏色";
+"marks on files in the explorer" = "檔案列表中檔案旁的標記";
 "%lld buttons above files" = "%lld 個檔案上方的按鈕";
 "1 setting" = "1 項設定";
 "%lld settings" = "%lld 項設定";

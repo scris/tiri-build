@@ -333,7 +333,7 @@ If a server forbids SSH forwarding, `tiri`, the Peek and agent status still work
 
 ## Plugins
 
-A plugin adds what a terminal can't draw: panels, file viewers, sidebar sections, status bar items, buttons above files, settings, commands and languages. Skills, hooks and MCP servers stay with your agent, though a plugin can carry a Claude Code part that loads only in Tiri's terminals.
+A plugin adds what a terminal can't draw: panels, file viewers, sidebar sections, status bar items, buttons above files, colors on text in the editor, marks beside files in the explorer, settings, commands and languages. A plugin's command can ask you for a word or a choice in the palette before it runs, and its sidebar rows can have colors and a right-click menu. Skills, hooks and MCP servers stay with your agent, though a plugin can carry a Claude Code part that loads only in Tiri's terminals.
 
 **You don't write plugins by hand.** Describe what you want and your agent writes and tests it. You see what it adds and runs before turning it on. Type your idea into **New plugin** under **Settings → Plugins**, or run **New Plugin…** from the palette or the Plugins menu. For example: "show my pull requests in the sidebar", "open .csv files as a chart" or "port the VS Code extension Todo Tree". A file in a language Tiri doesn't know gets a button in the bottom bar that asks your agent to add it.
 
@@ -363,8 +363,8 @@ A plugin's commands also reach the palette, the Plugins menu and keyboard shortc
 - **A panel can't make your agent act.** Right after you click or type in a panel, it can leave words in the agent's input, but you're the one who presses Return. Tiri refuses even that while the agent is waiting for an answer, or when the running program doesn't treat pastes as pastes.
 - **Programs run with your full access.** Anything a plugin runs can do what you can, including reading your files, and Tiri says so before you turn it on. A finished or timed-out command is stopped, along with anything it left running.
 - **Nothing loads by itself.** Plugins in a cloned repository are ignored. A terminal on a server can't manage plugins, run their commands or drive their panels. In a server workspace, a plugin's programs run on the server from a copy in `~/.tiri/plugins`, unless the plugin says `"where": "mac"`.
-- **Plugins can't slow you down.** Nothing hooks into typing, scrolling or terminal output. An unused plugin costs one directory walk at launch: panels open on demand, sections load when unfolded and background processes stop after 10 idle minutes.
-- **Turning a plugin off removes all of it:** commands, keys, languages, sections, items, panels, processes and servers. Its settings stay until you remove the plugin.
+- **Plugins can't slow you down.** Nothing hooks into typing, scrolling or terminal output. A plugin's colors on text are patterns Tiri matches itself, only on the lines on screen, so none of its programs run while you type. An unused plugin costs one directory walk at launch: panels open on demand, sections load when unfolded and background processes stop after 10 idle minutes.
+- **Turning a plugin off removes all of it:** commands, keys, languages, sections, items, panels, processes and servers. Its settings stay until you remove the plugin. A panel that can see which files you have open says so before you turn it on.
 
 **What these rules don't stop:** approvals are stored in a file in Tiri's own folder, and any program running as you could edit it. The rules stop an agent that's been tricked into asking, not malware already running with your access, which could just as easily edit your shell's startup files. A panel can probably still leak a little data through DNS lookups, which a content policy doesn't cover. And a plugin's process on a server is only as trustworthy as that server.
 

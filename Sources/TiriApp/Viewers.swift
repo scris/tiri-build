@@ -723,6 +723,8 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var loadedOnce = false
     private var editWork: DispatchWorkItem?
     private lazy var highlighter = LineHighlighter(textView: textView)
+    private lazy var pluginColors = EditorPluginColors(textView: textView, isComment: { [weak self] in self?.highlighter.isInComment($0) == true },
+                                                       hasGrammar: { [weak self] in self?.highlighter.hasGrammar == true })
     private(set) lazy var completion = CompletionController(editor: self)
     private lazy var realPath = Git.real(path)
     private var quoteButton: QuoteButton?
@@ -923,6 +925,25 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             }
         }
         applySettings()
+        pluginHighlightsChanged()
+    }
+
+    /// Plugins' colors for this file, whenever plugins or their settings change.
+    func pluginHighlightsChanged() {
+        let rules = model.plugins.highlightRules(for: path)
+        guard !(rules.isEmpty && pluginColors.rules.isEmpty) else { return }
+        pluginColors.use(rules)
+    }
+
+    /// What plugins color on this line, for `tiri`.
+    func pluginColorMarks(line: Int) -> [[String: JSONValue]] {
+        let table = ruler.lines
+        guard line >= 0, line < table.count else { return [] }
+        let start = table.starts[line]
+        return pluginColors.marks(onLineContaining: start).map { mark in
+            ["from": .int(mark.range.location - start), "to": .int(NSMaxRange(mark.range) - start), "plugin": .string(pluginColors.rules[mark.rule].plugin),
+             "text": .string(textView.nsText.substring(with: mark.range))]
+        }
     }
 
     func undoManager(for view: NSTextView) -> UndoManager? { undo }
@@ -932,6 +953,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         guard editedMask.contains(.editedCharacters) else { return }
         ruler.textEdited(range: editedRange, delta: delta, in: textStorage.string as NSString)
         highlighter.textEdited(range: editedRange, delta: delta, in: textStorage)
+        pluginColors.textChanged()
         let replacement = (textStorage.string as NSString).substring(with: editedRange)
         model.languageServers.textEdited(realPath: realPath, range: NSRange(location: editedRange.location, length: editedRange.length - delta),
                                          replacement: replacement, length: textStorage.length)
