@@ -218,8 +218,18 @@ final class AppModel {
     var windowWorkspaces: [String: WorkspaceID] = [:]
     /// The window in front, whose workspace is `activeID`.
     var currentWindow = WindowPlan.main
-    /// What's been worked out about each workspace in a window.
-    var lives: [WorkspaceID: WorkspaceLive] = [:]
+    /// What's been worked out about each workspace in a window. Views read it while drawing, and `live(_:)` adds to
+    /// it then, so the storage isn't observed: changing observed state mid-draw makes SwiftUI abort. What's added is
+    /// told to views a moment later, through `livesRevision`.
+    var lives: [WorkspaceID: WorkspaceLive] {
+        get {
+            _ = livesRevision
+            return livesStorage
+        }
+        set { livesStorage = newValue }
+    }
+    @ObservationIgnored var livesStorage: [WorkspaceID: WorkspaceLive] = [:]
+    var livesRevision = 0
     @ObservationIgnored var windowOrder: [String] = []
     @ObservationIgnored var workspaceWindows: [String: NSWindow] = [:]
     @ObservationIgnored var windowObservers: [String: [NSObjectProtocol]] = [:]

@@ -109,7 +109,7 @@ struct WindowModel {
     var active: Workspace { app.workspaces.first { $0.id == activeID } ?? app.active }
     /// This window is the one in front.
     var isCurrent: Bool { activeID == app.activeID }
-    var live: WorkspaceLive { app.lives[activeID] ?? app.live(activeID) }
+    var live: WorkspaceLive { app.live(activeID) }
 
     var fileTree: FileTreeController { live.fileTree }
     var changes: [ChangedFile] { live.changes }
@@ -154,9 +154,11 @@ struct WindowModel {
 extension AppModel {
     /// What's been worked out about a workspace, made if it's needed.
     func live(_ id: WorkspaceID) -> WorkspaceLive {
-        if let existing = lives[id] { return existing }
+        if let existing = livesStorage[id] { return existing }
         let made = WorkspaceLive(id: id, model: self)
-        lives[id] = made
+        livesStorage[id] = made
+        // Often asked for while a view draws, when the change can't be told yet: views that saw none hear of it next.
+        DispatchQueue.main.async { [weak self] in self?.livesRevision &+= 1 }
         return made
     }
 
@@ -214,7 +216,8 @@ extension AppModel {
         let shown = shownWorkspaces
         for (id, live) in lives where !shown.contains(id) {
             live.retire()
-            lives[id] = nil
+            livesStorage[id] = nil
+            livesRevision &+= 1
         }
     }
 
