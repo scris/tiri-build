@@ -8,17 +8,16 @@ struct ReadyCard: View {
     @Environment(AppModel.self) private var model
 
     private var details: String {
-        var parts = [copy.size]
+        let size = copy.shownSize
         switch copy.checkPassed {
-        case true?: parts.append("check passed")
-        case false?: parts.append("check failed")
-        case nil: break
+        case true?: return String(localized: "\(size), check passed. Tiri reopens with this, and your agents keep running.")
+        case false?: return String(localized: "\(size), check failed. Tiri reopens with this, and your agents keep running.")
+        case nil: return String(localized: "\(size). Tiri reopens with this, and your agents keep running.")
         }
-        return parts.joined(separator: ", ") + ". Tiri reopens with this, and your agents keep running."
     }
 
     var body: some View {
-        CardShell(symbol: "sparkles", title: "Ready to try", sentence: copy.sentence, detail: details) {
+        CardShell(symbol: "sparkles", title: String(localized: "Ready to try"), sentence: copy.shownSentence, detail: details) {
             Button("Not Now") { model.yourTiri.notNow() }
                 .controlSize(.regular)
             if copy.change != nil, copy.kind == .change {
@@ -39,9 +38,9 @@ struct MakingCard: View {
 
     var body: some View {
         let row = draft.item.flatMap { item in model.agentRows.first { $0.item == item } }
-        let agent = row?.agent ?? "Your agent"
-        CardShell(symbol: "hammer", title: "\(agent) is rewriting Tiri", sentence: draft.sentence,
-                  detail: row?.status == .needsInput ? "It needs you, below." : "This takes a few minutes, and Tiri says when it's ready.") {
+        let agent = row?.agent ?? String(localized: "Your agent")
+        CardShell(symbol: "hammer", title: String(localized: "\(agent) is rewriting Tiri"), sentence: draft.sentence,
+                  detail: row?.status == .needsInput ? String(localized: "It needs you, below.") : String(localized: "This takes a few minutes, and Tiri says when it's ready.")) {
             Button("Keep Working") { model.yourTiri.keepWorking() }
                 .controlSize(.regular)
         }
@@ -54,12 +53,12 @@ struct TrialCard: View {
     @Environment(AppModel.self) private var model
 
     private var detail: String {
-        let keeps = "Keep it, or go back to how it was. It keeps itself after ten minutes."
-        return trial.firstPersonal ? keeps + " macOS may ask about your folders once more." : keeps
+        trial.firstPersonal ? String(localized: "Keep it, or go back to how it was. It keeps itself after ten minutes. macOS may ask about your folders once more.")
+            : String(localized: "Keep it, or go back to how it was. It keeps itself after ten minutes.")
     }
 
     var body: some View {
-        CardShell(symbol: "checkmark.circle", title: "You're trying this", sentence: trial.sentence, detail: detail) {
+        CardShell(symbol: "checkmark.circle", title: String(localized: "You're trying this"), sentence: ReadyCopy.shown(trial.sentence), detail: detail) {
             Button("Go Back") { model.yourTiri.back() }
                 .controlSize(.regular)
             Button("Keep") { model.yourTiri.keep() }
@@ -150,7 +149,7 @@ private struct EmptyYourTiri: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        ChangeStory(agent: model.yourTiri.chosenAgent(from: model.runnableAgentPresets())?.name ?? "Your agent")
+        ChangeStory(agent: model.yourTiri.chosenAgent(from: model.runnableAgentPresets())?.name ?? String(localized: "Your agent"))
             .frame(maxWidth: 620, alignment: .leading)
     }
 }
@@ -232,7 +231,7 @@ private struct ChangeFiles: View {
                 }
                 .buttonStyle(.plain)
             }
-            Text(change.hasCheck ? "Has a check, so updates can look after it." : "No check, so updates will ask you to look at it.")
+            Text(change.hasCheck ? String(localized: "Has a check, so updates can look after it.") : String(localized: "No check, so updates will ask you to look at it."))
                 .font(.system(size: 12))
                 .foregroundStyle(change.hasCheck ? Color.secondary : Color.orange)
                 .padding(.top, 2)
@@ -245,9 +244,9 @@ private struct ChangeFiles: View {
     }
 
     private func repairLine(_ version: String) -> String {
-        guard !change.repairTouched.isEmpty else { return "Repaired for Tiri \(version), with nothing to change." }
+        guard !change.repairTouched.isEmpty else { return String(localized: "Repaired for Tiri \(version), with nothing to change.") }
         let names = change.repairTouched.map { URL(fileURLWithPath: $0).lastPathComponent }
-        return "Repaired for Tiri \(version), in \(names.formatted(.list(type: .and)))."
+        return String(localized: "Repaired for Tiri \(version), in \(names.formatted(.list(type: .and))).")
     }
 }
 
@@ -258,7 +257,7 @@ private struct ReadyRow: View {
     var body: some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(copy.sentence)
+                Text(copy.shownSentence)
                     .font(.system(size: 15, weight: .semibold))
                 Text("Ready to try")
                     .font(.system(size: 12))
@@ -280,7 +279,7 @@ private struct TrialRow: View {
     var body: some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(trial.sentence)
+                Text(ReadyCopy.shown(trial.sentence))
                     .font(.system(size: 15, weight: .semibold))
                 Text("You're trying this")
                     .font(.system(size: 12))
@@ -302,12 +301,13 @@ private struct BeingMadeRow: View {
 
     var body: some View {
         let row = draft.item.flatMap { item in model.agentRows.first { $0.item == item } }
+        let agent = row?.agent ?? String(localized: "Your agent")
         HStack(spacing: 12) {
             ProgressView().controlSize(.small)
             VStack(alignment: .leading, spacing: 2) {
                 Text(draft.sentence)
                     .font(.system(size: 15))
-                Text(row?.status == .needsInput ? "\(row?.agent ?? "Your agent") needs you" : "\(row?.agent ?? "Your agent") is making this")
+                Text(row?.status == .needsInput ? String(localized: "\(agent) needs you") : String(localized: "\(agent) is making this"))
                     .font(.system(size: 12))
                     .foregroundStyle(row?.status == .needsInput ? Color.orange : .secondary)
             }

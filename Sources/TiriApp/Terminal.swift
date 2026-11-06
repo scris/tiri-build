@@ -258,9 +258,9 @@ final class TiriTerminalView: LocalProcessTerminalView {
 
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
-    override func accessibilityRoleDescription() -> String? { "terminal" }
+    override func accessibilityRoleDescription() -> String? { String(localized: "terminal") }
     override func accessibilityLabel() -> String? {
-        guard let owner, let item = owner.model.anyItem(owner.itemID) else { return "Terminal" }
+        guard let owner, let item = owner.model.anyItem(owner.itemID) else { return String(localized: "Terminal") }
         return owner.model.title(for: item)
     }
     override func accessibilityValue() -> Any? { spoken.text as String }
@@ -401,7 +401,8 @@ final class TiriTerminalView: LocalProcessTerminalView {
                 model.chooseFromTerminal(found, forceTab: forceTab)
             }
         } else {
-            model.showToast(title: "Tiri doesn't open \(url?.scheme ?? "these") links", detail: link, symbol: "link", tint: .secondary)
+            let title = url?.scheme.map { String(localized: "Tiri doesn't open \($0) links") } ?? String(localized: "Tiri doesn't open these links")
+            model.showToast(title: title, detail: link, symbol: "link", tint: .secondary)
         }
     }
 
@@ -476,8 +477,8 @@ final class TiriTerminalView: LocalProcessTerminalView {
                 model.chooseFromTerminal(matches, forceTab: forceTab)
                 return
             }
-            model.showToast(title: "No file matches \(shown)",
-                            detail: "Searched this workspace's folders, terminals and open files.",
+            model.showToast(title: String(localized: "No file matches \(shown)"),
+                            detail: String(localized: "Searched this workspace's folders, terminals and open files."),
                             symbol: "magnifyingglass", tint: .secondary)
         }
     }
@@ -1082,7 +1083,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             if slot > 0 {
                 guard await Task.detached(priority: .userInitiated, operation: { connection.ensureTerminalConnection(slot: slot) }).value else {
                     self.waitingForConnection = true
-                    self.container.showNotice("Couldn't open another connection to \(SSHConfigFile.displayName(of: destination)).", busy: false, actionTitle: "Try Again") { [weak self] in
+                    self.container.showNotice(String(localized: "Couldn't open another connection to \(SSHConfigFile.displayName(of: destination))."), busy: false,
+                                              actionTitle: String(localized: "Try Again")) { [weak self] in
                         self?.beginReattach()
                     }
                     return
@@ -1161,15 +1163,15 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         case .ready:
             container.showNotice(nil)
         case .reconnecting:
-            container.showNotice("Reconnecting to \(name). What's running there keeps running.")
+            container.showNotice(String(localized: "Reconnecting to \(name). What's running there keeps running."))
         case .connecting:
-            container.showNotice("Connecting to \(name)…")
+            container.showNotice(String(localized: "Connecting to \(name)…"))
         case .idle:
-            container.showNotice("Not connected to \(name). What's running there keeps running.", busy: false, actionTitle: "Connect") { [weak self] in
+            container.showNotice(String(localized: "Not connected to \(name). What's running there keeps running."), busy: false, actionTitle: String(localized: "Connect")) { [weak self] in
                 self?.model.remote.connect(destination)
             }
         case .failed(let message):
-            container.showNotice(message, busy: false, actionTitle: "Try Again") { [weak self] in
+            container.showNotice(message, busy: false, actionTitle: String(localized: "Try Again")) { [weak self] in
                 self?.model.remote.connect(destination)
             }
         }
@@ -1219,7 +1221,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     func restart(resuming: Bool = false) {
         guard exited else { return }
         if let plugin = spec.plugin, model.plugins.enabledPlugin(named: plugin) == nil {
-            model.showToast(title: "\(plugin) is off", detail: "Turn it on to run this again.", symbol: "puzzlepiece.extension", tint: .secondary)
+            model.showToast(title: String(localized: "\(plugin) is off"), detail: String(localized: "Turn it on to run this again."), symbol: "puzzlepiece.extension", tint: .secondary)
             return
         }
         model.updateRuntime(itemID) { runtime in
@@ -1337,10 +1339,10 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             return runningCommand.split(separator: " ").first.map(String.init)
         }
         guard foreground != shellPID else { return nil }
-        if isRemote { return remoteCommand.first.map { ($0 as NSString).lastPathComponent } ?? "a process" }
+        if isRemote { return remoteCommand.first.map { ($0 as NSString).lastPathComponent } ?? String(localized: "a process") }
         var buffer = [CChar](repeating: 0, count: 256)
         let length = proc_name(foreground, &buffer, UInt32(buffer.count))
-        return length > 0 ? String(cString: buffer) : "a process"
+        return length > 0 ? String(cString: buffer) : String(localized: "a process")
     }
 
     /// The executable and arguments of what's in the foreground. Nothing if it's just the shell.
@@ -1881,18 +1883,19 @@ final class TerminalExitBar: NSVisualEffectView {
         super.init(frame: .zero)
         material = .headerView
         blendingMode = .withinWindow
-        let text = resumeFailed ? "Couldn't resume this conversation" : code.map { "Process exited with code \($0)" } ?? "Process exited"
+        let text = resumeFailed ? String(localized: "Couldn't resume this conversation")
+            : code.map { String(localized: "Process exited with code \(Int($0))") } ?? String(localized: "Process exited")
         message = text
         let label = NSTextField(labelWithString: text)
         label.textColor = .secondaryLabelColor
         label.font = .systemFont(ofSize: 12)
-        let restart = NSButton(title: resumeFailed ? "Start Fresh" : "Restart", target: self, action: #selector(restartClicked))
-        let close = NSButton(title: "Close", target: self, action: #selector(closeClicked))
+        let restart = NSButton(title: resumeFailed ? String(localized: "Start Fresh") : String(localized: "Restart"), target: self, action: #selector(restartClicked))
+        let close = NSButton(title: String(localized: "Close"), target: self, action: #selector(closeClicked))
         restart.bezelStyle = .accessoryBarAction
         close.bezelStyle = .accessoryBarAction
         var buttons: [NSView] = [restart, close]
         if resumeFailed {
-            let retry = NSButton(title: "Try Again", target: self, action: #selector(resumeClicked))
+            let retry = NSButton(title: String(localized: "Try Again"), target: self, action: #selector(resumeClicked))
             retry.bezelStyle = .accessoryBarAction
             buttons.insert(retry, at: 0)
         }

@@ -163,7 +163,7 @@ extension AppModel {
     private func conversationRow(_ conversation: ConversationSummary, excerpt: String? = nil) -> PaletteModel.Row {
         let profile = AgentCatalog.profile(id: conversation.agent)
         let place = conversation.cwd.map { ($0 as NSString).lastPathComponent }
-        let detail = [profile?.title, place, RelativeTime.text(conversation.date)].compactMap { $0 }.joined(separator: " · ")
+        let detail = [profile?.title, place, RelativeTime.display(conversation.date)].compactMap { $0 }.joined(separator: " · ")
         let title = conversationTitle(conversation)
         // Beneath the title: where a search matched, or else what you actually asked, in your own words.
         // Saying the title again wouldn't tell you anything.
@@ -175,7 +175,7 @@ extension AppModel {
             Task { await self.showConversation(conversation) }
         }
         return PaletteModel.Row(id: conversation.id, title: title, detail: detail, excerpt: excerpt, twoLines: true, symbol: profile?.symbol ?? "text.bubble",
-                                button: .init(title: "Read", action: read), appeared: { [weak self] in self?.wantLabel(for: conversation) }) { [weak self] alternate in
+                                button: .init(title: String(localized: "Read"), action: read), appeared: { [weak self] in self?.wantLabel(for: conversation) }) { [weak self] alternate in
             guard let self else { return }
             if alternate {
                 read()
@@ -360,7 +360,7 @@ extension AppModel {
             self.conversationsLoading = false
             self.palette?.refresh()
         }
-        openPalette(.dynamic(title: "Past conversations. Describe what you remember.", provider: { [weak self] query, deliver in
+        openPalette(.dynamic(title: String(localized: "Past conversations. Describe what you remember."), provider: { [weak self] query, deliver in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
@@ -376,23 +376,23 @@ extension AppModel {
                     // Something other than asking an agent always comes first, so that Return can't start one by accident.
                     if rows.isEmpty { rows = [PaletteModel.Row(id: "status", title: status, symbol: "clock") { _ in }] }
                     if !query.isEmpty, let agent {
-                        rows.append(PaletteModel.Row(id: "ask-agent", title: "Ask \(agent.name) to find it", detail: "It can try other words and read what it finds", symbol: "sparkle.magnifyingglass") { [weak self] _ in
+                        rows.append(PaletteModel.Row(id: "ask-agent", title: String(localized: "Ask \(agent.name) to find it"), detail: String(localized: "It can try other words and read what it finds"), symbol: "sparkle.magnifyingglass") { [weak self] _ in
                             self?.closePalette(restoreFocus: false)
                             self?.askAgentToFind(query, preset: agent)
                         })
                     }
                     return rows
                 }
-                let nothing = "No conversation says that"
+                let nothing = String(localized: "No conversation says that")
                 let searches = query.count >= 2
-                deliver(finish(inTitle, [:], self.conversationsLoading || searches ? "Looking through conversations…" : nothing))
+                deliver(finish(inTitle, [:], self.conversationsLoading || searches ? String(localized: "Looking through conversations…") : nothing))
                 guard searches else { return }
                 Task {
                     let merged = { (found: [ConversationSummary]) in inTitle + found.filter { !inTitle.contains($0) } }
                     let first = await self.conversationMatches(query, among: all)
                     // Exact words are enough, and typing shouldn't set the model off at every key.
                     let assists = self.settings.conversationsUseMacModel && ConversationAssistant.isAvailable && first.conversations.count < 10
-                    deliver(finish(merged(first.conversations), first.excerpts, assists ? "Trying other words…" : nothing))
+                    deliver(finish(merged(first.conversations), first.excerpts, assists ? String(localized: "Trying other words…") : nothing))
                     guard assists else { return }
                     try? await Task.sleep(for: .milliseconds(400))
                     guard self.palette?.query == query else { return }
@@ -448,7 +448,7 @@ extension AppModel {
     /// As a document on disk, without showing it, so that an agent can read it and you can carry on.
     func writeConversation(_ conversation: ConversationSummary) async -> String? {
         guard let data = await fullText(of: conversation) else {
-            showToast(title: "Couldn't read that conversation", detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: String(localized: "Couldn't read that conversation"), detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
             return nil
         }
         var titled = conversation
@@ -465,7 +465,7 @@ extension AppModel {
             try JSONEncoder().encode(conversation).write(to: URL(fileURLWithPath: folder + "/conversation.json"), options: .atomic)
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
         } catch {
-            showToast(title: "Couldn't save that conversation", detail: error.localizedDescription, symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: String(localized: "Couldn't save that conversation"), detail: error.localizedDescription, symbol: "exclamationmark.triangle", tint: .orange)
             return nil
         }
         return path
@@ -504,7 +504,7 @@ extension AppModel {
             workspaces.first { $0.folders.contains { place == $0 || place.hasPrefix($0 + "/") } }
         }
         if let directory, !FileManager.default.fileExists(atPath: directory) {
-            showToast(title: "That folder isn't there any more, so here's what was said", detail: directory, symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: String(localized: "That folder isn't there any more, so here's what was said"), detail: directory, symbol: "exclamationmark.triangle", tint: .orange)
             Task { await showConversation(conversation) }
             return
         }
@@ -541,7 +541,7 @@ extension AppModel {
                 connection.run("mkdir -p \"$HOME\"/.tiri/conversations && chmod 700 \"$HOME\"/.tiri/conversations && cat > \"$HOME\"/.tiri/conversations/\(ShellQuote.quote(name)) && printf %s \"$HOME\"/.tiri/conversations/\(ShellQuote.quote(name))", stdin: data, timeout: 120)
             }.value
             guard let result, result.succeeded else {
-                showToast(title: "Couldn't send that conversation to the server", detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
+                showToast(title: String(localized: "Couldn't send that conversation to the server"), detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
                 return
             }
             ask(result.text)

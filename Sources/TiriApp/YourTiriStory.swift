@@ -13,9 +13,9 @@ struct ChangeStory: View {
             Text("Tiri can rewrite itself for you.")
                 .font(.system(size: 15, weight: .semibold))
             HStack(alignment: .top, spacing: 12) {
-                StoryFrame(caption: "You say what you want", detail: "In your own words") { SayDrawing() }
-                StoryFrame(caption: "\(agent) builds it", detail: "A few minutes. Keep working") { BuildDrawing() }
-                StoryFrame(caption: "Tiri reopens with it", detail: "Keep it, or go back") { TryDrawing() }
+                StoryFrame(caption: String(localized: "You say what you want"), detail: String(localized: "In your own words")) { SayDrawing() }
+                StoryFrame(caption: String(localized: "\(agent) builds it"), detail: String(localized: "A few minutes. Keep working")) { BuildDrawing() }
+                StoryFrame(caption: String(localized: "Tiri reopens with it"), detail: String(localized: "Keep it, or go back")) { TryDrawing() }
             }
         }
     }
@@ -86,7 +86,7 @@ private struct BuildDrawing: View {
             }
             ForEach(Array([46, 38, 52].enumerated()), id: \.offset) { index, width in
                 HStack(spacing: 3) {
-                    Text("+").font(.system(size: 8, weight: .bold, design: .monospaced)).foregroundStyle(.green)
+                    Text(verbatim: "+").font(.system(size: 8, weight: .bold, design: .monospaced)).foregroundStyle(.green)
                     Capsule().fill(Color.green.opacity(0.45 - Double(index) * 0.08)).frame(width: CGFloat(width), height: 3)
                 }
             }
@@ -99,7 +99,7 @@ private struct TryDrawing: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Capsule().fill(Color.primary.opacity(0.22)).frame(width: 24, height: 3)
-                Text("3:12")
+                Text(verbatim: "3:12")
                     .font(.system(size: 8.5, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.accentColor)
             }
@@ -123,7 +123,7 @@ struct ChangePanel: View {
     var body: some View {
         let yours = model.yourTiri
         let presets = model.runnableAgentPresets()
-        let agent = yours.chosenAgent(from: presets)?.name ?? "Your agent"
+        let agent = yours.chosenAgent(from: presets)?.name ?? String(localized: "Your agent")
         VStack(alignment: .leading, spacing: 12) {
             if yours.hasNeverChanged {
                 ChangeStory(agent: agent)
@@ -152,7 +152,7 @@ struct ChangePanel: View {
                 Button {
                     yours.beginMarking(query: palette.query)
                 } label: {
-                    Label(yours.mark == nil ? "Mark It on Screen" : "Mark Again", systemImage: "viewfinder")
+                    Label(yours.mark == nil ? String(localized: "Mark It on Screen") : String(localized: "Mark Again"), systemImage: "viewfinder")
                 }
                 .controlSize(.small)
                 .help("Drag a box around the part of Tiri you mean, so \(agent) can see it.")

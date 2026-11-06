@@ -10,6 +10,7 @@
 # TIRI_DEV_MAC_ACCENT=blue makes it act as if this Mac's accent were blue, to see "Your Mac" against Tiri Pink.
 # TIRI_DEV_A11Y=transparency,contrast,motion makes it act as if Reduce Transparency, Increase Contrast or Reduce
 # Motion were on, without touching this Mac's settings. `cli <name> dev-a11y <list|none>` changes it live.
+# TIRI_DEV_LANGUAGE=zh-Hans|zh-Hant|settings: a test copy is in English otherwise, so checks that read words pass on any Mac.
 # TIRI_UPDATE_FEED=http://127.0.0.1:<port>/update.json gives it a release feed on this Mac.
 # CLAUDE_CONFIG_DIR, CODEX_HOME, GROK_HOME=<empty folder> make it see an agent with no hooks, as a newcomer's would be.
 # TIRI_DEV_NO_DEVELOPER_TOOLS=1 makes it act as if this Mac had no Command Line Tools, as a fresh Mac doesn't; =all, as if it had no git anywhere.
@@ -61,6 +62,7 @@ launch_in_background() {
     ${TIRI_DEV_OPTION:+--env TIRI_DEV_OPTION=1} \
     ${TIRI_DEV_MAC_ACCENT:+--env TIRI_DEV_MAC_ACCENT="$TIRI_DEV_MAC_ACCENT"} \
     ${TIRI_DEV_A11Y:+--env TIRI_DEV_A11Y="$TIRI_DEV_A11Y"} \
+    --env TIRI_DEV_LANGUAGE="${TIRI_DEV_LANGUAGE:-en}" \
     ${TIRI_DEV_NO_DEVELOPER_TOOLS:+--env TIRI_DEV_NO_DEVELOPER_TOOLS="$TIRI_DEV_NO_DEVELOPER_TOOLS"} \
     ${TIRI_SSH_CONFIG:+--env TIRI_SSH_CONFIG="$TIRI_SSH_CONFIG"} \
     ${TIRI_UPDATE_FEED:+--env TIRI_UPDATE_FEED="$TIRI_UPDATE_FEED"} \
@@ -136,6 +138,7 @@ start)
   cp "$BIN/tiri" "$BIN/tiri-session" "$APP/Contents/Resources/bin/"
   cp Resources/AppIcon.icns Resources/Assets.car "$APP/Contents/Resources/"
   for extra in Resources/remote Resources/web Resources/textmate Resources/grammars Resources/language-servers; do [ -e "$extra" ] && cp -R "$extra" "$APP/Contents/Resources/"; done
+  cp -R Resources/Localization/*.lproj "$APP/Contents/Resources/"
   sed "s/dev.tiri.app/dev.tiri.test.$NAME/" Resources/Info.plist > "$APP/Contents/Info.plist"
   scripts/stamp-bundle.sh "$APP" "$APP/Contents/Info.plist" >/dev/null
   # TIRI_DEV_SIGN_IDENTITY tries it as a release runs: signed, under the hardened runtime.

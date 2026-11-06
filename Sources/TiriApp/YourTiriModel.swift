@@ -101,15 +101,15 @@ struct ChangeMark {
         watchTrial()
         watchForUpdates()
         if PlainForNow.isOn {
-            model?.showToast(title: "Plain Tiri, for this run", detail: "Your changes are still yours. They'll be back next time.", symbol: "option", tint: .secondary,
-                             actionTitle: "Back to Your Tiri", duration: 12) { [weak self] in self?.useYours() }
+            model?.showToast(title: String(localized: "Plain Tiri, for this run"), detail: String(localized: "Your changes are still yours. They'll be back next time."), symbol: "option", tint: .secondary,
+                             actionTitle: String(localized: "Back to Your Tiri"), duration: 12) { [weak self] in self?.useYours() }
         }
         if let trial = loaded.trial, model?.active.activeItem?.id != trial.item {
-            model?.showToast(title: "You're trying your change", detail: trial.sentence, symbol: "checkmark.circle", tint: .accentColor,
-                             actionTitle: "Go Back", duration: 15) { [weak self] in self?.back() }
+            model?.showToast(title: String(localized: "You're trying your change"), detail: ReadyCopy.shown(trial.sentence), symbol: "checkmark.circle", tint: .accentColor,
+                             actionTitle: String(localized: "Go Back"), duration: 15) { [weak self] in self?.back() }
         }
         if let notice {
-            model?.showToast(title: "Back to a copy that starts", detail: notice, symbol: "arrow.uturn.backward", tint: .orange, duration: 20)
+            model?.showToast(title: String(localized: "Back to a copy that starts"), detail: notice, symbol: "arrow.uturn.backward", tint: .orange, duration: 20)
         }
         if let news {
             model?.showToast(title: news.title, detail: news.detail, symbol: news.retired ? "checkmark.seal" : "arrow.down.circle",
@@ -153,8 +153,8 @@ struct ChangeMark {
         dismissedReady = nil
         guard let model, ready.kind != .update, wasBuiltJustNow(ready) else { return }
         if let item = ready.item, model.active.activeItem?.id == item { return }
-        model.showToast(title: "Ready to try", detail: ready.sentence, symbol: "sparkles", tint: .accentColor,
-                        actionTitle: "Try It", duration: 15) { [weak self] in self?.tryReady() }
+        model.showToast(title: String(localized: "Ready to try"), detail: ready.shownSentence, symbol: "sparkles", tint: .accentColor,
+                        actionTitle: String(localized: "Try It"), duration: 15) { [weak self] in self?.tryReady() }
     }
 
     private func wasBuiltJustNow(_ ready: ReadyCopy) -> Bool { Date().timeIntervalSince(ready.builtAt) < 60 }
@@ -171,38 +171,38 @@ struct ChangeMark {
         case .ready:
             // What retired leads: it's the one thing the update did that nobody would otherwise know. Short, then
             // what to do, then their own words, which are long and can be cut.
-            let rest = update.line.replacingOccurrences(of: "\(update.name) is ready, with", with: "With").replacingOccurrences(of: "\(update.name) is ready.", with: "")
-                .trimmingCharacters(in: .whitespaces)
             if update.retired.isEmpty {
-                updateToast = model.showToast(title: "\(update.name) is ready", detail: rest.isEmpty ? nil : rest, symbol: "arrow.down.circle", tint: .accentColor,
-                                              actionTitle: "Update", duration: 30) { [weak self] in self?.applyUpdate() }
+                updateToast = model.showToast(title: String(localized: "\(update.shownName) is ready"), detail: update.readyDetail, symbol: "arrow.down.circle", tint: .accentColor,
+                                              actionTitle: String(localized: "Update"), duration: 30) { [weak self] in self?.applyUpdate() }
             } else {
-                let which = update.retired.count == 1 ? "your change" : "\(update.retired.count) of your changes"
-                updateToast = model.showToast(title: "Tiri does \(which) itself now", detail: "Update to use Tiri's own. \(UpdateStatus.names(update.retired))",
-                                              symbol: "checkmark.seal", tint: .accentColor, actionTitle: "Update", duration: 30) { [weak self] in self?.applyUpdate() }
+                let title = update.retired.count == 1 ? String(localized: "Tiri does your change itself now") : String(localized: "Tiri does \(update.retired.count) of your changes itself now")
+                updateToast = model.showToast(title: title, detail: String(localized: "Update to use Tiri's own. \(UpdateStatus.names(update.retired))"),
+                                              symbol: "checkmark.seal", tint: .accentColor, actionTitle: String(localized: "Update"), duration: 30) { [weak self] in self?.applyUpdate() }
             }
         case .needsRepair where state?.repairsAllowed == nil && !update.needsRepair.isEmpty:
-            updateToast = model.showToast(title: update.needsRepair.count == 1 ? "Your change needs redoing" : "\(update.needsRepair.count) of your changes need redoing",
+            updateToast = model.showToast(title: update.needsRepair.count == 1 ? String(localized: "Your change needs redoing") : String(localized: "\(update.needsRepair.count) of your changes need redoing"),
                             detail: Self.redoExplained(update, agent: agentName), symbol: "arrow.down.circle", tint: .accentColor,
-                            actionTitle: "Redo It", duration: 30) { [weak self] in self?.answerRepairs(true) }
+                            actionTitle: String(localized: "Redo It"), duration: 30) { [weak self] in self?.answerRepairs(true) }
         default: break
         }
     }
 
     private var entriesOrUsed: Bool { entriesAreOn || isUsed }
 
-    private var agentName: String { model?.runnableAgentPresets().first?.name ?? "Your agent" }
+    private var agentName: String { model?.runnableAgentPresets().first?.name ?? String(localized: "Your agent") }
 
     /// Before anything is redone, what happened, in a line: the new Tiri is here, and a change of theirs doesn't fit it.
-    static func redoTitle(_ update: UpdateStatus) -> String {
-        let which = update.needsRepair.count == 1 ? "Your change doesn't" : "\(update.needsRepair.count) of your changes don't"
-        return "\(which) fit \(update.inSentence)"
+    /// Their own words last, where being cut short costs least.
+    static func redoLine(_ update: UpdateStatus) -> String {
+        let count = update.needsRepair.count
+        return count == 1 ? String(localized: "Your change doesn't fit \(update.shownInSentence): \(update.needsRepair[0].sentence)")
+            : String(localized: "\(count) of your changes don't fit \(update.shownInSentence): \(count) changes")
     }
 
     /// And what redoing is, since nobody has seen this before: who does it, what can come of it, and that nothing changes meanwhile.
     /// Two short lines in a toast: what's in the bar already isn't said again.
     static func redoExplained(_ update: UpdateStatus, agent: String) -> String {
-        "\(agent) can fit it to \(update.inSentence), or retire it if Tiri does this itself now."
+        String(localized: "\(agent) can fit it to \(update.shownInSentence), or retire it if Tiri does this itself now.")
     }
 
     /// What the bar along the bottom says. Nothing at all when nothing's happening, or when it's been put off.
@@ -221,25 +221,25 @@ struct ChangeMark {
 
     private var waitingNow: YourTiriWaiting? {
         if let trial = state?.trial {
-            return YourTiriWaiting(text: "Trying: \(trial.sentence)", symbol: "checkmark.circle", actions: [
-                .init(title: "Go Back") { [weak self] in self?.back() },
-                .init(title: "Keep", isMain: true) { [weak self] in self?.keep() },
+            return YourTiriWaiting(text: String(localized: "Trying: \(ReadyCopy.shown(trial.sentence))"), symbol: "checkmark.circle", actions: [
+                .init(title: String(localized: "Go Back")) { [weak self] in self?.back() },
+                .init(title: String(localized: "Keep"), isMain: true) { [weak self] in self?.keep() },
             ])
         }
         if let ready, ready.kind != .update {
-            return YourTiriWaiting(text: "Ready to try: \(ready.sentence)", actions: [.init(title: "Try It", isMain: true) { [weak self] in self?.tryReady() }],
+            return YourTiriWaiting(text: String(localized: "Ready to try: \(ready.shownSentence)"), actions: [.init(title: String(localized: "Try It"), isMain: true) { [weak self] in self?.tryReady() }],
                                    laterKey: "ready-\(ready.builtAt.timeIntervalSince1970)")
         }
         if let draft {
             let row = draft.item.flatMap { item in model?.agentRows.first { $0.item == item } }
             let alive = draft.item.map { model?.anyItem($0) != nil } ?? false
             let action: YourTiriWaiting.Action = alive
-                ? .init(title: "Show") { [weak self] in if let item = draft.item { self?.model?.focusItem(item) } }
-                : .init(title: "Give Up") { [weak self] in self?.giveUp() }
+                ? .init(title: String(localized: "Show")) { [weak self] in if let item = draft.item { self?.model?.focusItem(item) } }
+                : .init(title: String(localized: "Give Up")) { [weak self] in self?.giveUp() }
             if row?.status == .needsInput {
-                return YourTiriWaiting(text: "\(row?.agent ?? "Your agent") needs you: \(draft.sentence)", symbol: "exclamationmark.circle", isTrouble: true, actions: [action])
+                return YourTiriWaiting(text: String(localized: "\(row?.agent ?? String(localized: "Your agent")) needs you: \(draft.sentence)"), symbol: "exclamationmark.circle", isTrouble: true, actions: [action])
             }
-            return YourTiriWaiting(text: "Changing Tiri: \(draft.sentence)", isBusy: alive, actions: [action])
+            return YourTiriWaiting(text: String(localized: "Changing Tiri: \(draft.sentence)"), isBusy: alive, actions: [action])
         }
         if let update {
             return updateWaiting(update).map { item in
@@ -248,7 +248,7 @@ struct ChangeMark {
                 return item
             }
         }
-        if !toggling.isEmpty { return YourTiriWaiting(text: "Making a copy of Tiri with that change", isBusy: true) }
+        if !toggling.isEmpty { return YourTiriWaiting(text: String(localized: "Making a copy of Tiri with that change"), isBusy: true) }
         return nil
     }
 
@@ -257,22 +257,22 @@ struct ChangeMark {
         case .ready:
             // The news first, and their own words last, where being cut short costs least.
             let text = update.retired.isEmpty ? update.line
-                : update.retired.count == 1 ? "\(update.name) does your change itself now: \(update.retired[0].sentence)"
-                : "\(update.name) does \(update.retired.count) of your changes itself now"
+                : update.retired.count == 1 ? String(localized: "\(update.shownName) does your change itself now: \(update.retired[0].sentence)")
+                : String(localized: "\(update.shownName) does \(update.retired.count) of your changes itself now")
             return YourTiriWaiting(text: text, symbol: update.retired.isEmpty ? "arrow.down.circle" : "checkmark.seal",
-                                   actions: [.init(title: "Update", isMain: true) { [weak self] in self?.applyUpdate() }])
+                                   actions: [.init(title: String(localized: "Update"), isMain: true) { [weak self] in self?.applyUpdate() }])
         case .needsRepair where state?.repairsAllowed == nil:
-            // Their own words last, where being cut short costs least.
-            let what = update.needsRepair.count == 1 ? update.needsRepair[0].sentence : "\(update.needsRepair.count) changes"
-            return YourTiriWaiting(text: "\(Self.redoTitle(update)): \(what)", symbol: "arrow.down.circle", actions: [
-                .init(title: "Leave It Off") { [weak self] in self?.answerRepairs(false) },
-                .init(title: "Redo It", isMain: true) { [weak self] in self?.answerRepairs(true) },
+            return YourTiriWaiting(text: Self.redoLine(update), symbol: "arrow.down.circle", actions: [
+                .init(title: String(localized: "Leave It Off")) { [weak self] in self?.answerRepairs(false) },
+                .init(title: String(localized: "Redo It"), isMain: true) { [weak self] in self?.answerRepairs(true) },
             ])
         case .needsRepair:
             let entry = update.needsRepair.first
             let tab = entry.flatMap { redoTab(for: $0) }
-            return YourTiriWaiting(text: "\(agentName) is fitting your change to \(update.inSentence)\(entry.map { ": \($0.sentence)" } ?? "")", isBusy: true,
-                                   actions: tab.map { item in [.init(title: "Show") { [weak self] in _ = self?.model?.focusItem(item) }] } ?? [])
+            let text = entry.map { String(localized: "\(agentName) is fitting your change to \(update.shownInSentence): \($0.sentence)") }
+                ?? String(localized: "\(agentName) is fitting your change to \(update.shownInSentence)")
+            return YourTiriWaiting(text: text, isBusy: true,
+                                   actions: tab.map { item in [.init(title: String(localized: "Show")) { [weak self] in _ = self?.model?.focusItem(item) }] } ?? [])
         case .failed:
             return YourTiriWaiting(text: update.line, symbol: "exclamationmark.triangle", isTrouble: true)
         case .replaying, .building, .checking, .waiting:
@@ -288,8 +288,8 @@ struct ChangeMark {
     /// Which copy is running, in the words the list uses.
     var runningLine: String {
         let count = onChanges.count
-        if !isPersonalCopy { return "Plain Tiri \(Self.version)" }
-        return "Tiri \(Self.version) with \(count) \(count == 1 ? "change" : "changes")"
+        if !isPersonalCopy { return String(localized: "Plain Tiri \(Self.version)") }
+        return count == 1 ? String(localized: "Tiri \(Self.version) with 1 change") : String(localized: "Tiri \(Self.version) with \(count) changes")
     }
 
     // MARK: Pointing
@@ -309,13 +309,13 @@ struct ChangeMark {
         }
         if let draft {
             let item = draft.item
-            model.showToast(title: "Another change is being made", detail: draft.sentence, symbol: "hammer", tint: .secondary,
-                            actionTitle: item.flatMap { model.anyItem($0) != nil ? "Show" : nil }) { [weak model] in
+            model.showToast(title: String(localized: "Another change is being made"), detail: draft.sentence, symbol: "hammer", tint: .secondary,
+                            actionTitle: item.flatMap { model.anyItem($0) != nil ? String(localized: "Show") : nil }) { [weak model] in
                 if let item { model?.focusItem(item) }
             }
             return
         }
-        model.openPrompt(title: "What do you want Tiri to do differently?", initial: initial) { [weak self] text in
+        model.openPrompt(title: String(localized: "What do you want Tiri to do differently?"), initial: initial) { [weak self] text in
             let sentence = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !sentence.isEmpty, let self, let chosen = self.chosenAgent(from: model.runnableAgentPresets()) else { return }
             self.startChange(sentence: sentence, surface: surface, preset: chosen)
@@ -342,15 +342,18 @@ struct ChangeMark {
     private func promptRows() -> [PaletteModel.Row] {
         guard let model else { return [] }
         if hasNeverChanged {
-            return waitingRows() + ["Show how long each agent has been working", "Put Changes above Explorer in the sidebar"].map { example in
+            // In the language people read, since the example becomes what they ask for.
+            let examples = [String(localized: "Show how long each agent has been working"), String(localized: "Put Changes above Explorer in the sidebar")]
+            return waitingRows() + examples.map { example in
                 PaletteModel.Row(id: example, title: example, symbol: "text.quote") { [weak model] _ in model?.palette?.query = example }
             }
         }
         var rows = waitingRows()
         rows += changes.reversed().map { change in
-            PaletteModel.Row(id: change.id, title: change.sentence, detail: ready?.change == change.id ? "ready to try" : change.isOn ? "on" : "off",
+            PaletteModel.Row(id: change.id, title: change.sentence,
+                             detail: ready?.change == change.id ? String(localized: "ready to try") : change.isOn ? String(localized: "on") : String(localized: "off"),
                              symbol: ready?.change == change.id ? "sparkles" : change.isOn ? "checkmark.circle.fill" : "circle",
-                             button: .init(title: change.isOn ? "Turn Off" : "Turn On") { [weak self, weak model] in
+                             button: .init(title: change.isOn ? String(localized: "Turn Off") : String(localized: "Turn On")) { [weak self, weak model] in
                                  model?.closePalette()
                                  self?.setChange(change, on: !change.isOn)
                              }) { [weak self, weak model] _ in
@@ -359,12 +362,12 @@ struct ChangeMark {
             }
         }
         if isPersonalCopy {
-            rows.append(PaletteModel.Row(id: "use-plain", title: "Use Plain Tiri", detail: "as you installed it. Your changes stay", symbol: "arrow.uturn.backward") { [weak self, weak model] _ in
+            rows.append(PaletteModel.Row(id: "use-plain", title: String(localized: "Use Plain Tiri"), detail: String(localized: "as you installed it. Your changes stay"), symbol: "arrow.uturn.backward") { [weak self, weak model] _ in
                 model?.closePalette()
                 self?.usePlain()
             })
         } else if FileManager.default.fileExists(atPath: YourTiri.current.path) {
-            rows.append(PaletteModel.Row(id: "use-yours", title: "Back to Your Tiri", symbol: "arrow.uturn.forward") { [weak self, weak model] _ in
+            rows.append(PaletteModel.Row(id: "use-yours", title: String(localized: "Back to Your Tiri"), symbol: "arrow.uturn.forward") { [weak self, weak model] _ in
                 model?.closePalette()
                 self?.useYours()
             })
@@ -442,8 +445,8 @@ struct ChangeMark {
 
     /// Agents hit this every time otherwise, and on a first run it's the whole of what can go wrong.
     private func offerSwiftTools() {
-        model?.showToast(title: "Changing Tiri needs Apple's tools", detail: nil, symbol: "hammer", tint: .secondary,
-                         actionTitle: "Install", duration: 12) {
+        model?.showToast(title: String(localized: "Changing Tiri needs Apple's tools"), detail: nil, symbol: "hammer", tint: .secondary,
+                         actionTitle: String(localized: "Install"), duration: 12) {
             Tool.run("/usr/bin/xcode-select", ["--install"])
         }
     }
@@ -508,7 +511,7 @@ struct ChangeMark {
             }.value
             guard let self, let model = self.model else { return }
             if let failure {
-                model.showToast(title: "Can't change this copy", detail: failure, symbol: "exclamationmark.triangle", tint: .orange)
+                model.showToast(title: String(localized: "Can't change this copy"), detail: failure, symbol: "exclamationmark.triangle", tint: .orange)
                 return
             }
             self.mark = nil
@@ -538,7 +541,7 @@ struct ChangeMark {
                 let asking = Self.isTrustQuestion(terminal.readText(lines: 40))
                 if asking, !shown {
                     shown = true
-                    terminal.showNotice("Claude Code asks once whether it may work on Tiri's own code.", actionTitle: "Trust Tiri's Code") { [weak terminal] in
+                    terminal.showNotice(String(localized: "Claude Code asks once whether it may work on Tiri's own code."), actionTitle: String(localized: "Trust Tiri's Code")) { [weak terminal] in
                         guard let terminal else { return }
                         let screen = terminal.readText(lines: 40)
                         terminal.showNotice(nil)
@@ -639,7 +642,7 @@ struct ChangeMark {
             try? FileManager.default.removeItem(at: YourTiri.readyNote)
             relaunch(into: current)
         } catch {
-            model?.showToast(title: "Couldn't switch", detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
+            model?.showToast(title: String(localized: "Couldn't switch"), detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
         }
     }
 
@@ -668,7 +671,7 @@ struct ChangeMark {
             do {
                 if trial.wasTurnedOff { try repo.turnOn(change) } else { try repo.turnOff(change) }
             } catch {
-                current.notice = "You're back, but “\(change.sentence)” can't be moved in your list until what's being made is finished."
+                current.notice = String(localized: "You're back, but “\(change.sentence)” can't be moved in your list until what's being made is finished.")
             }
         }
         try? current.save()
@@ -697,10 +700,10 @@ struct ChangeMark {
     func applyUpdate() {
         guard let update, update.phase == .ready, AppDelegate.settleUnsavedFiles() else { return }
         do {
-            guard let installed = CopyState.load()?.plainPath else { throw ChangeFailure("Can't find the Tiri that's installed.") }
+            guard let installed = CopyState.load()?.plainPath else { throw ChangeFailure(String(localized: "Can't find the Tiri that's installed.")) }
             try UpdateTools.checkRelease(URL(fileURLWithPath: update.app), replacing: URL(fileURLWithPath: installed))
         } catch {
-            model?.showToast(title: "Couldn't update", detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
+            model?.showToast(title: String(localized: "Couldn't update"), detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
         let current = CopyState.load() ?? CopyState()
@@ -757,7 +760,7 @@ struct ChangeMark {
         updateToast = nil
         if yes {
             startRepairIfAllowed()
-            model?.showToast(title: "\(agentName) is redoing it", detail: "You'll hear when it's done, and it'll do this by itself at future updates.", symbol: "hammer", tint: .accentColor, duration: 10)
+            model?.showToast(title: String(localized: "\(agentName) is redoing it"), detail: String(localized: "You'll hear when it's done, and it'll do this by itself at future updates."), symbol: "hammer", tint: .accentColor, duration: 10)
         } else {
             leaveOutIfRepairsAreOff()
         }
@@ -786,7 +789,7 @@ struct ChangeMark {
         }
         if already { return }
         let workspace = model.workspaces.first { $0.folders == [folder] }?.id
-            ?? model.createWorkspace(name: "Your Tiri", folders: [folder], activating: false, initialTerminal: false).id
+            ?? model.createWorkspace(name: String(localized: "Your Tiri"), folders: [folder], activating: false, initialTerminal: false).id
         try? Self.leaveNote(UpdateTools.repairPrompt(entry, status: update) + Self.cliNote + "\n", named: Self.repairFile)
         let asked = "\(update.name) is out, and my change “\(entry.sentence)” has to be redone to fit it. Everything you need is in \(Self.repairFile), so read that first."
         let command = preset.command + " " + ShellQuote.quote(asked)
@@ -802,33 +805,13 @@ struct ChangeMark {
         let app = explicit ?? state.plainPath ?? Bundle.main.bundlePath
         guard FileManager.default.isExecutableFile(atPath: app + "/Contents/MacOS/Tiri") else {
             // Quitting now would leave nothing running. Opening the app from wherever it is now puts this right.
-            model.showToast(title: "Tiri can't find the app it came from", detail: "Open Tiri from where you've put it, and it'll know.", symbol: "exclamationmark.triangle", tint: .orange, duration: 12)
+            model.showToast(title: String(localized: "Tiri can't find the app it came from"), detail: String(localized: "Open Tiri from where you've put it, and it'll know."), symbol: "exclamationmark.triangle", tint: .orange, duration: 12)
             return
         }
-        model.keepTerminalsThroughQuit = true
-        model.skipQuitConfirmation = true
-        // -n, because the app it opens may still be there, waiting to see that this copy stayed up, and
-        // being asked to open by something already running only brings it forward.
-        var script = "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.02; done; exec /usr/bin/open -n"
-        if AppModel.isTestCopy {
-            script += " -g"
-            for (key, value) in ProcessInfo.processInfo.environment where (key.hasPrefix("TIRI_") && key != "TIRI_PLAIN_ONCE" && key != "TIRI_DEV_OPTION") || key == "CODEX_HOME" || key == "GROK_HOME" {
-                script += " --env " + ShellQuote.quote("\(key)=\(value)")
-            }
-        }
-        script += " " + ShellQuote.quote(app)
-        if !arguments.isEmpty { script += " --args " + arguments.map(ShellQuote.quote).joined(separator: " ") }
-        let helper = Process()
-        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
-        helper.arguments = ["-c", script]
-        helper.standardInput = FileHandle.nullDevice
-        helper.standardOutput = FileHandle.nullDevice
-        helper.standardError = FileHandle.nullDevice
-        guard (try? helper.run()) != nil else {
-            model.showToast(title: "Couldn't restart Tiri", detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
+        guard model.relaunch(app: app, arguments: arguments) else {
+            model.showToast(title: String(localized: "Couldn't restart Tiri"), detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
-        NSApp.terminate(nil)
     }
 
     /// The feed named in a release. A build from source has none, and a test copy can be given one.
@@ -844,11 +827,11 @@ struct ChangeMark {
     /// Check for Updates…: now, whatever the power or the hour, and it says what it found.
     func checkForUpdatesNow() {
         guard let feed = Self.updateFeed else {
-            model?.showToast(title: "This copy doesn't look for updates", detail: "It was built from source. Pull and build to update it.", symbol: "arrow.down.circle", tint: .secondary)
+            model?.showToast(title: String(localized: "This copy doesn't look for updates"), detail: String(localized: "It was built from source. Pull and build to update it."), symbol: "arrow.down.circle", tint: .secondary)
             return
         }
         let tiri = Bundle.main.resourceURL?.appendingPathComponent("bin/tiri").path ?? "tiri"
-        let checking = model?.showToast(title: "Looking for a newer Tiri…", detail: nil, symbol: "arrow.down.circle", tint: .secondary, duration: 60)
+        let checking = model?.showToast(title: String(localized: "Looking for a newer Tiri…"), detail: nil, symbol: "arrow.down.circle", tint: .secondary, duration: 60)
         Task { [weak self] in
             let result = await Task.detached { Tool.run(tiri, ["update", "check", "--feed", feed]) }.value
             guard let self, let model = self.model else { return }
@@ -856,9 +839,9 @@ struct ChangeMark {
             self.refresh()
             let said = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             if !result.ok {
-                model.showToast(title: "Couldn't look for updates", detail: said.isEmpty ? nil : said, symbol: "exclamationmark.triangle", tint: .orange, duration: 10)
+                model.showToast(title: String(localized: "Couldn't look for updates"), detail: said.isEmpty ? nil : said, symbol: "exclamationmark.triangle", tint: .orange, duration: 10)
             } else if self.update == nil {
-                model.showToast(title: "You have the newest Tiri", detail: "Tiri \(Self.version)", symbol: "checkmark.circle", tint: .secondary)
+                model.showToast(title: String(localized: "You have the newest Tiri"), detail: String(localized: "Tiri \(Self.version)"), symbol: "checkmark.circle", tint: .secondary)
             }
             // Otherwise the bottom bar now offers it, as it does after a look of its own.
         }
@@ -919,7 +902,7 @@ struct ChangeMark {
             guard let self else { return }
             self.toggling.remove(change.id)
             if !result.ok {
-                self.model?.showToast(title: "Couldn't turn that \(on ? "on" : "off")", detail: result.output.trimmingCharacters(in: .whitespacesAndNewlines),
+                self.model?.showToast(title: on ? String(localized: "Couldn't turn that on") : String(localized: "Couldn't turn that off"), detail: result.output.trimmingCharacters(in: .whitespacesAndNewlines),
                                       symbol: "exclamationmark.triangle", tint: .orange, duration: 12)
             }
             self.refresh()
@@ -935,6 +918,6 @@ extension AppModel {
             if found.id != activeID { switchWorkspace(found.id) }
             return found.id
         }
-        return createWorkspace(name: "Your Tiri", folders: [folder], initialTerminal: false).id
+        return createWorkspace(name: String(localized: "Your Tiri"), folders: [folder], initialTerminal: false).id
     }
 }

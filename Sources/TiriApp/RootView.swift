@@ -33,7 +33,7 @@ struct RootView: View {
                 DetailView()
                     .toolbar { MainToolbar() }
             }
-            .navigationTitle(here.active.name)
+            .navigationTitle(here.active.shownName)
             .navigationSubtitle(subtitle)
             .background(WindowAccessor { [windowID] window in model.windowDidAppear(window, id: windowID) })
             // What floats over a window, and dragging a tab, belong to the window in front.
@@ -52,7 +52,7 @@ struct RootView: View {
         case 1:
             if let host = here.active.remote { return SSHConfigFile.displayName(of: host) + ": " + model.prettyPath(folders[0]) }
             return (folders[0] as NSString).abbreviatingWithTildeInPath
-        default: return "\(folders.count) folders"
+        default: return String(localized: "\(folders.count) folders")
         }
     }
 }
@@ -108,12 +108,12 @@ struct MainToolbar: ToolbarContent {
             Button { model.splitActive(.right) } label: {
                 Label("Split Right", systemImage: "rectangle.split.2x1")
             }
-            .help(String("Split Right (⌘\\)"))
+            .help(String(localized: "Split Right (⌘\\)"))
 
             Button { model.splitActive(.down) } label: {
                 Label("Split Down", systemImage: "rectangle.split.1x2")
             }
-            .help(String("Split Down (⌘K ⌘\\)"))
+            .help(String(localized: "Split Down (⌘K ⌘\\)"))
         }
     }
 }
@@ -152,8 +152,8 @@ enum NewMenu {
             }
         }
         menu.addItem(.separator())
-        menu.addItem(item("Past Conversations…") { model.openConversationPicker() })
-        menu.addItem(item("Manage Agents…") { model.openAgentSettings() })
+        menu.addItem(item(String(localized: "Past Conversations…")) { model.openConversationPicker() })
+        menu.addItem(item(String(localized: "Manage Agents…")) { model.openAgentSettings() })
         // Under the button that was pressed, the way a toolbar menu opens.
         guard let event = NSApp.currentEvent, let window = event.window, let content = window.contentView else {
             menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
@@ -511,13 +511,13 @@ struct EmptyGroupView: View {
                 VStack(spacing: 22) {
                     agentTiles
                     StartList {
-                        StartRow(title: "Past Conversations", symbol: "clock.arrow.circlepath", shortcut: model.shortcutSymbol(for: "conversations")) { model.openConversationPicker() }
-                        StartRow(title: "Open a File", symbol: "doc", shortcut: model.shortcutSymbol(for: "quickOpen")) { model.run("quickOpen") }
-                        StartRow(title: "New Terminal", symbol: "terminal", shortcut: model.shortcutSymbol(for: "newTerminal")) { model.run("newTerminal") }
+                        StartRow(title: String(localized: "Past Conversations"), symbol: "clock.arrow.circlepath", shortcut: model.shortcutSymbol(for: "conversations")) { model.openConversationPicker() }
+                        StartRow(title: String(localized: "Open a File"), symbol: "doc", shortcut: model.shortcutSymbol(for: "quickOpen")) { model.run("quickOpen") }
+                        StartRow(title: String(localized: "New Terminal"), symbol: "terminal", shortcut: model.shortcutSymbol(for: "newTerminal")) { model.run("newTerminal") }
                         if model.yourTiri.entriesAreOn {
-                            StartRow(title: "Change Tiri", symbol: "wand.and.stars", shortcut: nil) { model.yourTiri.beginChange(surface: nil) }
+                            StartRow(title: String(localized: "Change Tiri"), symbol: "wand.and.stars", shortcut: nil) { model.yourTiri.beginChange(surface: nil) }
                         }
-                        StartRow(title: "All Commands", symbol: "command", shortcut: model.shortcutSymbol(for: "commandPalette")) { model.run("commandPalette") }
+                        StartRow(title: String(localized: "All Commands"), symbol: "command", shortcut: model.shortcutSymbol(for: "commandPalette")) { model.run("commandPalette") }
                     }
                 }
             }
@@ -576,7 +576,7 @@ struct EmptyGroupView: View {
                 AgentTileLabel(name: preset.name, symbol: symbol)
             }
             .buttonStyle(.plain)
-            .help(here.active.folders.isEmpty ? "Choose a folder, then start \(preset.name) there" : "Start \(preset.name)")
+            .help(here.active.folders.isEmpty ? String(localized: "Choose a folder, then start \(preset.name) there") : String(localized: "Start \(preset.name)"))
         }
     }
 
@@ -585,13 +585,13 @@ struct EmptyGroupView: View {
         let noAgents = model.availableCommands != nil && model.runnableAgentPresets().isEmpty
         return VStack(spacing: 22) {
             VStack(spacing: 4) {
-                Text(noneOn ? "No agents are on" : (noAgents ? "No agents found" : "Start an agent"))
+                Text(noneOn ? String(localized: "No agents are on") : (noAgents ? String(localized: "No agents found") : String(localized: "Start an agent")))
                     .font(.title3.weight(.semibold))
                 Text(noneOn
-                     ? "Turn on the ones you use, and they'll be here."
+                     ? String(localized: "Turn on the ones you use, and they'll be here.")
                      : noAgents
-                     ? "Tiri works with the CLI agents you already use, and your shell can't find one yet. Once you've installed one, it appears here."
-                     : "Choose the folder it works in, and it starts there.")
+                     ? String(localized: "Tiri works with the CLI agents you already use, and your shell can't find one yet. Once you've installed one, it appears here.")
+                     : String(localized: "Choose the folder it works in, and it starts there."))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 380)
@@ -604,7 +604,7 @@ struct EmptyGroupView: View {
                 HStack(spacing: 18) {
                     ForEach(model.agentEntries.filter(\.isEnabled)) { entry in
                         if let website = entry.profile?.website, let url = URL(string: website) {
-                            Link("Get \(entry.name)", destination: url)
+                            Link(String(localized: "Get \(entry.name)"), destination: url)
                         }
                     }
                 }
@@ -612,12 +612,12 @@ struct EmptyGroupView: View {
                 agentTiles
             }
             StartList {
-                StartRow(title: "Past Conversations", symbol: "clock.arrow.circlepath", shortcut: model.shortcutSymbol(for: "conversations")) { model.openConversationPicker() }
-                StartRow(title: "Shell", symbol: "terminal", shortcut: model.shortcutSymbol(for: "newTerminal")) { model.startTerminal() }
-                StartRow(title: "Open a Folder", symbol: "folder", shortcut: nil) { model.chooseFolderForActiveWorkspace { _ in } }
-                StartRow(title: "Connect to a Server", symbol: "server.rack", shortcut: nil) { model.connectToServerInteractive() }
+                StartRow(title: String(localized: "Past Conversations"), symbol: "clock.arrow.circlepath", shortcut: model.shortcutSymbol(for: "conversations")) { model.openConversationPicker() }
+                StartRow(title: String(localized: "Shell"), symbol: "terminal", shortcut: model.shortcutSymbol(for: "newTerminal")) { model.startTerminal() }
+                StartRow(title: String(localized: "Open a Folder"), symbol: "folder", shortcut: nil) { model.chooseFolderForActiveWorkspace { _ in } }
+                StartRow(title: String(localized: "Connect to a Server"), symbol: "server.rack", shortcut: nil) { model.connectToServerInteractive() }
                 if model.yourTiri.entriesAreOn {
-                    StartRow(title: "Change Tiri", symbol: "wand.and.stars", shortcut: nil) { model.yourTiri.beginChange(surface: nil) }
+                    StartRow(title: String(localized: "Change Tiri"), symbol: "wand.and.stars", shortcut: nil) { model.yourTiri.beginChange(surface: nil) }
                 }
             }
         }
@@ -840,7 +840,7 @@ struct FileActions: View {
             .buttonStyle(.plain)
             .foregroundStyle(diff.isSideBySide ? Color.accentColor : .secondary)
             .disabled(diff.isTooNarrowForTwoColumns)
-            .help(diff.isTooNarrowForTwoColumns ? "There isn't room here for side by side" : (diff.isSideBySide ? "Show in one column" : "Show side by side"))
+            .help(diff.isTooNarrowForTwoColumns ? String(localized: "There isn't room here for side by side") : (diff.isSideBySide ? String(localized: "Show in one column") : String(localized: "Show side by side")))
             .accessibilityLabel("Side by Side")
             .accessibilityAddTraits(diff.isSideBySide ? .isSelected : [])
             Button {
@@ -884,8 +884,8 @@ struct FileActions: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(document.forceDarkActive ? Color.accentColor : .secondary)
-            .help(document.forceDarkActive ? "Showing dark. Click for true colors" : "Show this document dark")
-            .accessibilityLabel(document.forceDarkActive ? "True Colors" : "Show Dark")
+            .help(document.forceDarkActive ? String(localized: "Showing dark. Click for true colors") : String(localized: "Show this document dark"))
+            .accessibilityLabel(document.forceDarkActive ? String(localized: "True Colors") : String(localized: "Show Dark"))
         }
         if here.accessReady, let pdf = (model.controller(for: item.id) as? TextController)?.compiledPDF {
             Button {
@@ -909,14 +909,16 @@ struct FileActions: View {
             Button {
                 model.toggleMarkdownSource(item.id)
             } label: {
-                Label(markdown.showingSource ? "Rendered" : "Source",
+                Label(markdown.showingSource ? String(localized: "Rendered") : String(localized: "Source"),
                       systemImage: markdown.showingSource ? "eye" : "chevron.left.forwardslash.chevron.right")
                     .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
             .font(.caption)
-            .help(markdown.showingSource ? "Show rendered \(markdown.kindName)" : "Show \(markdown.kindName) source")
+            .help(markdown.isNotebook
+                  ? (markdown.showingSource ? String(localized: "Show rendered notebook") : String(localized: "Show notebook source"))
+                  : (markdown.showingSource ? String(localized: "Show rendered markdown") : String(localized: "Show markdown source")))
         }
         OpenElsewhereButton(page: model.controller(for: item.id) as? WebController, path: path)
     }
@@ -950,7 +952,7 @@ struct Breadcrumbs: View {
                             if index < parts.count - 1 { model.revealOrOffer(path: part.path) }
                         }
                         .accessibilityAddTraits(index < parts.count - 1 ? .isButton : [])
-                        .accessibilityHint(index < parts.count - 1 ? "Reveals it in the explorer" : "")
+                        .accessibilityHint(index < parts.count - 1 ? String(localized: "Reveals it in the explorer") : "")
                         .accessibilityAction { if index < parts.count - 1 { model.revealOrOffer(path: part.path) } }
                 }
             }
@@ -988,9 +990,9 @@ struct WebHeader: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            navigationButton("chevron.left", "Back", enabled: controller.canGoBack) { controller.goBack() }
-            navigationButton("chevron.right", "Forward", enabled: controller.canGoForward) { controller.goForward() }
-            navigationButton(controller.isLoading ? "xmark" : "arrow.clockwise", "Reload", enabled: true) {
+            navigationButton("chevron.left", String(localized: "Back"), enabled: controller.canGoBack) { controller.goBack() }
+            navigationButton("chevron.right", String(localized: "Forward"), enabled: controller.canGoForward) { controller.goForward() }
+            navigationButton(controller.isLoading ? "xmark" : "arrow.clockwise", String(localized: "Reload"), enabled: true) {
                 if controller.isLoading { controller.webView.stopLoading() } else { controller.reload() }
             }
             TextField("Address", text: $controller.addressText)
@@ -1031,8 +1033,8 @@ struct WebHeader: View {
             .foregroundStyle(controller.forceDarkActive ? Color.accentColor : .secondary)
             .frame(width: 24, height: 24)
             .contentShape(Rectangle())
-            .help(controller.forceDarkActive ? "Forced dark is on" : "Force dark mode on this page")
-            .accessibilityLabel(controller.forceDarkActive ? "True Colors" : "Show Dark")
+            .help(controller.forceDarkActive ? String(localized: "Forced dark is on") : String(localized: "Force dark mode on this page"))
+            .accessibilityLabel(controller.forceDarkActive ? String(localized: "True Colors") : String(localized: "Show Dark"))
             OpenElsewhereButton(page: controller, path: filePath)
         }
         .padding(.horizontal, 8)
@@ -1069,11 +1071,11 @@ struct FindBar: View {
     /// `3 of 14`, where it's known, and `No results` when it's none.
     private var status: String? {
         guard let find = model.find else { return nil }
-        if let replaced = find.replacedCount { return replaced == 1 ? "Replaced 1" : "Replaced \(replaced)" }
+        if let replaced = find.replacedCount { return replaced == 1 ? String(localized: "Replaced 1") : String(localized: "Replaced \(replaced)") }
         if find.query.isEmpty { return nil }
-        if find.notFound || find.total == 0 { return "No results" }
+        if find.notFound || find.total == 0 { return String(localized: "No results") }
         guard let total = find.total else { return nil }
-        return find.current > 0 ? "\(find.current) of \(total)" : "\(total) found"
+        return find.current > 0 ? String(localized: "\(find.current) of \(total)") : String(localized: "\(total) found")
     }
 
     var body: some View {
@@ -1097,8 +1099,8 @@ struct FindBar: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("Replace (\(model.shortcutSymbol(for: "findReplace") ?? "⌥⌘F"))")
-                    .accessibilityLabel(model.find?.showReplace == true ? "Hide Replace" : "Show Replace")
+                    .help(String(localized: "Replace (\(model.shortcutSymbol(for: "findReplace") ?? "⌥⌘F"))"))
+                    .accessibilityLabel(model.find?.showReplace == true ? String(localized: "Hide Replace") : String(localized: "Show Replace"))
                 } else {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 }
@@ -1198,7 +1200,7 @@ struct ChromeOverlays: View {
                 .padding(.vertical, 9)
                 .tiriGlass(in: .rect(cornerRadius: 14))
                 .accessibilityElement(children: .contain)
-                .accessibilityLabel(banner.isError ? "Problem" : "Notice")
+                .accessibilityLabel(banner.isError ? String(localized: "Problem") : String(localized: "Notice"))
                 .transition(AccessibilityDisplay.shared.slide(from: .top))
             }
             if let palette = model.palette {
@@ -1340,12 +1342,12 @@ private struct NotebookBar: View {
 
     private var status: String {
         switch kernel.state {
-        case .off: kernel.title ?? "Kernel"
-        case .finding: "Finding Python…"
-        case .starting: "Starting…"
-        case .reconnecting: "Reconnecting…"
-        case .stopped: "Stopped"
-        case .idle, .busy: kernel.question != nil ? "Waiting for input" : kernel.title ?? "Kernel"
+        case .off: kernel.title ?? String(localized: "Kernel")
+        case .finding: String(localized: "Finding Python…")
+        case .starting: String(localized: "Starting…")
+        case .reconnecting: String(localized: "Reconnecting…")
+        case .stopped: String(localized: "Stopped")
+        case .idle, .busy: kernel.question != nil ? String(localized: "Waiting for input") : kernel.title ?? String(localized: "Kernel")
         }
     }
 
@@ -1388,6 +1390,6 @@ private struct NotebookBar: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help(kernel.pythonPath ?? "Which Python runs this notebook")
+        .help(kernel.pythonPath ?? String(localized: "Which Python runs this notebook"))
     }
 }

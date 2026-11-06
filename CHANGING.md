@@ -55,6 +55,13 @@ the change is written for it.
 - Don't reformat, rename or tidy anything you didn't have to touch. Each line you leave alone can't conflict.
 - Only ever change what was asked for. Each extra thing is one more way to fail later.
 
+## Words on screen
+
+Tiri speaks English, Simplified Chinese and Traditional Chinese. Write new words in English, and add each one to
+the end of both `Resources/Localization/zh-Hans.lproj/Localizable.strings` and `zh-Hant.lproj`, in the person's
+words if they gave any. `Resources/Localization/README.md` says how, and `swift test --filter LocalizationTests`
+says what's missing. Prompts for agents and `tiri` output stay English.
+
 ## Checks
 
 Write `checks/<id>.sh`. `tiri change start` tells you the id. It runs with `tiri` on the PATH, talking to a real,

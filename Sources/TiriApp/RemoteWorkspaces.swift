@@ -446,8 +446,9 @@ final class RemoteManager {
             done(paths.map { connection.map.remote($0) ?? $0 })
             return
         }
-        let name = locals.count == 1 ? (locals[0] as NSString).lastPathComponent : "\(locals.count) files"
-        model.showToast(title: "Sending \(name) to \(SSHConfigFile.displayName(of: destination))", detail: nil, symbol: "arrow.up.circle", tint: .secondary)
+        let host = SSHConfigFile.displayName(of: destination)
+        let sending = locals.count == 1 ? String(localized: "Sending \((locals[0] as NSString).lastPathComponent) to \(host)") : String(localized: "Sending \(locals.count) files to \(host)")
+        model.showToast(title: sending, detail: nil, symbol: "arrow.up.circle", tint: .secondary)
         Task { [weak self] in
             let (mapped, failed) = await Task.detached(priority: .userInitiated) { () -> ([String], String?) in
                 let base = (bin as NSString).deletingLastPathComponent + "/tmp"
@@ -472,7 +473,7 @@ final class RemoteManager {
                 return (mapped, failed)
             }.value
             if let failed {
-                self?.model.showToast(title: "Couldn't send \(failed) to the server", detail: "A folder or something unreadable, or the connection dropped.",
+                self?.model.showToast(title: String(localized: "Couldn't send \(failed) to the server"), detail: String(localized: "A folder or something unreadable, or the connection dropped."),
                                       symbol: "exclamationmark.triangle", tint: .orange)
             }
             done(mapped)
@@ -509,13 +510,13 @@ final class RemoteManager {
         // A forward can always be asked for. Only connecting says whether anything's at the other end.
         let answers = await Task.detached(priority: .userInitiated) { RemoteConnection.portAnswers(local) }.value
         if !answers {
-            model.showToast(title: "Nothing answered on port \(port)", detail: "It may not be running yet, or \(SSHConfigFile.displayName(of: destination)) may not allow forwarding.",
+            model.showToast(title: String(localized: "Nothing answered on port \(port)"), detail: String(localized: "It may not be running yet, or \(SSHConfigFile.displayName(of: destination)) may not allow forwarding."),
                             symbol: "exclamationmark.triangle", tint: .orange)
         }
         parts.host = "localhost"
         parts.port = local
         if local != port {
-            model.showToast(title: "Port \(port) on the server is localhost:\(local) here", detail: nil, symbol: "arrow.left.arrow.right", tint: .secondary)
+            model.showToast(title: String(localized: "Port \(port) on the server is localhost:\(local) here"), detail: nil, symbol: "arrow.left.arrow.right", tint: .secondary)
         }
         return parts.url
     }
@@ -532,10 +533,10 @@ final class RemoteManager {
                 guard case .failure(let failure) = result else { return }
                 let destination = SSHConfigFile.displayName(of: connection.destination)
                 if connection.state.isReady {
-                    self?.model.showToast(title: "Couldn't save \(name) on \(destination)", detail: failure.description + " Your edit is safe here.",
+                    self?.model.showToast(title: String(localized: "Couldn't save \(name) on \(destination)"), detail: String(localized: "\(failure.description) Your edit is safe here."),
                                           symbol: "exclamationmark.triangle", tint: .orange)
                 } else {
-                    self?.model.showToast(title: "\(name) will save when \(destination) is back", detail: "Your edit is safe here.",
+                    self?.model.showToast(title: String(localized: "\(name) will save when \(destination) is back"), detail: String(localized: "Your edit is safe here."),
                                           symbol: "clock.arrow.circlepath", tint: .secondary)
                 }
             }
@@ -548,10 +549,10 @@ final class RemoteManager {
         let name = (local as NSString).lastPathComponent
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "\(name) changed on \(SSHConfigFile.displayName(of: connection.destination)) while your save was waiting"
-        alert.informativeText = "Keep yours, which replaces what's there now, or keep theirs, which throws away your edit."
-        alert.addButton(withTitle: "Keep Mine")
-        alert.addButton(withTitle: "Keep Theirs")
+        alert.messageText = String(localized: "\(name) changed on \(SSHConfigFile.displayName(of: connection.destination)) while your save was waiting")
+        alert.informativeText = String(localized: "Keep yours, which replaces what's there now, or keep theirs, which throws away your edit.")
+        alert.addButton(withTitle: String(localized: "Keep Mine"))
+        alert.addButton(withTitle: String(localized: "Keep Theirs"))
         let decide: (NSApplication.ModalResponse) -> Void = { response in
             if response == .alertFirstButtonReturn { connection.keepMine(local) } else { connection.keepTheirs(local) }
         }
@@ -567,7 +568,7 @@ final class RemoteManager {
         let key = "saidCaseCollision.\(destination)"
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         UserDefaults.standard.set(true, forKey: key)
-        model.showToast(title: "Some files on \(SSHConfigFile.displayName(of: destination)) differ only by case", detail: "This Mac can only show one of each, like \((holder as NSString).lastPathComponent). The terminal sees them all.",
+        model.showToast(title: String(localized: "Some files on \(SSHConfigFile.displayName(of: destination)) differ only by case"), detail: String(localized: "This Mac can only show one of each, like \((holder as NSString).lastPathComponent). The terminal sees them all."),
                         symbol: "textformat.size", tint: .secondary)
     }
 
@@ -688,9 +689,9 @@ final class RemoteManager {
             let text = await Task.detached(priority: .utility) { RemoteManager.readConfig(path, on: connection) }.value
             guard let self, let text, !AgentHooks.isInstalled(tool, in: text) else { return }
             let name = SSHConfigFile.displayName(of: destination)
-            self.model.showToast(title: "Get exact status from \(tool.title)?", detail: "On \(name), Tiri is estimating when it's working or done.",
-                                 symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up", duration: nil,
-                                 other: ("Not Now", answered), closed: answered) { [weak self] in
+            self.model.showToast(title: String(localized: "Get exact status from \(tool.title)?"), detail: String(localized: "On \(name), Tiri is estimating when it's working or done."),
+                                 symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: String(localized: "Set Up"), duration: nil,
+                                 other: (String(localized: "Not Now"), answered), closed: answered) { [weak self] in
                 answered()
                 self?.confirmHooks(tool, on: destination)
             }
@@ -716,10 +717,10 @@ final class RemoteManager {
         guard let window = model.window, let path = hookConfigPath(tool), let connection = connections[destination] else { return }
         let name = SSHConfigFile.displayName(of: destination)
         let alert = NSAlert()
-        alert.messageText = "Tell Tiri exactly what \(tool.title) is doing on \(name)?"
-        alert.informativeText = "Tiri adds a small hook to ~/\(path) on \(name), and keeps a copy of the file next to it. The hook does nothing outside Tiri.\n\n" + AgentHooks.summary(of: tool)
-        alert.addButton(withTitle: "Install")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Tell Tiri exactly what \(tool.title) is doing on \(name)?")
+        alert.informativeText = String(localized: "Tiri adds a small hook to ~/\(path) on \(name), and keeps a copy of the file next to it. The hook does nothing outside Tiri.") + "\n\n" + AgentHooks.summary(of: tool)
+        alert.addButton(withTitle: String(localized: "Install"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 guard response == .alertFirstButtonReturn else { return }
@@ -733,7 +734,7 @@ final class RemoteManager {
             let problem: String? = await Task.detached(priority: .userInitiated) { () -> String? in
                 let quoted = "\"$HOME\"/" + ShellQuote.quote(path)
                 // A failed read must never look like an empty file, or their settings would be replaced.
-                guard let existing = RemoteManager.readConfig(path, on: connection) else { return "Couldn't read \(path) on the server." }
+                guard let existing = RemoteManager.readConfig(path, on: connection) else { return String(localized: "Couldn't read \(path) on the server.") }
                 do {
                     let updated = try AgentHooks.installing(tool, in: existing)
                     let script = """
@@ -741,16 +742,16 @@ final class RemoteManager {
                     [ ! -e \(quoted) ] || [ -e \(quoted).tiri-backup ] || cp \(quoted) \(quoted).tiri-backup
                     cat > \(quoted).tiri-new && mv \(quoted).tiri-new \(quoted)
                     """
-                    guard connection.run(script, stdin: Data(updated.utf8), timeout: 15)?.succeeded == true else { return "The server wouldn't take the change." }
+                    guard connection.run(script, stdin: Data(updated.utf8), timeout: 15)?.succeeded == true else { return String(localized: "The server wouldn't take the change.") }
                     return nil
                 } catch {
                     return "\(error)"
                 }
             }.value
             if let problem {
-                self?.model.showToast(title: "Couldn't change \(tool.title)'s config", detail: problem, symbol: "exclamationmark.triangle", tint: .orange)
+                self?.model.showToast(title: String(localized: "Couldn't change \(tool.title)'s config"), detail: problem, symbol: "exclamationmark.triangle", tint: .orange)
             } else {
-                self?.model.showToast(title: "\(tool.title) hooks are on", detail: "New \(tool.title) sessions on this server report their status exactly.",
+                self?.model.showToast(title: String(localized: "\(tool.title) hooks are on"), detail: String(localized: "New \(tool.title) sessions on this server report their status exactly."),
                                       symbol: "checkmark.circle.fill", tint: .green)
             }
         }
@@ -932,7 +933,7 @@ final class RemoteFileController: ItemController {
     private unowned let model: AppModel
     private let spinner = NSProgressIndicator()
     private let label = NSTextField(labelWithString: "")
-    private let retry = NSButton(title: "Try Again", target: nil, action: nil)
+    private let retry = NSButton(title: String(localized: "Try Again"), target: nil, action: nil)
 
     init(itemID: ItemID, path: String, model: AppModel) {
         self.itemID = itemID
@@ -974,8 +975,8 @@ final class RemoteFileController: ItemController {
 
     private static func waitingText(path: String) -> String {
         let name = (path as NSString).lastPathComponent
-        guard let size = RemoteRegistry.shared.connection(forLocal: path)?.record(forLocal: path)?.size, size > 5_000_000 else { return "Getting \(name)…" }
-        return "Getting \(name), \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))…"
+        guard let size = RemoteRegistry.shared.connection(forLocal: path)?.record(forLocal: path)?.size, size > 5_000_000 else { return String(localized: "Getting \(name)…") }
+        return String(localized: "Getting \(name), \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))…")
     }
 
     func showFailure(_ message: String) {
@@ -1006,7 +1007,7 @@ extension AppModel {
     /// Connect to Server…: the hosts in `~/.ssh/config`, the ones used before, or anything typed.
     func connectToServerInteractive() {
         let manager = remote
-        openPalette(.dynamic(title: "Connect to a server. Type a host from your SSH config, or user@host.", provider: { query, deliver in
+        openPalette(.dynamic(title: String(localized: "Connect to a server. Type a host from your SSH config, or user@host."), provider: { query, deliver in
             MainActor.assumeIsolated {
                 deliver(manager.hostRows(query: query))
             }
@@ -1018,7 +1019,7 @@ extension AppModel {
         let name = SSHConfigFile.displayName(of: destination)
         // Already up: straight on, with nothing to say about it.
         let toast = remote.existingConnection(destination)?.state.isReady == true ? nil
-            : showToast(title: "Connecting to \(name)…", detail: nil, symbol: "server.rack", tint: .secondary)
+            : showToast(title: String(localized: "Connecting to \(name)…"), detail: nil, symbol: "server.rack", tint: .secondary)
         remote.whenReady(destination) { [weak self] result in
             guard let self else { return }
             if let toast { self.dismissToast(toast) }
@@ -1027,16 +1028,17 @@ extension AppModel {
                 self.remote.remember(destination: destination, folder: nil)
                 self.chooseRemoteFolder(on: destination)
             case .failure(let failure):
-                self.showToast(title: "Couldn't connect", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
-                               actionTitle: "Try Again") { [weak self] in self?.connect(to: destination) }
+                self.showToast(title: String(localized: "Couldn't connect"), detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
+                               actionTitle: String(localized: "Try Again")) { [weak self] in self?.connect(to: destination) }
             }
         }
     }
 
     func chooseRemoteFolder(on destination: String, adding: Bool = false) {
         let manager = remote
-        let action = adding ? "adds" : "opens"
-        openPalette(.dynamic(title: "Folder on \(SSHConfigFile.displayName(of: destination)). Type a path, ↩ \(action) it.", provider: { query, deliver in
+        let host = SSHConfigFile.displayName(of: destination)
+        let title = adding ? String(localized: "Folder on \(host). Type a path, ↩ adds it.") : String(localized: "Folder on \(host). Type a path, ↩ opens it.")
+        openPalette(.dynamic(title: title, provider: { query, deliver in
             MainActor.assumeIsolated { manager.folderRows(query: query, destination: destination, adding: adding, deliver: deliver) }
         }))
     }
@@ -1060,20 +1062,21 @@ extension AppModel {
     /// A Remote-SSH workspace from Cursor or VS Code: connects, then opens its folders together.
     func importRemoteWorkspace(_ imported: CodeWorkspaceImporter.Imported, host: String) {
         let name = SSHConfigFile.displayName(of: host)
-        let toast = showToast(title: "Connecting to \(name)…", detail: nil, symbol: "server.rack", tint: .secondary)
+        let toast = showToast(title: String(localized: "Connecting to \(name)…"), detail: nil, symbol: "server.rack", tint: .secondary)
         remote.whenReady(host) { [weak self] result in
             guard let self else { return }
             self.dismissToast(toast)
             switch result {
             case .failure(let failure):
-                self.showToast(title: "Couldn't connect", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
-                               actionTitle: "Try Again") { [weak self] in self?.importRemoteWorkspace(imported, host: host) }
+                self.showToast(title: String(localized: "Couldn't connect"), detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange,
+                               actionTitle: String(localized: "Try Again")) { [weak self] in self?.importRemoteWorkspace(imported, host: host) }
             case .success(let connection):
                 Task {
                     let folders = await Task.detached(priority: .userInitiated) { imported.folders.compactMap { connection.resolveFolder($0) } }.value
                     if folders.count < imported.folders.count {
                         let missing = imported.folders.count - folders.count
-                        self.showToast(title: "\(missing) folder\(missing == 1 ? "" : "s") not found on \(name)", detail: "Imported the rest of \(imported.name)",
+                        let title = missing == 1 ? String(localized: "1 folder not found on \(name)") : String(localized: "\(missing) folders not found on \(name)")
+                        self.showToast(title: title, detail: String(localized: "Imported the rest of \(imported.name)"),
                                        symbol: "exclamationmark.triangle", tint: .orange)
                     }
                     guard let first = folders.first else { return }
@@ -1128,7 +1131,7 @@ extension RemoteManager {
             })
         }
         if !text.isEmpty, let destination = SSHConfigFile.destination(from: text), !rows.contains(where: { $0.id == destination }) {
-            rows.append(PaletteModel.Row(id: "typed:" + destination, title: "Connect to \(SSHConfigFile.displayName(of: destination))", symbol: "arrow.right.circle") { [weak self] _ in
+            rows.append(PaletteModel.Row(id: "typed:" + destination, title: String(localized: "Connect to \(SSHConfigFile.displayName(of: destination))"), symbol: "arrow.right.circle") { [weak self] _ in
                 self?.model.closePalette(restoreFocus: false)
                 self?.model.connect(to: destination)
             })
@@ -1156,7 +1159,7 @@ extension RemoteManager {
         let directory = text.isEmpty ? home : expand(opensTyped ? String(text.dropLast(text.hasSuffix("/") && text.count > 1 ? 1 : 0)) : (text as NSString).deletingLastPathComponent)
         let filter = opensTyped ? "" : (text as NSString).lastPathComponent
         let openRow: (String) -> PaletteModel.Row = { [weak self] path in
-            PaletteModel.Row(id: "open:" + path, title: (adding ? "Add " : "Open ") + pretty(path), symbol: "folder.badge.plus") { _ in
+            PaletteModel.Row(id: "open:" + path, title: adding ? String(localized: "Add \(pretty(path))") : String(localized: "Open \(pretty(path))"), symbol: "folder.badge.plus") { _ in
                 guard let self else { return }
                 self.model.closePalette()
                 self.resolveAndOpen(path, destination: destination, adding: adding)
@@ -1216,7 +1219,7 @@ extension RemoteManager {
             let resolved = await Task.detached(priority: .userInitiated) { connection.resolveFolder(path) }.value
             guard let self else { return }
             guard let resolved else {
-                self.model.showToast(title: "\(path) isn't a folder on this server", detail: nil, symbol: "questionmark.folder", tint: .orange)
+                self.model.showToast(title: String(localized: "\(path) isn't a folder on this server"), detail: nil, symbol: "questionmark.folder", tint: .orange)
                 return
             }
             if adding {
@@ -1257,7 +1260,7 @@ extension AppModel {
             process.standardError = FileHandle.nullDevice
             if (try? process.run()) != nil { return true }
         }
-        showToast(title: "None of your editors can open a file on a server", detail: "Zed, Cursor and VS Code can.", symbol: "exclamationmark.triangle", tint: .orange)
+        showToast(title: String(localized: "None of your editors can open a file on a server"), detail: String(localized: "Zed, Cursor and VS Code can."), symbol: "exclamationmark.triangle", tint: .orange)
         return true
     }
 }
@@ -1273,18 +1276,21 @@ extension AppModel {
         AppModel.bringAppForward()
         let alert = NSAlert()
         alert.alertStyle = isConfirmation ? .warning : .informational
-        let name = host.isEmpty ? "this server" : host
-        alert.messageText = isConfirmation ? "Trust \(name)?" : "Connecting to \(name)"
+        if host.isEmpty {
+            alert.messageText = isConfirmation ? String(localized: "Trust this server?") : String(localized: "Connecting to this server")
+        } else {
+            alert.messageText = isConfirmation ? String(localized: "Trust \(host)?") : String(localized: "Connecting to \(host)")
+        }
         alert.informativeText = text
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         if isConfirmation {
-            alert.addButton(withTitle: "Trust and Connect")
+            alert.addButton(withTitle: String(localized: "Trust and Connect"))
         } else {
             alert.accessoryView = field
-            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: String(localized: "Continue"))
             alert.window.initialFirstResponder = field
         }
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: String(localized: "Cancel"))
         let response: NSApplication.ModalResponse
         if let window {
             response = await alert.beginSheetModal(for: window)

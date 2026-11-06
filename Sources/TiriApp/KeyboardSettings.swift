@@ -39,7 +39,7 @@ struct KeyboardSettings: View {
     private func jumpMenu(_ sections: [ShortcutSection]) -> some View {
         Menu("Jump To") {
             ForEach(sections) { section in
-                Button(section.name) { model.settingsUI.jump(to: section.name) }
+                Button(section.shownName) { model.settingsUI.jump(to: section.name) }
             }
         }
         .fixedSize()
@@ -65,10 +65,10 @@ struct KeyboardSettings: View {
 
     private var emptyMessage: String {
         let ui = model.settingsUI
-        if !ui.shortcutKeys.isEmpty { return "Nothing uses \(ui.shortcutKeys.map(\.symbol).joined(separator: " ")). It's free to use." }
+        if !ui.shortcutKeys.isEmpty { return String(localized: "Nothing uses \(ui.shortcutKeys.map(\.symbol).joined(separator: " ")). It's free to use.") }
         switch ui.shortcutFilter {
-        case .changed: return "You haven't changed any shortcuts."
-        default: return "No commands here."
+        case .changed: return String(localized: "You haven't changed any shortcuts.")
+        default: return String(localized: "No commands here.")
         }
     }
 
@@ -118,7 +118,7 @@ struct ShortcutJumpList: View {
         let current = sections.contains { $0.name == ui.currentSection } ? ui.currentSection : sections.first?.name
         VStack(alignment: .leading, spacing: 0) {
             ForEach(sections) { section in
-                ShortcutJumpRow(name: section.name, isCurrent: section.name == current)
+                ShortcutJumpRow(name: section.name, shownName: section.shownName, isCurrent: section.name == current)
             }
         }
         .padding(.vertical, 2)
@@ -127,6 +127,7 @@ struct ShortcutJumpList: View {
 
 struct ShortcutJumpRow: View {
     let name: String
+    let shownName: String
     let isCurrent: Bool
     @Environment(AppModel.self) private var model
     @State private var hovering = false
@@ -135,7 +136,7 @@ struct ShortcutJumpRow: View {
         Button {
             model.settingsUI.jump(to: name)
         } label: {
-            Text(name)
+            Text(shownName)
                 .font(.callout)
                 .foregroundStyle(isCurrent ? .primary : .secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -146,7 +147,7 @@ struct ShortcutJumpRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .accessibilityLabel("Jump to \(name)")
+        .accessibilityLabel("Jump to \(shownName)")
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 }
@@ -161,7 +162,7 @@ struct ShortcutSections: View {
         let changed = model.changedShortcuts
         VStack(alignment: .leading, spacing: 20) {
             ForEach(sections) { section in
-                SettingsGroup(section.name) {
+                SettingsGroup(section.shownName) {
                     SettingsCard {
                         ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
                             if index > 0 { SettingsRowDivider() }
@@ -245,7 +246,7 @@ struct ShortcutRowView: View {
                 keysButton
             }
             if isRecording {
-                caption("Press the keys, or ⌫ to remove it. Esc cancels.")
+                caption(String(localized: "Press the keys, or ⌫ to remove it. Esc cancels."))
             }
             if let notice { noticeView(notice) }
         }
@@ -258,7 +259,7 @@ struct ShortcutRowView: View {
         .modifier(RevealableRow(id: command.id))
         .contextMenu {
             Button("Copy Prompt About This Shortcut") {
-                Clipboard.copy("Change the Tiri keyboard shortcut for \"\(command.title)\" (\(command.id)) to what I ask, using `tiri keys set \(command.id) <key>`. Run `tiri keys` to see what's taken. Don't edit any file.")
+                Clipboard.copy("Change the Tiri keyboard shortcut for \"\(command.englishTitle)\" (\(command.id)) to what I ask, using `tiri keys set \(command.id) <key>`. Run `tiri keys` to see what's taken. Don't edit any file.")
             }
             Button("Remove Shortcut") { model.setShortcut(command.id, key: nil) }
             Button("Reset to Default") { model.resetShortcut(command.id) }
@@ -285,8 +286,9 @@ struct ShortcutRowView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(bindings.isEmpty ? "Click, then press the keys" : "Click to change it")
-        .accessibilityLabel(bindings.isEmpty ? "Add a shortcut for \(command.title)" : "Change the shortcut for \(command.title), now \(bindings.map(\.symbol).joined(separator: " or "))")
+        .help(bindings.isEmpty ? String(localized: "Click, then press the keys") : String(localized: "Click to change it"))
+        .accessibilityLabel(bindings.isEmpty ? String(localized: "Add a shortcut for \(command.title)")
+            : String(localized: "Change the shortcut for \(command.title), now \(bindings.map(\.symbol).formatted(.list(type: .or)))"))
     }
 
     @ViewBuilder private var keysLabel: some View {
@@ -329,7 +331,8 @@ struct ShortcutRowView: View {
         case .conflict(_, let key, let holders):
             let symbol = Keymap.parseStrokes(key)?.map(\.symbol).joined(separator: " ") ?? key
             HStack(spacing: 8) {
-                Text("\(symbol) is \(holders.joined(separator: " and ")). Replacing it leaves \(holders.count == 1 ? "that" : "those") without this key.")
+                Text(holders.count == 1 ? String(localized: "\(symbol) is \(holders.formatted(.list(type: .and))). Replacing it leaves that without this key.")
+                    : String(localized: "\(symbol) is \(holders.formatted(.list(type: .and))). Replacing it leaves those without this key."))
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
@@ -403,7 +406,7 @@ struct ShortcutFamilyRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(expanded ? "Hide \(title)" : "Show \(title)")
+            .accessibilityLabel(expanded ? String(localized: "Hide \(title)") : String(localized: "Show \(title)"))
             if expanded {
                 ForEach(members) { member in
                     SettingsRowDivider()

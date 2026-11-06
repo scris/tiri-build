@@ -197,7 +197,7 @@ extension AppModel {
     func goToDefinition() {
         guard let viewer = frontSymbolViewer else { return }
         guard let range = nameAtCursor(in: viewer) else {
-            showToast(title: "Put the cursor on a name first", detail: nil, symbol: "scope", tint: .secondary)
+            showToast(title: String(localized: "Put the cursor on a name first"), detail: nil, symbol: "scope", tint: .secondary)
             return
         }
         goToDefinition(in: viewer, range: range)
@@ -207,7 +207,7 @@ extension AppModel {
     func findReferences() {
         guard let viewer = frontSymbolViewer else { return }
         guard let range = nameAtCursor(in: viewer) else {
-            showToast(title: "Put the cursor on a name first", detail: nil, symbol: "scope", tint: .secondary)
+            showToast(title: String(localized: "Put the cursor on a name first"), detail: nil, symbol: "scope", tint: .secondary)
             return
         }
         let symbol = (viewer.symbolTextView.string as NSString).substring(with: range)
@@ -226,7 +226,7 @@ extension AppModel {
     func showHover() {
         guard let viewer = frontSymbolViewer else { return }
         guard let range = nameAtCursor(in: viewer) else {
-            showToast(title: "Put the cursor on a name first", detail: nil, symbol: "scope", tint: .secondary)
+            showToast(title: String(localized: "Put the cursor on a name first"), detail: nil, symbol: "scope", tint: .secondary)
             return
         }
         presentHover(in: viewer, range: range, explicit: true)
@@ -243,7 +243,7 @@ extension AppModel {
             let problems = known.filter { $0.line <= place.line && place.line <= $0.endLine }
             guard !blocks.isEmpty || !problems.isEmpty else {
                 if explicit {
-                    showToast(title: "Nothing to say about \(symbol)", detail: "A language server has more to say than a search of the files. See Settings.", symbol: "questionmark.circle", tint: .secondary)
+                    showToast(title: String(localized: "Nothing to say about \(symbol)"), detail: String(localized: "A language server has more to say than a search of the files. See Settings."), symbol: "questionmark.circle", tint: .secondary)
                 }
                 return
             }
@@ -284,8 +284,8 @@ extension AppModel {
                     }
                     return
                 }
-                showSymbolResults(found, symbol: symbol, title: { "\($0) definitions of \(symbol). Type to narrow down." },
-                                  emptyTitle: "No definition of \(symbol) found")
+                showSymbolResults(found, symbol: symbol, title: { String(localized: "\($0) definitions of \(symbol). Type to narrow down.") },
+                                  emptyTitle: String(localized: "No definition of \(symbol) found"))
                 return
             }
             let paths = await symbolSearchPaths(for: symbol)
@@ -298,14 +298,14 @@ extension AppModel {
                 searchForReferences(of: symbol, near: path)
                 return
             }
-            showSymbolResults(found, symbol: symbol, title: { "\($0) definitions of \(symbol). Type to narrow down." },
-                              emptyTitle: "No definition of \(symbol) found")
+            showSymbolResults(found, symbol: symbol, title: { String(localized: "\($0) definitions of \(symbol). Type to narrow down.") },
+                              emptyTitle: String(localized: "No definition of \(symbol) found"))
         }
     }
 
     private func showReferences(_ found: [SymbolLocation], symbol: String) {
-        showSymbolResults(found, symbol: symbol, title: { "\($0) uses of \(symbol). Type to narrow down." },
-                          emptyTitle: "No uses of \(symbol) found")
+        showSymbolResults(found, symbol: symbol, title: { String(localized: "\($0) uses of \(symbol). Type to narrow down.") },
+                          emptyTitle: String(localized: "No uses of \(symbol) found"))
     }
 
     private func searchForReferences(of symbol: String, near path: String) {
@@ -328,8 +328,8 @@ extension AppModel {
             return location
         }
         guard let first = found.first else {
-            showToast(title: emptyTitle, detail: "Searched this workspace's files.", symbol: "magnifyingglass", tint: .secondary,
-                      actionTitle: "Search in Files") { [weak self] in
+            showToast(title: emptyTitle, detail: String(localized: "Searched this workspace's files."), symbol: "magnifyingglass", tint: .secondary,
+                      actionTitle: String(localized: "Search in Files")) { [weak self] in
                 guard let self else { return }
                 self.lastSearchQuery = symbol
                 self.palette = PaletteModel(mode: .search, model: self, initialQuery: symbol)

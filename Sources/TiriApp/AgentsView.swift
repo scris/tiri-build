@@ -8,13 +8,16 @@ extension AppModel {
         _ = setSetting("terminal.presets", to: TerminalPreset.json(presets))
     }
 
-    /// Everything that offers agents reads the one list, so this is all it takes.
-    private func changeRoster(_ change: ([TerminalPreset]) throws -> [TerminalPreset]) -> String? {
+    /// Everything that offers agents reads the one list, so this is all it takes. What went wrong is in
+    /// English for `tiri agents`, or in Tiri's language for the screen.
+    private func changeRoster(forScreen: Bool = false, _ change: ([TerminalPreset]) throws -> [TerminalPreset]) -> String? {
         do {
             let updated = try change(settings.terminalPresets)
             if updated != settings.terminalPresets { writePresets(updated) }
             refreshAvailableCommands()
             return nil
+        } catch let problem as AgentRoster.Problem {
+            return forScreen ? problem.shown : problem.description
         } catch {
             return "\(error)"
         }
@@ -32,8 +35,8 @@ extension AppModel {
     }
 
     @discardableResult
-    func addAgent(name: String, command: String) -> String? {
-        let problem = changeRoster { try AgentRoster.add(name: name, command: command, to: $0) }
+    func addAgent(name: String, command: String, forScreen: Bool = false) -> String? {
+        let problem = changeRoster(forScreen: forScreen) { try AgentRoster.add(name: name, command: command, to: $0) }
         if let tool = AgentRoster.tool(of: command), let resume = AgentCatalog.profile(executable: tool)?.continueCommand, problem == nil, settings.terminalResume[tool] == nil {
             setResume(tool, command: resume)
         }
@@ -52,8 +55,8 @@ extension AppModel {
     }
 
     @discardableResult
-    func updateAgent(_ id: String, name: String, command: String) -> String? {
-        changeRoster { try AgentRoster.update(id, name: name, command: command, in: $0) }
+    func updateAgent(_ id: String, name: String, command: String, forScreen: Bool = false) -> String? {
+        changeRoster(forScreen: forScreen) { try AgentRoster.update(id, name: name, command: command, in: $0) }
     }
 
     func setResume(_ tool: String, command: String?) {
@@ -79,7 +82,7 @@ struct AgentsSection: View {
     @State private var adding = false
 
     var body: some View {
-        SettingsGroup("Your Agents", caption: "Tiri only offers the ones that are on, in the + menu and everywhere else.") {
+        SettingsGroup(String(localized: "Your Agents"), caption: String(localized: "Tiri only offers the ones that are on, in the + menu and everywhere else.")) {
             SettingsCard {
                 let entries = model.agentEntries
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
@@ -151,7 +154,7 @@ struct AgentsSection: View {
     }
 
     private func add() {
-        problem = model.addAgent(name: newName, command: newCommand)
+        problem = model.addAgent(name: newName, command: newCommand, forScreen: true)
         guard problem == nil else { return }
         newName = ""
         newCommand = ""
@@ -174,14 +177,14 @@ struct AgentRow: View {
     }
 
     private var detail: String {
-        guard entry.isEnabled else { return "Off. Any session already running carries on." }
-        if isFound == false { return "On, but your shell can't find \(entry.id)." }
+        guard entry.isEnabled else { return String(localized: "Off. Any session already running carries on.") }
+        if isFound == false { return String(localized: "On, but your shell can't find \(entry.id).") }
         guard let agent = entry.agent, agent.profile?.hookInstall != nil else {
-            return "Runs \(entry.command). Tiri guesses when it's working from terminal activity."
+            return String(localized: "Runs \(entry.command). Tiri guesses when it's working from terminal activity.")
         }
-        if model.hooksInstalled(agent) { return "Hooks tell Tiri exactly when it's working, waiting or done." }
-        if let other = model.hooksCoverage(agent) { return "Tells Tiri when it's working through your \(other.title) hooks, once you trust a folder." }
-        return "Tiri guesses when it's working from terminal activity. Hooks tell it exactly."
+        if model.hooksInstalled(agent) { return String(localized: "Hooks tell Tiri exactly when it's working, waiting or done.") }
+        if let other = model.hooksCoverage(agent) { return String(localized: "Tells Tiri when it's working through your \(other.title) hooks, once you trust a folder.") }
+        return String(localized: "Tiri guesses when it's working from terminal activity. Hooks tell it exactly.")
     }
 
     var body: some View {
@@ -214,15 +217,15 @@ struct AgentRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(expanded ? "Hide its commands" : "Its name and commands")
-                .accessibilityLabel(expanded ? "Hide details for \(entry.name)" : "Show details for \(entry.name)")
+                .help(expanded ? String(localized: "Hide its commands") : String(localized: "Its name and commands"))
+                .accessibilityLabel(expanded ? String(localized: "Hide details for \(entry.name)") : String(localized: "Show details for \(entry.name)"))
                 if !rowsStack { actions }
                 Toggle("", isOn: Binding(get: { entry.isEnabled }, set: { model.setAgent(entry.id, enabled: $0) }))
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .accessibilityLabel(entry.name)
-                    .help(entry.isEnabled ? "Turn \(entry.name) off" : "Turn \(entry.name) on")
+                    .help(entry.isEnabled ? String(localized: "Turn \(entry.name) off") : String(localized: "Turn \(entry.name) on"))
                     .accessibilityLabel("Use \(entry.name)")
             }
             if rowsStack { actions.padding(.leading, 38) }
@@ -246,9 +249,13 @@ struct AgentRow: View {
 
     private var details: some View {
         VStack(alignment: .leading, spacing: 6) {
-            field("Name", value: entry.name, placeholder: "Name") { problem = model.updateAgent(entry.id, name: $0, command: entry.command) }
-            field("Command", value: entry.command, placeholder: "What runs it") { problem = model.updateAgent(entry.id, name: entry.name, command: $0) }
-            field("To resume", value: model.settings.terminalResume[entry.id] ?? "", placeholder: "How it comes back after a relaunch") {
+            field(String(localized: "Name"), value: entry.name, placeholder: String(localized: "Name")) {
+                problem = model.updateAgent(entry.id, name: $0, command: entry.command, forScreen: true)
+            }
+            field(String(localized: "Command"), value: entry.command, placeholder: String(localized: "What runs it")) {
+                problem = model.updateAgent(entry.id, name: entry.name, command: $0, forScreen: true)
+            }
+            field(String(localized: "To resume"), value: model.settings.terminalResume[entry.id] ?? "", placeholder: String(localized: "How it comes back after a relaunch")) {
                 model.setResume(entry.id, command: $0.isEmpty ? nil : $0)
             }
             if let problem {

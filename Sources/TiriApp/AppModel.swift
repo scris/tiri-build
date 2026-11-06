@@ -13,10 +13,10 @@ enum TerminalStatus: String {
     var spoken: String? {
         switch self {
         case .idle: nil
-        case .working: "Working"
-        case .needsInput: "Needs input"
-        case .done: "Done"
-        case .exited: "Exited"
+        case .working: String(localized: "Working")
+        case .needsInput: String(localized: "Needs input")
+        case .done: String(localized: "Done")
+        case .exited: String(localized: "Exited")
         }
     }
 }
@@ -151,6 +151,8 @@ final class AppModel {
     @ObservationIgnored var keyResolver = KeyResolver(bindings: Keymap.build(user: []))
     @ObservationIgnored let layoutRegistry = LayoutRegistry()
     @ObservationIgnored let settingsStore = SettingsStore()
+    /// The offer to restart in another language, while it shows.
+    @ObservationIgnored var languageToastID: UUID?
     @ObservationIgnored let fileIndex = FileIndexStore()
     @ObservationIgnored let terminalFolderIndex = FileIndexStore()
     @ObservationIgnored lazy var editorBridge = EditorBridge(model: self)
@@ -362,7 +364,7 @@ final class AppModel {
             live.accessReady = true
             if let first = denied.first {
                 let name = (first as NSString).abbreviatingWithTildeInPath
-                self.banner = AppBanner(message: "macOS is blocking Tiri from reading \(name). Allow it under Privacy & Security > Files and Folders.",
+                self.banner = AppBanner(message: String(localized: "macOS is blocking Tiri from reading \(name). Allow it under Privacy & Security > Files and Folders."),
                                         isError: true, opensPrivacySettings: true)
             }
             self.workspaceReady(id, focus: focus)
@@ -459,7 +461,7 @@ final class AppModel {
             try server.start()
             self.server = server
         } catch {
-            showBanner("Tiri's control socket isn't available: \(error)", isError: true)
+            showBanner(String(localized: "Tiri's control socket isn't available: \(String(describing: error))"), isError: true)
         }
     }
 
@@ -543,7 +545,7 @@ final class AppModel {
         do {
             try store.save(.init(workspaces: workspaces, activeID: activeID, windows: windowPlacements))
         } catch {
-            showBanner("Couldn't save the workspace: \(error.localizedDescription)", isError: true)
+            showBanner(String(localized: "Couldn't save the workspace: \(error.localizedDescription)"), isError: true)
         }
     }
 
@@ -661,7 +663,7 @@ final class AppModel {
 
     func setViewer(_ id: ItemID, to viewer: String) {
         if existingController(for: id)?.isDirty == true {
-            showToast(title: "Save this file first", detail: "It has changes that aren't saved.", symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: String(localized: "Save this file first"), detail: String(localized: "It has changes that aren't saved."), symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
         updateWorkspace(containing: id) { workspace in
@@ -872,7 +874,7 @@ final class AppModel {
         let path = aliasedPath(rawPath, in: target)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
-            if inFront { showToast(title: "No such file", detail: rawPath, symbol: "questionmark.folder", tint: .orange) }
+            if inFront { showToast(title: String(localized: "No such file"), detail: rawPath, symbol: "questionmark.folder", tint: .orange) }
             return nil
         }
         if isDirectory.boolValue {
@@ -1008,7 +1010,7 @@ final class AppModel {
                 self?.openFromTerminal(match, forceTab: forceTab || alternate)
             }
         }
-        openPalette(.choices(title: "\(matches.count) files match \(name). Type to narrow down.", rows: rows))
+        openPalette(.choices(title: String(localized: "\(matches.count) files match \(name). Type to narrow down."), rows: rows))
     }
 
     // MARK: Finding what a terminal path means
@@ -1070,7 +1072,7 @@ final class AppModel {
         Task { [weak self] in
             guard let self else { return }
             guard let local = await self.remote.localURL(for: url, on: destination) else {
-                self.showToast(title: "Couldn't reach that port on the server", detail: url.absoluteString, symbol: "exclamationmark.triangle", tint: .orange)
+                self.showToast(title: String(localized: "Couldn't reach that port on the server"), detail: url.absoluteString, symbol: "exclamationmark.triangle", tint: .orange)
                 return
             }
             self.openWebFromTerminal(local, forceTab: forceTab)
@@ -1111,9 +1113,9 @@ final class AppModel {
             revealInTree(path)
         } else {
             let name = (path as NSString).lastPathComponent
-            showToast(title: "\(name) isn't in this workspace", detail: path, symbol: "folder.badge.plus", tint: .accentColor,
-                      actionTitle: "Add Folder", duration: 10,
-                      other: ("Show in Finder", { [weak self] in self?.showInFinder(path) })) { [weak self] in
+            showToast(title: String(localized: "\(name) isn't in this workspace"), detail: path, symbol: "folder.badge.plus", tint: .accentColor,
+                      actionTitle: String(localized: "Add Folder"), duration: 10,
+                      other: (String(localized: "Show in Finder"), { [weak self] in self?.showInFinder(path) })) { [weak self] in
                 self?.addFolder(path)
                 self?.revealInTree(path)
             }
@@ -1162,7 +1164,7 @@ final class AppModel {
     }
 
     private func onFrontNotebook(_ act: (MarkdownController) -> Void) {
-        if let viewer = frontNotebook { act(viewer) } else { showNotebookNotice("There's no notebook in front.") }
+        if let viewer = frontNotebook { act(viewer) } else { showNotebookNotice(String(localized: "There's no notebook in front.")) }
     }
 
     func notebookCommand(_ id: String) {
@@ -1243,8 +1245,8 @@ final class AppModel {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.message = "Choose the folder \(purpose ?? "this terminal") will work in"
-        panel.prompt = "Choose Folder"
+        panel.message = purpose.map { String(localized: "Choose the folder \($0) will work in") } ?? String(localized: "Choose the folder this terminal will work in")
+        panel.prompt = String(localized: "Choose Folder")
         let workspaceID = activeID
         let finish: (NSApplication.ModalResponse) -> Void = { [weak self] response in
             guard let self, response == .OK, let folder = panel.url?.path,
@@ -1366,12 +1368,12 @@ final class AppModel {
         guard notify, status == .needsInput || status == .done, status != previous, !looking,
               settings.notificationsEnabled, let item = anyItem(id), let workspace = workspace(containing: id) else { return }
         let title = title(for: item)
-        let body = message ?? (status == .needsInput ? "Needs your input" : "Finished")
-        notifier.post(title: title, body: body, subtitle: workspace.name, workspace: workspace.id, item: id)
+        let body = message ?? (status == .needsInput ? String(localized: "Needs your input") : String(localized: "Finished"))
+        notifier.post(title: title, body: body, subtitle: workspace.shownName, workspace: workspace.id, item: id)
         if NSApp.isActive {
             showToast(title: title, detail: body,
                       symbol: status == .needsInput ? "exclamationmark.circle.fill" : "checkmark.circle.fill",
-                      tint: status == .needsInput ? .orange : .green, actionTitle: "Show") { [weak self] in
+                      tint: status == .needsInput ? .orange : .green, actionTitle: String(localized: "Show")) { [weak self] in
                 self?.focusFromNotification(workspace: workspace.id, item: id)
             }
         }
@@ -1413,7 +1415,7 @@ final class AppModel {
             (runtimes[lhs]?.status == .needsInput ? 0 : 1) < (runtimes[rhs]?.status == .needsInput ? 0 : 1)
         }
         guard let first = candidates.first else {
-            showToast(title: "Nothing needs attention", detail: nil, symbol: "checkmark.circle", tint: .secondary)
+            showToast(title: String(localized: "Nothing needs attention"), detail: nil, symbol: "checkmark.circle", tint: .secondary)
             return
         }
         focusItem(first)
@@ -1478,18 +1480,25 @@ final class AppModel {
         }
     }
 
-    func title(for item: Item) -> String {
+    /// What a tab is called on screen.
+    func title(for item: Item) -> String { title(for: item, shown: true) }
+
+    /// The same, with the words Tiri makes up in English, for `tiri`.
+    func englishTitle(for item: Item) -> String { title(for: item, shown: false) }
+
+    private func title(for item: Item, shown: Bool) -> String {
+        let made = shown ? item.shownDefaultTitle : item.defaultTitle
         switch item.content {
         case .terminal(let spec):
             // An agent has one name, wherever it's listed.
             if let row = agentRows.first(where: { $0.item == item.id }) { return row.name == Self.unnamedConversation ? row.agent : row.name }
             if let title = runtimes[item.id]?.title, !title.isEmpty { return title }
-            return spec.isShell ? item.defaultTitle : (spec.title ?? spec.command ?? item.defaultTitle)
+            return spec.isShell ? made : (spec.title ?? spec.command ?? made)
         case .web:
             if let title = (existingController(for: item.id) as? WebController)?.title, !title.isEmpty { return title }
-            return item.defaultTitle
+            return made
         case .file, .settings, .diff, .plugin:
-            return item.defaultTitle
+            return made
         }
     }
 
@@ -1503,10 +1512,10 @@ final class AppModel {
         // A kernel doing work is the same as a terminal doing work, but only one of them says so.
         if confirm, let window, let path = notebookPath(of: id), notebookKernels.existing(for: path)?.isActive == true, otherTab(showing: path, than: id) == nil {
             let alert = NSAlert()
-            alert.messageText = "This notebook is still running"
-            alert.informativeText = "Closing it stops its kernel."
-            alert.addButton(withTitle: "Close")
-            alert.addButton(withTitle: "Cancel")
+            alert.messageText = String(localized: "This notebook is still running")
+            alert.informativeText = String(localized: "Closing it stops its kernel.")
+            alert.addButton(withTitle: String(localized: "Close"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
             alert.beginSheetModal(for: window) { [weak self] response in
                 MainActor.assumeIsolated {
                     if response == .alertFirstButtonReturn { self?.closeNow(id) }
@@ -1516,11 +1525,11 @@ final class AppModel {
         }
         if confirm, let controller = existingController(for: id), controller.isDirty, let window, let item = anyItem(id) {
             let alert = NSAlert()
-            alert.messageText = "Save your changes to \(title(for: item))?"
-            alert.informativeText = "They're lost if you don't save them."
-            alert.addButton(withTitle: "Save")
-            alert.addButton(withTitle: "Don't Save")
-            alert.addButton(withTitle: "Cancel")
+            alert.messageText = String(localized: "Save your changes to \(title(for: item))?")
+            alert.informativeText = String(localized: "They're lost if you don't save them.")
+            alert.addButton(withTitle: String(localized: "Save"))
+            alert.addButton(withTitle: String(localized: "Don't Save"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
             alert.beginSheetModal(for: window) { [weak self] response in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -1536,10 +1545,10 @@ final class AppModel {
         if confirm, let terminal = existingController(for: id) as? TerminalController,
            let name = terminal.foregroundProcessName, let window {
             let alert = NSAlert()
-            alert.messageText = "Terminate \(name)?"
-            alert.informativeText = "This terminal is still running \(name). Closing it stops the process."
-            alert.addButton(withTitle: "Terminate")
-            alert.addButton(withTitle: "Cancel")
+            alert.messageText = String(localized: "Terminate \(name)?")
+            alert.informativeText = String(localized: "This terminal is still running \(name). Closing it stops the process.")
+            alert.addButton(withTitle: String(localized: "Terminate"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
             alert.beginSheetModal(for: window) { [weak self] response in
                 MainActor.assumeIsolated {
                     if response == .alertFirstButtonReturn { self?.closeNow(id) }
@@ -1761,10 +1770,10 @@ final class AppModel {
             default: return nil
             }
         }) ?? active.folders.first else {
-            showToast(title: "Open a folder in a git repository first", detail: nil, symbol: "arrow.triangle.branch", tint: .secondary)
+            showToast(title: String(localized: "Open a folder in a git repository first"), detail: nil, symbol: "arrow.triangle.branch", tint: .secondary)
             return
         }
-        openPrompt(title: "Branch for the new worktree. A new one is made if it doesn't exist.", initial: "") { [weak self] text in
+        openPrompt(title: String(localized: "Branch for the new worktree. A new one is made if it doesn't exist."), initial: "") { [weak self] text in
             self?.addWorktree(branch: text.trimmingCharacters(in: .whitespaces), from: folder)
         }
     }
@@ -1778,7 +1787,7 @@ final class AppModel {
             guard let self else { return .failure(Git.TransferFailure(message: "Tiri is closing.")) }
             switch result {
             case .failure(let failure):
-                self.showToast(title: "Couldn't make a worktree for \(branch)", detail: failure.message, symbol: "exclamationmark.triangle", tint: .orange)
+                self.showToast(title: String(localized: "Couldn't make a worktree for \(branch)"), detail: L10n.display(failure.message), symbol: "exclamationmark.triangle", tint: .orange)
                 return .failure(failure)
             case .success(let path):
                 let name = repository + ": " + branch
@@ -1796,8 +1805,8 @@ final class AppModel {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = true
-        panel.message = "Choose the folders for the new workspace"
-        panel.prompt = "Create Workspace"
+        panel.message = String(localized: "Choose the folders for the new workspace")
+        panel.prompt = String(localized: "Create Workspace")
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         let name = panel.urls[0].lastPathComponent
         createWorkspace(name: name, folders: panel.urls.map(\.path))
@@ -1812,7 +1821,7 @@ final class AppModel {
 
     func promptRenameWorkspace(_ id: WorkspaceID) {
         guard let workspace = workspaces.first(where: { $0.id == id }) else { return }
-        openPrompt(title: "Rename workspace", initial: workspace.name) { [weak self] name in
+        openPrompt(title: String(localized: "Rename workspace"), initial: workspace.shownName) { [weak self] name in
             self?.renameWorkspace(id, to: name)
         }
     }
@@ -1850,10 +1859,10 @@ final class AppModel {
     func confirmDeleteWorkspace(_ id: WorkspaceID) {
         guard let workspace = workspaces.first(where: { $0.id == id }), let window else { return }
         let alert = NSAlert()
-        alert.messageText = "Delete the workspace \u{201C}\(workspace.name)\u{201D}?"
-        alert.informativeText = "Its terminals stop. Your files and folders aren't touched."
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Delete the workspace “\(workspace.shownName)”?")
+        alert.informativeText = String(localized: "Its terminals stop. Your files and folders aren't touched.")
+        alert.addButton(withTitle: String(localized: "Delete"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 if response == .alertFirstButtonReturn { self?.deleteWorkspace(id) }
@@ -1892,7 +1901,7 @@ final class AppModel {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = true
-        panel.prompt = "Add"
+        panel.prompt = String(localized: "Add")
         guard panel.runModal() == .OK else { return }
         for url in panel.urls { addFolder(url.path) }
     }
@@ -1904,8 +1913,8 @@ final class AppModel {
         if let type = UTType(filenameExtension: "code-workspace") {
             panel.allowedContentTypes = [type]
         }
-        panel.message = "Choose a Cursor or VS Code .code-workspace file"
-        panel.prompt = "Import"
+        panel.message = String(localized: "Choose a Cursor or VS Code .code-workspace file")
+        panel.prompt = String(localized: "Import")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         importWorkspace(url: url)
     }
@@ -1915,8 +1924,8 @@ final class AppModel {
         do {
             let imported = try CodeWorkspaceImporter.read(fileAt: url)
             if imported.skipped > 0 {
-                showToast(title: "\(imported.skipped) folder\(imported.skipped == 1 ? "" : "s") left out",
-                          detail: "A workspace is on this Mac or on one server.", symbol: "info.circle", tint: .secondary)
+                showToast(title: imported.skipped == 1 ? String(localized: "1 folder left out") : String(localized: "\(imported.skipped) folders left out"),
+                          detail: String(localized: "A workspace is on this Mac or on one server."), symbol: "info.circle", tint: .secondary)
             }
             if let host = imported.remote {
                 importRemoteWorkspace(imported, host: host)
@@ -1925,8 +1934,8 @@ final class AppModel {
             let existing = imported.folders.filter { FileManager.default.fileExists(atPath: $0) }
             if existing.count < imported.folders.count {
                 let missing = imported.folders.count - existing.count
-                showToast(title: "\(missing) folder\(missing == 1 ? "" : "s") not found",
-                          detail: "Imported the rest of \(imported.name)", symbol: "exclamationmark.triangle", tint: .orange)
+                showToast(title: missing == 1 ? String(localized: "1 folder not found") : String(localized: "\(missing) folders not found"),
+                          detail: String(localized: "Imported the rest of \(imported.name)"), symbol: "exclamationmark.triangle", tint: .orange)
             }
             return createWorkspace(name: imported.name, folders: existing)
         } catch {
@@ -2142,7 +2151,7 @@ final class AppModel {
         do {
             try settingsStore.write(key, value: value)
         } catch {
-            showToast(title: "Couldn't change that setting", detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: String(localized: "Couldn't change that setting"), detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
             return "\(error)"
         }
         return nil
@@ -2166,6 +2175,11 @@ final class AppModel {
 
     /// Into a running session of that agent, or a new one.
     static let unnamedConversation = "New conversation"
+
+    /// A conversation's name on screen. The unnamed one is compared, and goes to `tiri`, in English.
+    static func shownConversationName(_ name: String) -> String {
+        name == unnamedConversation ? String(localized: "New conversation") : name
+    }
 
     /// Which terminal has it, if that's known already.
     @discardableResult
@@ -2288,14 +2302,14 @@ final class AppModel {
         case .saved:
             done()
         case .failed(let why):
-            showToast(title: "Couldn't save", detail: why, symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: String(localized: "Couldn't save"), detail: why, symbol: "exclamationmark.triangle", tint: .orange)
         case .changedOnDisk:
             guard let window else { return }
             let alert = NSAlert()
-            alert.messageText = "This file changed on disk"
-            alert.informativeText = "Something else, perhaps an agent, changed it after you started editing. Saving replaces that with what you have here."
-            alert.addButton(withTitle: "Replace")
-            alert.addButton(withTitle: "Cancel")
+            alert.messageText = String(localized: "This file changed on disk")
+            alert.informativeText = String(localized: "Something else, perhaps an agent, changed it after you started editing. Saving replaces that with what you have here.")
+            alert.addButton(withTitle: String(localized: "Replace"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
             alert.beginSheetModal(for: window) { response in
                 MainActor.assumeIsolated {
                     if response == .alertFirstButtonReturn, case .saved = controller.save(overwriting: true) { done() }
@@ -2475,14 +2489,17 @@ final class AppModel {
 
     func fetch(_ repository: RepositoryStatus) {
         guard let remote = repository.remote else {
-            showToast(title: "Nothing to fetch from", detail: "\(repository.name) has no remote.", symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: String(localized: "Nothing to fetch from"), detail: String(localized: "\(repository.name) has no remote."), symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
-        transfer(.fetching, repository: repository, arguments: ["fetch", remote], failure: "Couldn't fetch") { [weak self] updated in
+        transfer(.fetching, repository: repository, arguments: ["fetch", remote], failure: String(localized: "Couldn't fetch")) { [weak self] updated in
             guard let self else { return }
             let new = (updated?.behind ?? 0) - repository.behind
             let target = updated?.upstream ?? remote
-            self.showToast(title: new > 0 ? "\(Self.commits(new)) to pull from \(target)" : "\(target) has nothing new", detail: nil,
+            let title = new == 1 ? String(localized: "1 commit to pull from \(target)")
+                : new > 1 ? String(localized: "\(new) commits to pull from \(target)")
+                : String(localized: "\(target) has nothing new")
+            self.showToast(title: title, detail: nil,
                            symbol: "checkmark.circle.fill", tint: .green)
         }
     }
@@ -2491,11 +2508,11 @@ final class AppModel {
     /// way back is one `git reset`. Anything that would need a decision fails and says so.
     func pull(_ repository: RepositoryStatus) {
         guard repository.canPull, let target = repository.upstream else {
-            showToast(title: "Nothing to pull from", detail: "\(repository.title) doesn't track a remote branch yet.", symbol: "checkmark.circle", tint: .secondary)
+            showToast(title: String(localized: "Nothing to pull from"), detail: String(localized: "\(repository.displayTitle) doesn't track a remote branch yet."), symbol: "checkmark.circle", tint: .secondary)
             return
         }
-        transfer(.pulling, repository: repository, arguments: Git.pullArguments, failure: "Couldn't pull") { [weak self] updated in
-            self?.showToast(title: updated?.shortOID == repository.shortOID ? "\(target) has nothing new" : "Pulled from \(target)", detail: nil,
+        transfer(.pulling, repository: repository, arguments: Git.pullArguments, failure: String(localized: "Couldn't pull")) { [weak self] updated in
+            self?.showToast(title: updated?.shortOID == repository.shortOID ? String(localized: "\(target) has nothing new") : String(localized: "Pulled from \(target)"), detail: nil,
                             symbol: "checkmark.circle.fill", tint: .green)
         }
     }
@@ -2504,31 +2521,33 @@ final class AppModel {
     func confirmPush(_ repository: RepositoryStatus) {
         guard let window else { return }
         guard repository.canPush || repository.canPublish, let branch = repository.branch else {
-            showToast(title: "Nothing to push", detail: repository.remote == nil ? "\(repository.name) has no remote." : "\(repository.title) has no commits to send.",
+            showToast(title: String(localized: "Nothing to push"), detail: repository.remote == nil ? String(localized: "\(repository.name) has no remote.") : String(localized: "\(repository.displayTitle) has no commits to send."),
                       symbol: "checkmark.circle", tint: .secondary)
             return
         }
         let target = repository.upstream ?? "\(repository.remote ?? "origin")/\(branch)"
         let alert = NSAlert()
-        alert.messageText = repository.upstream == nil ? "Publish \(branch) to \(repository.remote ?? "origin")?" : "Push \(Self.commits(repository.ahead)) to \(target)?"
-        var details = ["From \(repository.name)."]
-        if repository.isDirty { details.append("Uncommitted changes stay here.") }
-        if repository.behind > 0 { details.append("\(target) also has \(Self.commits(repository.behind)) you don't have, so it will probably refuse.") }
+        alert.messageText = repository.upstream == nil ? String(localized: "Publish \(branch) to \(repository.remote ?? "origin")?")
+            : repository.ahead == 1 ? String(localized: "Push 1 commit to \(target)?") : String(localized: "Push \(repository.ahead) commits to \(target)?")
+        var details = [String(localized: "From \(repository.name).")]
+        if repository.isDirty { details.append(String(localized: "Uncommitted changes stay here.")) }
+        if repository.behind == 1 { details.append(String(localized: "\(target) also has 1 commit you don't have, so it will probably refuse.")) }
+        if repository.behind > 1 { details.append(String(localized: "\(target) also has \(repository.behind) commits you don't have, so it will probably refuse.")) }
         alert.informativeText = details.joined(separator: " ")
-        alert.addButton(withTitle: repository.upstream == nil ? "Publish" : "Push")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: repository.upstream == nil ? String(localized: "Publish") : String(localized: "Push"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 guard response == .alertFirstButtonReturn, let self else { return }
-                self.transfer(.pushing, repository: repository, arguments: repository.pushArguments, failure: "Couldn't push") { [weak self] _ in
-                    self?.showToast(title: repository.upstream == nil ? "Published to \(target)" : "Pushed \(Self.commits(repository.ahead)) to \(target)",
+                self.transfer(.pushing, repository: repository, arguments: repository.pushArguments, failure: String(localized: "Couldn't push")) { [weak self] _ in
+                    let title = repository.upstream == nil ? String(localized: "Published to \(target)")
+                        : repository.ahead == 1 ? String(localized: "Pushed 1 commit to \(target)") : String(localized: "Pushed \(repository.ahead) commits to \(target)")
+                    self?.showToast(title: title,
                                     detail: nil, symbol: "checkmark.circle.fill", tint: .green)
                 }
             }
         }
     }
-
-    private static func commits(_ count: Int) -> String { count == 1 ? "1 commit" : "\(count) commits" }
 
     private func transfer(_ kind: RepositoryTransfer, repository: RepositoryStatus, arguments: [String], failure: String,
                           succeeded: @escaping @MainActor @Sendable (RepositoryStatus?) -> Void) {
@@ -2553,7 +2572,7 @@ final class AppModel {
                 case .success:
                     succeeded(updated)
                 case .failure(let problem):
-                    self.gitButtonFailed(failure, problem: problem.message, command: arguments, root: root)
+                    self.gitButtonFailed(failure, problem: problem.message, shown: L10n.display(problem.message), command: arguments, root: root)
                 }
             }
         }
@@ -2561,17 +2580,17 @@ final class AppModel {
 
     /// The buttons only do the simple thing. Anything further is for an agent, except a remote that
     /// wants a password, which needs a person at a terminal.
-    private func gitButtonFailed(_ failure: String, problem: String, command: [String], root: String) {
+    private func gitButtonFailed(_ failure: String, problem: String, shown: String, command: [String], root: String) {
         let lower = problem.lowercased()
         let wantsPerson = ["password", "passphrase", "could not read username", "terminal prompts disabled", "authentication failed"].contains(where: lower.contains)
         guard !wantsPerson, let preset = firstAgentPreset else {
-            showToast(title: failure, detail: problem, symbol: "exclamationmark.triangle", tint: .orange,
-                      actionTitle: "Open Terminal") { [weak self] in self?.newTerminal(cwd: root) }
+            showToast(title: failure, detail: shown, symbol: "exclamationmark.triangle", tint: .orange,
+                      actionTitle: String(localized: "Open Terminal")) { [weak self] in self?.newTerminal(cwd: root) }
             return
         }
         let prompt = "`git \(command.joined(separator: " "))` failed in \(root):\n\(problem)\nPlease sort this out, and tell me if there's anything you need me to decide."
-        showToast(title: failure, detail: problem, symbol: "exclamationmark.triangle", tint: .orange,
-                  actionTitle: "Ask \(preset.name)") { [weak self] in self?.askAgent(preset: preset, prompt: prompt) }
+        showToast(title: failure, detail: shown, symbol: "exclamationmark.triangle", tint: .orange,
+                  actionTitle: String(localized: "Ask \(preset.name)")) { [weak self] in self?.askAgent(preset: preset, prompt: prompt) }
     }
 
     /// The first agent in the New Terminal menu.
@@ -2637,15 +2656,15 @@ final class AppModel {
         let alert = NSAlert()
         let path = (url.path as NSString).abbreviatingWithTildeInPath
         if install {
-            alert.messageText = "Tell Tiri exactly what \(tool.title) is doing?"
-            alert.informativeText = "Tiri adds a small hook to \(path), and keeps a copy of the file next to it. The hook does nothing outside Tiri.\n\n" + AgentHooks.summary(of: tool)
-            alert.addButton(withTitle: "Install")
+            alert.messageText = String(localized: "Tell Tiri exactly what \(tool.title) is doing?")
+            alert.informativeText = String(localized: "Tiri adds a small hook to \(path), and keeps a copy of the file next to it. The hook does nothing outside Tiri.") + "\n\n" + AgentHooks.summary(of: tool)
+            alert.addButton(withTitle: String(localized: "Install"))
         } else {
-            alert.messageText = "Remove Tiri's hooks from \(tool.title)?"
-            alert.informativeText = "Tiri takes its entries out of \(path) and leaves the rest. Status goes back to an estimate."
-            alert.addButton(withTitle: "Remove")
+            alert.messageText = String(localized: "Remove Tiri's hooks from \(tool.title)?")
+            alert.informativeText = String(localized: "Tiri takes its entries out of \(path) and leaves the rest. Status goes back to an estimate.")
+            alert.addButton(withTitle: String(localized: "Remove"))
         }
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: String(localized: "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 if response == .alertFirstButtonReturn { self?.applyHooks(tool, install: install) }
@@ -2693,11 +2712,11 @@ final class AppModel {
                 try updated.write(to: url, atomically: true, encoding: .utf8)
             }
             hooksRevision += 1
-            showToast(title: install ? "\(tool.title) hooks are on" : "\(tool.title) hooks are off",
-                      detail: install ? "New \(tool.title) sessions report their status exactly." : nil,
+            showToast(title: install ? String(localized: "\(tool.title) hooks are on") : String(localized: "\(tool.title) hooks are off"),
+                      detail: install ? String(localized: "New \(tool.title) sessions report their status exactly.") : nil,
                       symbol: "checkmark.circle.fill", tint: .green)
         } catch {
-            showToast(title: "Couldn't change \(tool.title)'s config", detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: String(localized: "Couldn't change \(tool.title)'s config"), detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
         }
     }
 
@@ -2711,9 +2730,9 @@ final class AppModel {
               !hooksOfferedThisLaunch.contains(key), !hooksInstalled(tool), hooksCoverage(tool) == nil else { return }
         hooksOfferedThisLaunch.insert(key)
         let answered = { UserDefaults.standard.set(true, forKey: key) }
-        showToast(title: "Get exact status from \(tool.title)?", detail: "Right now Tiri is estimating when it's working or done.",
-                  symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: "Set Up", duration: nil,
-                  other: ("Not Now", answered), closed: answered) { [weak self] in
+        showToast(title: String(localized: "Get exact status from \(tool.title)?"), detail: String(localized: "Right now Tiri is estimating when it's working or done."),
+                  symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: String(localized: "Set Up"), duration: nil,
+                  other: (String(localized: "Not Now"), answered), closed: answered) { [weak self] in
             answered()
             self?.confirmHooks(tool, install: true)
         }
@@ -2786,7 +2805,7 @@ final class AppModel {
     func confirmCommandLineTool(install: Bool) {
         guard let window, let bundled = bundledCommandLineTool else { return }
         if install, let problem = CommandLineTool.problem(appPath: Bundle.main.bundlePath) {
-            showToast(title: "Can't install the tiri command yet", detail: problem, symbol: "exclamationmark.triangle", tint: .orange)
+            showToast(title: String(localized: "Can't install the tiri command yet"), detail: problem, symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
         let link = commandLineLink
@@ -2794,16 +2813,16 @@ final class AppModel {
         let replacing = commandLineState() == .otherFile
         let alert = NSAlert()
         if install {
-            alert.messageText = "Use tiri in your other terminals?"
-            alert.informativeText = "Tiri adds a link at \(path). It follows the app when you update, and Settings can remove it."
-                + (replacing ? "\n\nThis replaces the file already at that path." : "")
-            alert.addButton(withTitle: replacing ? "Replace" : "Install")
+            alert.messageText = String(localized: "Use tiri in your other terminals?")
+            alert.informativeText = String(localized: "Tiri adds a link at \(path). It follows the app when you update, and Settings can remove it.")
+                + (replacing ? "\n\n" + String(localized: "This replaces the file already at that path.") : "")
+            alert.addButton(withTitle: replacing ? String(localized: "Replace") : String(localized: "Install"))
         } else {
-            alert.messageText = "Remove the tiri command?"
-            alert.informativeText = "Tiri removes the link at \(path). Terminals inside Tiri keep their own."
-            alert.addButton(withTitle: "Remove")
+            alert.messageText = String(localized: "Remove the tiri command?")
+            alert.informativeText = String(localized: "Tiri removes the link at \(path). Terminals inside Tiri keep their own.")
+            alert.addButton(withTitle: String(localized: "Remove"))
         }
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: String(localized: "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 guard response == .alertFirstButtonReturn, let self else { return }
@@ -2816,7 +2835,7 @@ final class AppModel {
                     self.hooksRevision += 1
                     if install { self.reportCommandLineInstalled(link: link) }
                 } catch {
-                    self.showToast(title: "Couldn't change the tiri command", detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
+                    self.showToast(title: String(localized: "Couldn't change the tiri command"), detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
                 }
             }
         }
@@ -2831,11 +2850,11 @@ final class AppModel {
             let found = await ShellLookup.run(names: ["tiri"], shell: shell)
             if found?.contains("tiri") == false {
                 let line = "export PATH=\"$HOME/.local/bin:$PATH\""
-                showToast(title: "One more step for the tiri command",
-                          detail: "Your shell doesn't look in ~/.local/bin yet. Copy this line into its setup file.",
-                          symbol: "terminal", tint: .accentColor, actionTitle: "Copy Line") { Clipboard.copy(line) }
+                showToast(title: String(localized: "One more step for the tiri command"),
+                          detail: String(localized: "Your shell doesn't look in ~/.local/bin yet. Copy this line into its setup file."),
+                          symbol: "terminal", tint: .accentColor, actionTitle: String(localized: "Copy Line")) { Clipboard.copy(line) }
             } else {
-                showToast(title: "tiri works in your other terminals", detail: "New terminals will have it.",
+                showToast(title: String(localized: "tiri works in your other terminals"), detail: String(localized: "New terminals will have it."),
                           symbol: "checkmark.circle.fill", tint: .green)
             }
         }
@@ -2847,7 +2866,7 @@ final class AppModel {
     @discardableResult
     func setShortcut(_ command: String, key: String?, announcing: Bool = true) -> String? {
         if let key, let problem = Keymap.problem(with: key, command: command, bindings: keybindings) {
-            showToast(title: "That shortcut won't work", detail: problem, symbol: "keyboard", tint: .orange)
+            showToast(title: String(localized: "That shortcut won't work"), detail: Keymap.shownProblem(with: key, command: command, bindings: keybindings) ?? problem, symbol: "keyboard", tint: .orange)
             return problem
         }
         let strokes = key.flatMap(Keymap.parseStrokes)
@@ -2858,8 +2877,8 @@ final class AppModel {
             return "\(error)"
         }
         if announcing, let previous {
-            let title = allCommands.first { $0.id == previous.command }?.title ?? previous.command
-            showToast(title: "\(previous.symbol) was \(title)", detail: "That command has no shortcut on this key now.", symbol: "keyboard", tint: .secondary)
+            let title = allCommands.first { $0.id == previous.command }?.shownTitle ?? previous.command
+            showToast(title: String(localized: "\(previous.symbol) was \(title)"), detail: String(localized: "That command has no shortcut on this key now."), symbol: "keyboard", tint: .secondary)
         }
         return nil
     }
@@ -2949,7 +2968,7 @@ final class AppModel {
         cancelRecordingShortcut()
         guard !key.isEmpty else { return }
         if let problem = Keymap.problem(with: key, command: command, bindings: keybindings) {
-            shortcutNotice = .problem(command: command, message: problem)
+            shortcutNotice = .problem(command: command, message: Keymap.shownProblem(with: key, command: command, bindings: keybindings) ?? problem)
             return
         }
         let holders = ShortcutIndex.holders(of: key, except: command, in: keybindings)
@@ -2971,6 +2990,7 @@ final class AppModel {
         settings = settingsStore.settings
         if previous.languageServers, !settings.languageServers { languageServers.stopAll() }
         if previous.conversationsSummarizeAll != settings.conversationsSummarizeAll { updateSummarizingAll() }
+        if previous.language != settings.language { offerLanguageRestart() }
         rebuildKeybindings()
         if let error = settingsStore.currentError {
             banner = AppBanner(message: error, isError: true)
@@ -3321,7 +3341,7 @@ final class SettingsStore {
                 settings = try TiriSettings.parse(text)
                 settingsError = nil
             } catch {
-                settingsError = "settings.json: \(error). Using the last good settings."
+                settingsError = String(localized: "settings.json: \(String(describing: error)). Using the last good settings.")
             }
         }
         if let text = try? String(contentsOf: keybindingsURL, encoding: .utf8) {
@@ -3329,7 +3349,7 @@ final class SettingsStore {
                 userKeybindings = try Keymap.parseUserFile(text)
                 keybindingsError = nil
             } catch {
-                keybindingsError = "keybindings.json: \(error). Using the last good keybindings."
+                keybindingsError = String(localized: "keybindings.json: \(String(describing: error)). Using the last good keybindings.")
             }
         }
         currentError = settingsError ?? keybindingsError

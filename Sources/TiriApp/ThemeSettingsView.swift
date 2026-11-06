@@ -41,13 +41,13 @@ struct ThemeSettings: View {
                 Label("Make One…", systemImage: "sparkles")
             }
             .popover(isPresented: $making, arrowEdge: .bottom) { MakeThemeWithAgent(slot: model.activeThemeSlot) { making = false } }
-            fold("Colors", isOpen: $colorsOpen)
+            fold(String(localized: "Colors"), shownTitle: String(localized: "Hide Colors"), hiddenTitle: String(localized: "Show Colors"), isOpen: $colorsOpen)
         }
         .controlSize(.small)
         .fixedSize()
     }
 
-    private func fold(_ title: String, isOpen: Binding<Bool>) -> some View {
+    private func fold(_ title: String, shownTitle: String, hiddenTitle: String, isOpen: Binding<Bool>) -> some View {
         Button {
             withAnimation(AccessibilityDisplay.shared.motion(.snappy(duration: 0.2))) { isOpen.wrappedValue.toggle() }
         } label: {
@@ -60,7 +60,7 @@ struct ThemeSettings: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .accessibilityLabel(isOpen.wrappedValue ? "Hide \(title)" : "Show \(title)")
+        .accessibilityLabel(isOpen.wrappedValue ? shownTitle : hiddenTitle)
     }
 }
 
@@ -97,8 +97,8 @@ struct ThemeSlotCard: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .frame(maxWidth: 220, alignment: .leading)
-        .help("The \(slot.title.lowercased()) theme: \(theme.name)")
-        .accessibilityLabel("\(slot.title) theme, \(theme.name)")
+        .help(slot.shownTheme(theme.name))
+        .accessibilityLabel(slot.shownTheme(theme.name))
     }
 
     private var symbol: String {
@@ -190,6 +190,43 @@ struct AccentDot: View {
     }
 }
 
+/// A look's words in Tiri's language. `ThemeSlot.title` stays English for `tiri theme`.
+extension ThemeSlot {
+    func shownTheme(_ name: String) -> String {
+        switch self {
+        case .dark: String(localized: "The dark theme: \(name)")
+        case .light: String(localized: "The light theme: \(name)")
+        case .highContrastDark: String(localized: "The high contrast dark theme: \(name)")
+        case .highContrastLight: String(localized: "The high contrast light theme: \(name)")
+        }
+    }
+
+    var shownMode: String {
+        switch self {
+        case .dark: String(localized: "For dark mode")
+        case .light: String(localized: "For light mode")
+        case .highContrastDark: String(localized: "For high contrast dark mode")
+        case .highContrastLight: String(localized: "For high contrast light mode")
+        }
+    }
+}
+
+extension ThemeAccent {
+    /// As the Mac names its accent colors.
+    var shownName: String {
+        switch self {
+        case .blue: String(localized: "Blue")
+        case .purple: String(localized: "Purple")
+        case .pink: String(localized: "Pink")
+        case .red: String(localized: "Red")
+        case .orange: String(localized: "Orange")
+        case .yellow: String(localized: "Yellow")
+        case .green: String(localized: "Green")
+        case .graphite: String(localized: "Graphite")
+        }
+    }
+}
+
 // MARK: - Changing colors
 
 /// Every color of the theme showing now, each a well to pick from. Tiri's own themes become a copy on the first change.
@@ -204,28 +241,30 @@ struct ThemeColorEditor: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            group("Highlights") {
+            group(String(localized: "Highlights")) {
                 HStack(spacing: 8) {
-                    accentChoice(nil, chosen: theme.accent == nil, label: "Your Mac")
+                    accentChoice(nil, chosen: theme.accent == nil, label: String(localized: "Your Mac"))
                     ForEach(ThemeAccent.allCases, id: \.self) { accent in
-                        accentChoice(accent, chosen: theme.accent == accent, label: accent.rawValue.capitalized)
+                        accentChoice(accent, chosen: theme.accent == accent, label: accent.shownName)
                     }
                 }
             }
-            group("Terminal") {
+            group(String(localized: "Terminal")) {
                 VStack(alignment: .leading, spacing: 8) {
                     wells(["terminal.background", "terminal.foreground", "terminal.cursor", "terminal.selection"],
-                          labels: ["Background", "Text", "Cursor", "Selection"])
+                          labels: [String(localized: "Background"), String(localized: "Text"), String(localized: "Cursor"), String(localized: "Selection")])
                     wells(Theme.ansiNames.prefix(8).map { "terminal." + $0 }, labels: nil)
                     wells(Theme.ansiNames.suffix(8).map { "terminal." + $0 }, labels: nil)
                 }
             }
-            group("Editor") {
+            group(String(localized: "Editor")) {
                 VStack(alignment: .leading, spacing: 8) {
                     wells(["editor.background", "editor.foreground", "editor.cursor", "editor.selection"],
-                          labels: ["Background", "Text", "Cursor", "Selection"])
+                          labels: [String(localized: "Background"), String(localized: "Text"), String(localized: "Cursor"), String(localized: "Selection")])
+                    // "Comment" alone is a review comment elsewhere, so this one has a key of its own.
                     wells(["editor.comment", "editor.string", "editor.number", "editor.keyword", "editor.function", "editor.type", "editor.attribute"],
-                          labels: ["Comment", "String", "Number", "Keyword", "Function", "Type", "Attribute"])
+                          labels: [String(localized: "Comment (in code)", defaultValue: "Comment"), String(localized: "String"), String(localized: "Number"), String(localized: "Keyword"),
+                                   String(localized: "Function"), String(localized: "Type"), String(localized: "Attribute")])
                 }
             }
         }
@@ -251,7 +290,7 @@ struct ThemeColorEditor: View {
         }
         .buttonStyle(.plain)
         .help(label)
-        .accessibilityLabel("Highlights: \(label)")
+        .accessibilityLabel(String(localized: "Highlights: \(label)"))
         .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 
@@ -273,9 +312,27 @@ struct ThemeColorEditor: View {
         }
     }
 
+    /// The terminal's sixteen, each named whole, since "bright" goes elsewhere in other languages.
     private static func ansiLabel(_ key: String) -> String {
-        let name = key.replacingOccurrences(of: "terminal.", with: "")
-        return name.hasPrefix("bright") ? "Bright " + name.dropFirst(6).lowercased() : name.capitalized
+        switch key.replacingOccurrences(of: "terminal.", with: "") {
+        case "black": String(localized: "Black")
+        case "red": String(localized: "Red")
+        case "green": String(localized: "Green")
+        case "yellow": String(localized: "Yellow")
+        case "blue": String(localized: "Blue")
+        case "magenta": String(localized: "Magenta")
+        case "cyan": String(localized: "Cyan")
+        case "white": String(localized: "White")
+        case "brightBlack": String(localized: "Bright black")
+        case "brightRed": String(localized: "Bright red")
+        case "brightGreen": String(localized: "Bright green")
+        case "brightYellow": String(localized: "Bright yellow")
+        case "brightBlue": String(localized: "Bright blue")
+        case "brightMagenta": String(localized: "Bright magenta")
+        case "brightCyan": String(localized: "Bright cyan")
+        case "brightWhite": String(localized: "Bright white")
+        case let other: other
+        }
     }
 
     private func binding(_ key: String) -> Binding<Color> {
@@ -309,7 +366,7 @@ struct BringThemeList: View {
             Divider()
             List {
                 if shown.isEmpty {
-                    Text(found.isEmpty ? "No other app on this Mac has themes. Choose a file instead." : "Nothing matches.")
+                    Text(found.isEmpty ? String(localized: "No other app on this Mac has themes. Choose a file instead.") : String(localized: "Nothing matches."))
                         .foregroundStyle(.secondary)
                 }
                 ForEach(groups, id: \.0) { from, themes in
@@ -385,7 +442,7 @@ struct BringThemeList: View {
             model.useTheme(theme.name, for: model.activeThemeSlot)
             done()
         } catch let failure as ThemeImport.Failure {
-            problem = failure.description
+            problem = failure.shown
         } catch {
             problem = error.localizedDescription
         }
@@ -395,7 +452,7 @@ struct BringThemeList: View {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.message = "A Ghostty theme, an iTerm2 .itermcolors file, or a VS Code or Cursor theme"
+        panel.message = String(localized: "A Ghostty theme, an iTerm2 .itermcolors file, or a VS Code or Cursor theme")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         bring(url)
     }
@@ -421,7 +478,7 @@ struct MakeThemeWithAgent: View {
                 .focused($focused)
                 .onSubmit { send(presets.first, prompt) }
             HStack {
-                Text("For \(slot.title.lowercased()) mode")
+                Text(slot.shownMode)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()

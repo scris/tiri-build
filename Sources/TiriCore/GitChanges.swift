@@ -13,6 +13,18 @@ public enum ChangeStatus: String, Sendable, Equatable {
         case .conflicted: "!"
         }
     }
+
+    /// In words, for the screen.
+    public var title: String {
+        switch self {
+        case .modified: String(localized: "Modified")
+        case .added: String(localized: "Added")
+        case .deleted: String(localized: "Deleted")
+        case .renamed: String(localized: "Renamed")
+        case .untracked: String(localized: "Untracked")
+        case .conflicted: String(localized: "Conflicted")
+        }
+    }
 }
 
 public struct ChangedFile: Sendable, Equatable, Identifiable {
@@ -114,10 +126,10 @@ public enum DiffParser {
                 continue
             }
             if !inHunk {
-                if line.hasPrefix("new file mode") { diff.note = "This new file is empty." }
-                if line.hasPrefix("deleted file mode") { diff.note = "This deleted file was empty." }
+                if line.hasPrefix("new file mode") { diff.note = String(localized: "This new file is empty.") }
+                if line.hasPrefix("deleted file mode") { diff.note = String(localized: "This deleted file was empty.") }
                 if line.hasPrefix("old mode ") { oldMode = String(line.dropFirst(9)) }
-                if line.hasPrefix("new mode "), let oldMode { diff.note = "Only its mode changed, from \(oldMode) to \(line.dropFirst(9))." }
+                if line.hasPrefix("new mode "), let oldMode { diff.note = String(localized: "Only its mode changed, from \(oldMode) to \(String(line.dropFirst(9))).") }
             }
             if line.hasPrefix("@@") {
                 if let (old, new) = hunkStart(line) {
@@ -185,6 +197,8 @@ public struct RepositoryStatus: Sendable, Equatable, Identifiable {
     /// Which repository, at which commit.
     public var head: String { root + "@" + (shortOID ?? "") }
     public var title: String { branch ?? shortOID ?? "No commits" }
+    /// The same, for the screen. `title` is what `tiri` reports.
+    public var displayTitle: String { branch ?? shortOID ?? String(localized: "No commits") }
     /// Pushing needs a branch with something on it, and somewhere to send it.
     public var canPublish: Bool { branch != nil && upstream == nil && remote != nil && shortOID != nil }
     public var canPush: Bool { branch != nil && upstream != nil && ahead > 0 }

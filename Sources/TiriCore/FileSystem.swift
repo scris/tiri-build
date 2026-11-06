@@ -372,7 +372,7 @@ public enum ExternalEditor {
 
     /// What to call the editor a file would open in: the first one installed, by its own name.
     public static func displayName(of editors: [String], pathEnv: String?) -> String {
-        guard let found = editors.first(where: { locate($0, pathEnv: pathEnv) != nil }) else { return "External Editor" }
+        guard let found = editors.first(where: { locate($0, pathEnv: pathEnv) != nil }) else { return String(localized: "External Editor") }
         switch found.lowercased() {
         case "code": return "VS Code"
         case "zed": return "Zed"

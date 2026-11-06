@@ -66,9 +66,9 @@ public struct ReviewAnchor: Equatable, Sendable {
 
     public var description: String {
         let name = (path as NSString).lastPathComponent
-        guard let firstLine else { return quote == nil ? name : "the selection in \(name)" }
+        guard let firstLine else { return quote == nil ? name : String(localized: "the selection in \(name)") }
         let last = lastLine ?? firstLine
-        return last == firstLine ? "\(name), line \(firstLine)" : "\(name), lines \(firstLine)–\(last)"
+        return last == firstLine ? String(localized: "\(name), line \(firstLine)") : String(localized: "\(name), lines \(firstLine)–\(last)")
     }
 }
 

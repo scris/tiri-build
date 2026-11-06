@@ -298,11 +298,13 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         let address = requested.absoluteString
         let escaped = address.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
         let reason = nsError.localizedDescription.replacingOccurrences(of: "<", with: "&lt;")
+        let words = [String(localized: "Can't load page"), String(localized: "Can't load this page"), String(localized: "Press reload to try again.")]
+            .map(MarkdownRenderer.escapeText)
         let page = """
-        <!DOCTYPE html><meta charset="utf-8"><title>Can't load page</title>
+        <!DOCTYPE html><meta charset="utf-8"><title>\(words[0])</title>
         <style>:root{color-scheme:light dark}body{font:14px -apple-system;margin:0;height:100vh;display:flex;align-items:center;justify-content:center;color:GrayText}
         div{max-width:460px;text-align:center}h1{font-size:17px;font-weight:600;color:CanvasText;margin:0 0 8px}code{word-break:break-all}</style>
-        <div><h1>Can't load this page</h1><p>\(reason)</p><p><code>\(escaped)</code></p><p>Press reload to try again.</p></div>
+        <div><h1>\(words[1])</h1><p>\(reason)</p><p><code>\(escaped)</code></p><p>\(words[2])</p></div>
         """
         showingError = true
         webView.loadHTMLString(page, baseURL: nil)

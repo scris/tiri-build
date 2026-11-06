@@ -132,8 +132,8 @@ public enum CodeWorkspaceImporter {
 
         public var description: String {
             switch self {
-            case .unreadable(let why): "Could not read the workspace file: \(why)"
-            case .noFolders: "The workspace file lists no folders Tiri can open"
+            case .unreadable(let why): String(localized: "Could not read the workspace file: \(why)")
+            case .noFolders: String(localized: "The workspace file lists no folders Tiri can open")
             }
         }
     }
@@ -187,7 +187,7 @@ public enum CodeWorkspaceImporter {
 
     public static func parse(data: Data, fileURL: URL) throws -> Imported {
         guard let text = String(data: data, encoding: .utf8) else {
-            throw ImportError.unreadable("not UTF-8")
+            throw ImportError.unreadable(String(localized: "not UTF-8"))
         }
         let root: Any
         do {

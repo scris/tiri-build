@@ -34,7 +34,7 @@ public enum TextEncodings {
     public static func name(of encoding: String.Encoding) -> String {
         if let choice = choices.first(where: { $0.encoding == encoding }) { return choice.name }
         let cfEncoding = CFStringConvertNSStringEncodingToEncoding(encoding.rawValue)
-        return (CFStringGetNameOfEncoding(cfEncoding) as String?) ?? "Encoding \(encoding.rawValue)"
+        return (CFStringGetNameOfEncoding(cfEncoding) as String?) ?? String(localized: "Encoding \(encoding.rawValue)")
     }
 
     public struct Decoded: Sendable {

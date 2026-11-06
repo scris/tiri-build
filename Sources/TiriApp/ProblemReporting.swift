@@ -42,8 +42,8 @@ extension AppModel {
             try? await Task.sleep(for: .seconds(3))
             guard let crash = ProblemReport.latestCrash(bundleID: bundleID, since: since) else { return }
             await MainActor.run { [weak self] in
-                _ = self?.showToast(title: "Tiri closed unexpectedly", detail: "You can tell us what happened, on GitHub.", symbol: "exclamationmark.bubble",
-                                    tint: .orange, actionTitle: "Report", duration: 20) { [weak self] in
+                _ = self?.showToast(title: String(localized: "Tiri closed unexpectedly"), detail: String(localized: "You can tell us what happened, on GitHub."), symbol: "exclamationmark.bubble",
+                                    tint: .orange, actionTitle: String(localized: "Report"), duration: 20) { [weak self] in
                     self?.reportProblem(crash: crash, title: "Crash: \(crash.exception)")
                 }
             }
@@ -67,30 +67,30 @@ extension AppModel {
     }
 
     private func saveAsUTF8(_ text: TextController) {
-        if let problem = text.convertToUTF8() { showToast(title: "Couldn't save it as UTF-8", detail: problem, symbol: "exclamationmark.triangle", tint: .orange) }
+        if let problem = text.convertToUTF8() { showToast(title: String(localized: "Couldn't save it as UTF-8"), detail: problem, symbol: "exclamationmark.triangle", tint: .orange) }
     }
 
     func chooseEncoding(for item: ItemID? = nil) {
         guard let id = item ?? (active.peek ?? active.activeItem)?.id, let text = controller(for: id) as? TextController else {
-            showToast(title: "Open a text file first", detail: nil, symbol: "doc.text", tint: .secondary)
+            showToast(title: String(localized: "Open a text file first"), detail: nil, symbol: "doc.text", tint: .secondary)
             return
         }
         var rows: [PaletteModel.Row] = []
         if text.encoding != .utf8 {
-            rows.append(PaletteModel.Row(id: "save-utf8", title: "Save as UTF-8", detail: "Rewrite the file as UTF-8 from now on", symbol: "square.and.arrow.down") { [weak self] _ in
+            rows.append(PaletteModel.Row(id: "save-utf8", title: String(localized: "Save as UTF-8"), detail: String(localized: "Rewrite the file as UTF-8 from now on"), symbol: "square.and.arrow.down") { [weak self] _ in
                 self?.closePalette()
                 self?.saveAsUTF8(text)
             })
         }
         rows += TextEncodings.choices.map { choice in
-            PaletteModel.Row(id: choice.name, title: "Reopen as \(choice.name)", detail: nil,
+            PaletteModel.Row(id: choice.name, title: String(localized: "Reopen as \(choice.name)"), detail: nil,
                              symbol: choice.encoding == text.encoding ? "checkmark" : "textformat") { [weak self] _ in
                 self?.closePalette()
                 if let problem = text.reopen(as: choice.encoding) {
-                    self?.showToast(title: "Couldn't reopen it as \(choice.name)", detail: problem, symbol: "exclamationmark.triangle", tint: .orange)
+                    self?.showToast(title: String(localized: "Couldn't reopen it as \(choice.name)"), detail: problem, symbol: "exclamationmark.triangle", tint: .orange)
                 }
             }
         }
-        openPalette(.choices(title: "\((text.path as NSString).lastPathComponent) is \(TextEncodings.name(of: text.encoding))", rows: rows))
+        openPalette(.choices(title: String(localized: "\((text.path as NSString).lastPathComponent) is \(TextEncodings.name(of: text.encoding))"), rows: rows))
     }
 }

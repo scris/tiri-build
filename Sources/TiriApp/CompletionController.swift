@@ -451,7 +451,7 @@ final class CompletionController {
             guard !changes.isEmpty, changes.count == found.additionalEdits.count, !self.textView.hasMarkedText() else { return }
             let shift = changes.reduce(0) { $0 + ($1.text as NSString).length - $1.range.length }
             let selection = self.textView.selectedRange()
-            self.textView.apply(TextEdit(changes: changes, selection: NSRange(location: selection.location + shift, length: selection.length)), name: "Add Import")
+            self.textView.apply(TextEdit(changes: changes, selection: NSRange(location: selection.location + shift, length: selection.length)), name: String(localized: "Add Import"))
         }
     }
 }

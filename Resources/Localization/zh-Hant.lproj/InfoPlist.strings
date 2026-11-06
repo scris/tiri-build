@@ -1,0 +1,15 @@
+/* What macOS shows from Info.plist. */
+"CFBundleDisplayName" = "Tiri";
+"NSDocumentsFolderUsageDescription" = "Tiri 顯示你打開的專案，其中的終端機也在這些專案裡工作。";
+"NSDesktopFolderUsageDescription" = "Tiri 顯示你打開的專案，其中的終端機也在這些專案裡工作。";
+"NSDownloadsFolderUsageDescription" = "Tiri 顯示你打開的專案，其中的終端機也在這些專案裡工作。";
+"NSNetworkVolumesUsageDescription" = "Tiri 顯示你打開的專案，其中的終端機也在這些專案裡工作。";
+"NSRemovableVolumesUsageDescription" = "Tiri 顯示你打開的專案，其中的終端機也在這些專案裡工作。";
+"NSAppleEventsUsageDescription" = "是 Tiri 終端機裡執行的程式要求了這項權限。macOS 把終端機算作 Tiri。";
+"NSMicrophoneUsageDescription" = "是 Tiri 終端機裡執行的程式要求了這項權限。macOS 把終端機算作 Tiri。";
+"NSCameraUsageDescription" = "是 Tiri 終端機裡執行的程式要求了這項權限。macOS 把終端機算作 Tiri。";
+"NSContactsUsageDescription" = "是 Tiri 終端機裡執行的程式要求了這項權限。macOS 把終端機算作 Tiri。";
+"NSCalendarsUsageDescription" = "是 Tiri 終端機裡執行的程式要求了這項權限。macOS 把終端機算作 Tiri。";
+"NSRemindersUsageDescription" = "是 Tiri 終端機裡執行的程式要求了這項權限。macOS 把終端機算作 Tiri。";
+"NSPhotoLibraryUsageDescription" = "是 Tiri 終端機裡執行的程式要求了這項權限。macOS 把終端機算作 Tiri。";
+"NSLocationUsageDescription" = "是 Tiri 終端機裡執行的程式要求了這項權限。macOS 把終端機算作 Tiri。";

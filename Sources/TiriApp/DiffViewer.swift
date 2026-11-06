@@ -192,9 +192,9 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
         if found.isEmpty {
             text = nil
         } else if errors == found.count {
-            text = errors == 1 ? "1 error on lines this change added" : "\(errors) errors on lines this change added"
+            text = errors == 1 ? String(localized: "1 error on lines this change added") : String(localized: "\(errors) errors on lines this change added")
         } else {
-            text = found.count == 1 ? "1 problem on lines this change added" : "\(found.count) problems on lines this change added"
+            text = found.count == 1 ? String(localized: "1 problem on lines this change added") : String(localized: "\(found.count) problems on lines this change added")
         }
         container.showProblems(text, count: errors) { [weak self] in
             guard let self else { return }
@@ -240,11 +240,11 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
         var notes: [String] = []
         if let oid = spec.commit, let root = Git.repositoryRoot(ofFile: path), let commit = Git.commitSummary(oid, in: root) {
             notes.append("\(commit.shortOID) \(commit.subject)")
-            if commit.isMerge { notes.append("compared with its first parent") }
+            if commit.isMerge { notes.append(String(localized: "compared with its first parent")) }
         } else if spec.branch == true, let root = Git.repositoryRoot(ofFile: path) {
-            notes.append(Git.branchBase(root: root).description)
+            notes.append(Git.branchBase(root: root).displayDescription)
         }
-        if let old = diff.oldRelative, !diff.lines.isEmpty { notes.append("renamed from \(old)") }
+        if let old = diff.oldRelative, !diff.lines.isEmpty { notes.append(String(localized: "renamed from \(old)")) }
         loaded.note = notes.isEmpty ? nil : notes.joined(separator: " · ")
         if diff.isBinary, FileClassifier.classify(path: path) == .image {
             let versions: FileVersions
@@ -298,15 +298,15 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     }
 
     private func messageText(for result: FileDiff, missing: Bool) -> String? {
-        if missing { return spec.commit != nil ? "Tiri can't find this commit any more." : "Tiri no longer has this turn's snapshot." }
-        if result.isBinary { return "This is a binary file. Git can't show its changes line by line." }
+        if missing { return spec.commit != nil ? String(localized: "Tiri can't find this commit any more.") : String(localized: "Tiri no longer has this turn's snapshot.") }
+        if result.isBinary { return String(localized: "This is a binary file. Git can't show its changes line by line.") }
         guard result.isEmpty else { return nil }
-        if let old = result.oldRelative { return "Renamed from \(old), with no other changes." }
+        if let old = result.oldRelative { return String(localized: "Renamed from \(old), with no other changes.") }
         if let note = result.note { return note }
-        if spec.commit != nil { return "This commit didn't change this file." }
-        if turn != nil { return "This turn didn't change this file." }
-        if spec.branch == true { return "This branch didn't change this file." }
-        return "No changes in this file."
+        if spec.commit != nil { return String(localized: "This commit didn't change this file.") }
+        if turn != nil { return String(localized: "This turn didn't change this file.") }
+        if spec.branch == true { return String(localized: "This branch didn't change this file.") }
+        return String(localized: "No changes in this file.")
     }
 
     /// A plugin came or went, so this file may be another language now.
@@ -599,27 +599,27 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
             menu.insertItem(item, at: index)
             index += 1
         }
-        if view.selectedRange().length > 0 { add("Quote in Agent", #selector(quoteSelection)) }
-        add("Add Comment", #selector(addComment))
+        if view.selectedRange().length > 0 { add(String(localized: "Quote in Agent"), #selector(quoteSelection)) }
+        add(String(localized: "Add Comment"), #selector(addComment))
         let clicked = (activePane.rows.indices.contains(activePane.row(atCharacter: charIndex)) ? activePane.rows[activePane.row(atCharacter: charIndex)] : nil)
         let chosen = selectedRows.filter { $0.kind != .hunk }
         menuChange = !chosen.isEmpty ? chosen : clicked.flatMap { DiffHunks.change(around: $0, in: diff.lines) }.map { Array(diff.lines[$0]) }
         if menuChange != nil {
-            add("Undo This Change", #selector(undoFromMenu))
-            add("Ask About This Change", #selector(askFromMenu))
+            add(String(localized: "Undo This Change"), #selector(undoFromMenu))
+            add(String(localized: "Ask About This Change"), #selector(askFromMenu))
         }
-        add("Undo All Changes in This File", #selector(undoFileFromMenu))
+        add(String(localized: "Undo All Changes in This File"), #selector(undoFileFromMenu))
         if SymbolText.word(in: view.string as NSString, at: charIndex) != nil {
             // A right-click doesn't move the cursor, and it's what was clicked that's being asked about.
             view.setSelectedRange(NSRange(location: charIndex, length: 0))
-            add("Go to Definition", #selector(goToDefinitionFromMenu))
-            add("Find References", #selector(findReferencesFromMenu))
+            add(String(localized: "Go to Definition"), #selector(goToDefinitionFromMenu))
+            add(String(localized: "Find References"), #selector(findReferencesFromMenu))
         }
         if let line = fileLocation(ofCharacter: charIndex)?.line {
             let problems = model.languageServers.knownDiagnostics(for: path).filter { $0.line <= line && line <= $0.endLine }
             if !problems.isEmpty {
                 menuProblems = problems
-                add("Quote Problem in Agent", #selector(quoteProblems))
+                add(String(localized: "Quote Problem in Agent"), #selector(quoteProblems))
             }
         }
         menu.insertItem(.separator(), at: index)
@@ -850,8 +850,8 @@ final class ChangeActionsView: NSView {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        for (title, action, help) in [("Undo", #selector(undo), "Ask the agent that made this change to undo it"),
-                                      ("Ask", #selector(ask), "Ask the agent that made this change about it")] {
+        for (title, action, help) in [(String(localized: "Undo"), #selector(undo), String(localized: "Ask the agent that made this change to undo it")),
+                                      (String(localized: "Ask"), #selector(ask), String(localized: "Ask the agent that made this change about it"))] {
             let button = NSButton(title: title, target: self, action: action)
             button.isBordered = false
             button.font = .systemFont(ofSize: 11)
@@ -1092,9 +1092,9 @@ final class ImageDiffView: NSView {
                 return Side(title: title, detail: detail, image: decoded)
             }
             switch (versions.old, versions.new) {
-            case (let old?, let new?): sides = [side("Before", old), side("After", new)]
-            case (let old?, nil): sides = [side("Deleted", old)]
-            case (nil, let new?): sides = [side("Added", new)]
+            case (let old?, let new?): sides = [side(String(localized: "Before"), old), side(String(localized: "After"), new)]
+            case (let old?, nil): sides = [side(String(localized: "Deleted"), old)]
+            case (nil, let new?): sides = [side(String(localized: "Added"), new)]
             case (nil, nil): sides = []
             }
         }
@@ -1131,7 +1131,7 @@ final class ImageDiffView: NSView {
                 view.wantsLayer = true
                 view.layer?.backgroundColor = decoded.darkOnClear && dark ? ClearArt.plate.cgColor : nil
             } else {
-                label.stringValue = "\(side.title)  Tiri can't read this image"
+                label.stringValue = side.title + "  " + String(localized: "Tiri can't read this image")
             }
             addSubview(view)
             addSubview(label)
@@ -1165,7 +1165,7 @@ final class DiffContainer: NSView {
     private let problemsBar = NSView()
     private let problemsLabel = NSTextField(labelWithString: "")
     private let problemsIcon = NSImageView()
-    private let problemsButton = NSButton(title: "Quote in Agent", target: nil, action: nil)
+    private let problemsButton = NSButton(title: String(localized: "Quote in Agent"), target: nil, action: nil)
     private var onQuoteProblems: (() -> Void)?
     private static let barHeight: CGFloat = 26
     private var lastWidth: CGFloat = 0
@@ -1324,7 +1324,7 @@ struct ChangesList: View {
                         CommitRow(commit: commit)
                     }
                     if model.recentCommits.isEmpty, !model.scopeIsLoading {
-                        EmptyChangesRow(text: "No commits yet.")
+                        EmptyChangesRow(text: String(localized: "No commits yet."))
                     }
                 } else {
                     ForEach(model.visibleChanges) { change in
@@ -1365,7 +1365,7 @@ struct CommitRow: View {
     @State private var hovering = false
 
     private var detail: String {
-        var parts = [commit.shortOID, RelativeTime.text(commit.date)]
+        var parts = [commit.shortOID, RelativeTime.display(commit.date)]
         if here.repositories.count > 1 { parts.insert((commit.root as NSString).lastPathComponent, at: 0) }
         return parts.joined(separator: " · ")
     }
@@ -1435,8 +1435,8 @@ struct ChangeRow: View {
     }
 
     private var statusHelp: String {
-        if let old = change.oldRelative { return "Renamed from \(old)" }
-        return change.status.rawValue.capitalized
+        if let old = change.oldRelative { return String(localized: "Renamed from \(old)") }
+        return change.status.title
     }
 
     var body: some View {

@@ -111,6 +111,14 @@ public struct DiffSpec: Codable, Hashable, Sendable {
     /// Goes after the name in a tab.
     public var scopeWord: String {
         if let commit { return String(commit.prefix(7)) }
+        if range != nil { return String(localized: "branch") }
+        if turn != nil { return String(localized: "turn") }
+        return branch == true ? String(localized: "branch") : String(localized: "changes")
+    }
+
+    /// The same in English, for `tiri`.
+    var englishScopeWord: String {
+        if let commit { return String(commit.prefix(7)) }
         if range != nil { return "branch" }
         if turn != nil { return "turn" }
         return branch == true ? "branch" : "changes"
@@ -165,21 +173,27 @@ public struct Item: Codable, Hashable, Identifiable, Sendable {
         return nil
     }
 
-    public var defaultTitle: String {
+    /// The title in English where Tiri makes one up, for `tiri`.
+    public var defaultTitle: String { defaultTitle(shown: false) }
+
+    /// The title on screen: what Tiri makes up is in the language Tiri is in. Names stay as they are.
+    public var shownDefaultTitle: String { defaultTitle(shown: true) }
+
+    private func defaultTitle(shown: Bool) -> String {
         switch content {
         case .terminal(let spec):
             if let title = spec.title, !title.isEmpty { return title }
             if spec.isShell { return (spec.cwd as NSString).lastPathComponent }
-            return spec.command ?? "terminal"
+            return spec.command ?? (shown ? String(localized: "terminal") : "terminal")
         case .file(let spec):
             return (spec.path as NSString).lastPathComponent
         case .web(let spec):
             if let title = spec.title, !title.isEmpty { return title }
             return URL(string: spec.url)?.host ?? spec.url
         case .settings:
-            return "Settings"
+            return shown ? String(localized: "Settings") : "Settings"
         case .diff(let spec):
-            return (spec.path as NSString).lastPathComponent + " (\(spec.scopeWord))"
+            return (spec.path as NSString).lastPathComponent + " (\(shown ? spec.scopeWord : spec.englishScopeWord))"
         case .plugin(let spec):
             return spec.title ?? spec.panel
         }
@@ -438,6 +452,17 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     /// The first terminal a new workspace opens with: cwd = first folder.
     /// What a workspace is called before you've chosen a folder for it.
     public static let placeholderName = "Home"
+
+    /// The name on screen. The placeholder stays English in the file and for `tiri`, which compare it,
+    /// and is shown in the language Tiri is in: `Home`, or `Home 2` beside another.
+    public var shownName: String {
+        guard folders.isEmpty, remote == nil else { return name }
+        if name == Self.placeholderName { return String(localized: "Home") }
+        if name.hasPrefix(Self.placeholderName + " "), let number = Int(name.dropFirst(Self.placeholderName.count + 1)) {
+            return String(localized: "Home \(number)")
+        }
+        return name
+    }
 
     /// The first folder chosen for a placeholder workspace also names it.
     public mutating func adoptFolder(_ path: String, named newName: String) {

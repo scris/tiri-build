@@ -67,11 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static func settleUnsavedFiles() -> Bool {
         guard let name = AppModel.shared.firstUnsavedFileName else { return true }
         let alert = NSAlert()
-        alert.messageText = "Save your changes before quitting?"
-        alert.informativeText = "\(name) has unsaved changes."
-        alert.addButton(withTitle: "Save All")
-        alert.addButton(withTitle: "Don't Save")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Save your changes before quitting?")
+        alert.informativeText = String(localized: "\(name) has unsaved changes.")
+        alert.addButton(withTitle: String(localized: "Save All"))
+        alert.addButton(withTitle: String(localized: "Don't Save"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             return AppModel.shared.saveAllEdits()
@@ -90,10 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // They'll still be running when Tiri comes back.
         if AppModel.shared.settings.terminalKeepRunning, TerminalSessions.helper != nil { return .terminateNow }
         let alert = NSAlert()
-        alert.messageText = working == 1 ? "1 terminal is still working" : "\(working) terminals are still working"
-        alert.informativeText = "Quitting stops them. Agent terminals resume where they left off when you reopen Tiri."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = working == 1 ? String(localized: "1 terminal is still working") : String(localized: "\(working) terminals are still working")
+        alert.informativeText = String(localized: "Quitting stops them. Agent terminals resume where they left off when you reopen Tiri.")
+        alert.addButton(withTitle: String(localized: "Quit"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
     }
 
@@ -114,7 +114,7 @@ struct TiriMenus: Commands {
 
     private func item(_ id: String) -> some View {
         let command = model.command(id)
-        return Button(command?.title ?? id) { model.runFromMenu(id) }
+        return Button(command?.shownTitle ?? id) { model.runFromMenu(id) }
             .modifier(MenuShortcut(binding: model.firstSingleStrokeBinding(for: id)))
     }
 
@@ -179,7 +179,7 @@ struct TiriMenus: Commands {
         CommandMenu("Plugins") {
             let _ = model.plugins.revision
             ForEach(model.commands.fromPlugins) { command in
-                Button(command.title) { model.runFromMenu(command.id) }
+                Button(command.shownTitle) { model.runFromMenu(command.id) }
                     .modifier(MenuShortcut(binding: model.firstSingleStrokeBinding(for: command.id)))
             }
             if !model.commands.fromPlugins.isEmpty { Divider() }

@@ -88,7 +88,7 @@ public enum PluginPackage {
             size += ((try? manager.attributesOfItem(atPath: payload.path + "/" + relative))?[.size] as? Int64) ?? 0
         }
         guard size <= maximumBytes, hashes.count <= maximumFiles else {
-            throw Failure("It's too big to export: \(hashes.count) files, \(size / 1_048_576) MB, and the most is \(maximumFiles) files, \(maximumBytes / 1_048_576) MB. Whatever is rebuilt from a lockfile can stay out of it.")
+            throw Failure(String(localized: "It's too big to export: \(hashes.count) files, \(size / 1_048_576) MB, and the most is \(maximumFiles) files, \(maximumBytes / 1_048_576) MB. Whatever is rebuilt from a lockfile can stay out of it."))
         }
         let header = Header(format: currentFormat, name: manifest.name, version: manifest.version, hash: PluginTree.treeHash(hashes),
                             files: hashes.count, exportedBy: TiriCoreVersion.string)
@@ -99,7 +99,7 @@ public enum PluginPackage {
         let built = scratch.appendingPathComponent("package.zip")
         // -y keeps links as links and -X leaves out what only this Mac cares about.
         let zipped = run("/usr/bin/zip", ["-q", "-r", "-y", "-X", built.path, headerName, payloadName], in: scratch)
-        guard zipped.code == 0 else { throw Failure("Couldn't pack it: \(zipped.output)") }
+        guard zipped.code == 0 else { throw Failure(String(localized: "Couldn't pack it: \(zipped.output)")) }
         try manager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         if manager.fileExists(atPath: file.path) { try manager.removeItem(at: file) }
         try manager.moveItem(at: built, to: file)
@@ -135,10 +135,10 @@ public enum PluginPackage {
     public static func open(_ source: URL) throws -> Opened {
         let manager = FileManager.default
         var isFolder: ObjCBool = false
-        guard manager.fileExists(atPath: source.path, isDirectory: &isFolder) else { throw Failure("There's nothing at \(source.path).") }
+        guard manager.fileExists(atPath: source.path, isDirectory: &isFolder) else { throw Failure(String(localized: "There's nothing at \(source.path).")) }
         if isFolder.boolValue {
             guard manager.fileExists(atPath: PluginManifest.url(in: source).path) else {
-                throw Failure("\(source.lastPathComponent) isn't a plugin: it has no \(PluginManifest.folderName)/plugin.json.")
+                throw Failure(String(localized: "\(source.lastPathComponent) isn't a plugin: it has no \(PluginManifest.folderName)/plugin.json."))
             }
             return try opened(folder: source, scratch: nil)
         }
@@ -149,7 +149,7 @@ public enum PluginPackage {
                 return try openPackage(in: scratch, named: source.lastPathComponent)
             }
             if source.pathExtension.lowercased() == fileExtension {
-                throw Failure("\(source.lastPathComponent) isn't a Tiri plugin: it has no \(headerName).")
+                throw Failure(String(localized: "\(source.lastPathComponent) isn't a Tiri plugin: it has no \(headerName)."))
             }
             return try opened(folder: try findPlugin(in: scratch, named: source.lastPathComponent), scratch: scratch)
         } catch {
@@ -162,14 +162,14 @@ public enum PluginPackage {
         let data = (try? Data(contentsOf: scratch.appendingPathComponent(headerName))) ?? Data()
         // The format first: a newer one may not have the other fields.
         struct Version: Decodable { var format: Int }
-        guard let version = try? JSONDecoder().decode(Version.self, from: data) else { throw Failure("\(file) is damaged: its \(headerName) can't be read.") }
-        guard version.format <= currentFormat else { throw Failure("\(file) was made by a newer Tiri. Update Tiri to import it.") }
-        guard let header = try? JSONDecoder().decode(Header.self, from: data) else { throw Failure("\(file) is damaged: its \(headerName) can't be read.") }
+        guard let version = try? JSONDecoder().decode(Version.self, from: data) else { throw Failure(String(localized: "\(file) is damaged: its \(headerName) can't be read.")) }
+        guard version.format <= currentFormat else { throw Failure(String(localized: "\(file) was made by a newer Tiri. Update Tiri to import it.")) }
+        guard let header = try? JSONDecoder().decode(Header.self, from: data) else { throw Failure(String(localized: "\(file) is damaged: its \(headerName) can't be read.")) }
         let payload = scratch.appendingPathComponent(payloadName, isDirectory: true)
-        guard FileManager.default.fileExists(atPath: PluginManifest.url(in: payload).path) else { throw Failure("\(file) is damaged: it has no plugin inside.") }
+        guard FileManager.default.fileExists(atPath: PluginManifest.url(in: payload).path) else { throw Failure(String(localized: "\(file) is damaged: it has no plugin inside.")) }
         let opened = try opened(folder: payload, scratch: scratch)
-        guard opened.name == header.name else { throw Failure("\(file) is damaged: it says it's \(header.name), and what's inside is \(opened.name).") }
-        guard opened.hash == header.hash else { throw Failure("\(file) is damaged, or something in it changed after it was exported.") }
+        guard opened.name == header.name else { throw Failure(String(localized: "\(file) is damaged: it says it's \(header.name), and what's inside is \(opened.name).")) }
+        guard opened.hash == header.hash else { throw Failure(String(localized: "\(file) is damaged, or something in it changed after it was exported.")) }
         return opened
     }
 
@@ -190,24 +190,24 @@ public enum PluginPackage {
     private static func unpack(_ file: URL, into scratch: URL) throws {
         let name = file.lastPathComponent
         let listed = run("/usr/bin/unzip", ["-Z1", file.path])
-        guard listed.code == 0 else { throw Failure("\(name) won't open: it isn't a zip, or it's damaged.") }
+        guard listed.code == 0 else { throw Failure(String(localized: "\(name) won't open: it isn't a zip, or it's damaged.")) }
         let entries = listed.output.split(whereSeparator: \.isNewline).map(String.init)
-        guard entries.count <= maximumFiles else { throw Failure("\(name) has too many files: \(entries.count), and the most is \(maximumFiles).") }
+        guard entries.count <= maximumFiles else { throw Failure(String(localized: "\(name) has too many files: \(entries.count), and the most is \(maximumFiles).")) }
         for entry in entries where entry.hasPrefix("/") || entry.split(separator: "/").contains("..") {
-            throw Failure("\(name) has a file outside itself: \(entry).")
+            throw Failure(String(localized: "\(name) has a file outside itself: \(entry)."))
         }
         let detail = run("/usr/bin/unzip", ["-Z", file.path]).output.split(whereSeparator: \.isNewline).map(String.init)
         let links = entries.filter { entry in detail.contains { $0.hasPrefix("l") && $0.hasSuffix(" " + entry) } }
         for link in links where entries.contains(where: { $0.hasPrefix(link + "/") }) {
-            throw Failure("\(name) has files inside a link: \(link).")
+            throw Failure(String(localized: "\(name) has files inside a link: \(link)."))
         }
         // The last line says how much it unpacks to, whatever its size on disk.
         if let total = detail.last?.split(separator: " ").map(String.init), let index = total.firstIndex(where: { $0.hasPrefix("bytes") }), index > 0,
            let bytes = Int64(total[index - 1]), bytes > maximumBytes {
-            throw Failure("\(name) is too big: it unpacks to \(bytes / 1_048_576) MB, and the most is \(maximumBytes / 1_048_576) MB.")
+            throw Failure(String(localized: "\(name) is too big: it unpacks to \(bytes / 1_048_576) MB, and the most is \(maximumBytes / 1_048_576) MB."))
         }
         let unpacked = run("/usr/bin/unzip", ["-q", "-o", file.path, "-d", scratch.path])
-        guard unpacked.code == 0 else { throw Failure("Couldn't unpack \(name).") }
+        guard unpacked.code == 0 else { throw Failure(String(localized: "Couldn't unpack \(name).")) }
         let manager = FileManager.default
         try? manager.removeItem(at: scratch.appendingPathComponent("__MACOSX"))
         if let walker = manager.enumerator(atPath: scratch.path) {
@@ -225,16 +225,16 @@ public enum PluginPackage {
         if manager.fileExists(atPath: PluginManifest.url(in: scratch).path) { return scratch }
         let found = ((try? manager.contentsOfDirectory(at: scratch, includingPropertiesForKeys: nil)) ?? [])
             .filter { manager.fileExists(atPath: PluginManifest.url(in: $0).path) }
-        guard let first = found.first else { throw Failure("\(file) has no Tiri plugin in it: no \(PluginManifest.folderName)/plugin.json at its top or one folder down.") }
+        guard let first = found.first else { throw Failure(String(localized: "\(file) has no Tiri plugin in it: no \(PluginManifest.folderName)/plugin.json at its top or one folder down.")) }
         guard found.count == 1 else {
-            throw Failure("\(file) holds \(found.count) plugins: \(found.map(\.lastPathComponent).sorted().joined(separator: ", ")). Import them one at a time.")
+            throw Failure(String(localized: "\(file) holds \(found.count) plugins: \(found.map(\.lastPathComponent).sorted().joined(separator: ", ")). Import them one at a time."))
         }
         return first
     }
 
     private static func requireValid(_ manifest: PluginManifest, folder: URL) throws {
         let errors = PluginValidator.validate(manifest, folder: folder).filter { $0.severity == .error }
-        guard errors.isEmpty else { throw Failure("\(manifest.name) has errors: " + errors.map(\.message).joined(separator: "; ")) }
+        guard errors.isEmpty else { throw Failure(String(localized: "\(manifest.name) has errors: \(errors.map(\.message).joined(separator: "; "))")) }
     }
 
     private static func makeScratch() throws -> URL {

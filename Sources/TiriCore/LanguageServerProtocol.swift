@@ -75,11 +75,11 @@ extension LanguageServerDefinition {
         let found = (entries.compactMap(\.first) + entries.flatMap { $0 }).filter { seen.insert($0).inserted }.map { "." + $0 }
         switch found.count {
         case 0: return nil
-        case 1: return "For \(found[0]) files."
-        case 2: return "For \(found[0]) and \(found[1]) files."
-        case 3: return "For \(found[0]), \(found[1]) and \(found[2]) files."
-        case 4: return "For \(found[0]), \(found[1]), \(found[2]) and \(found[3]) files."
-        default: return "For \(found[0]), \(found[1]), \(found[2]), \(found[3]) and more."
+        case 1: return String(localized: "For \(found[0]) files.")
+        case 2: return String(localized: "For \(found[0]) and \(found[1]) files.")
+        case 3: return String(localized: "For \(found[0]), \(found[1]) and \(found[2]) files.")
+        case 4: return String(localized: "For \(found[0]), \(found[1]), \(found[2]) and \(found[3]) files.")
+        default: return String(localized: "For \(found[0]), \(found[1]), \(found[2]), \(found[3]) and more.")
         }
     }
 
@@ -92,14 +92,11 @@ extension LanguageServerDefinition {
     /// What pressing Add does, in words.
     public var addLine: String? {
         guard let managed else { return nil }
-        var line = "Installs \(managed.title), \(managed.megabytes) MB."
         // Its first name is enough here: "CSS", not "CSS, SCSS and Less".
         let others = sharesInstallWith.map { $0.language.split(separator: ",").first.map(String.init) ?? $0.language }
-        if let last = others.last {
-            let names = others.count == 1 ? last : others.dropLast().joined(separator: ", ") + " and " + last
-            line += " Also covers \(names)."
-        }
-        return line
+        guard !others.isEmpty else { return String(localized: "Installs \(managed.title), \(managed.megabytes) MB.") }
+        let names = L10n.list(others.map(L10n.display))
+        return String(localized: "Installs \(managed.title), \(managed.megabytes) MB. Also covers \(names).")
     }
 }
 

@@ -244,7 +244,7 @@ public enum PluginTools {
         let target = parent.appendingPathComponent(opened.name, isDirectory: true)
         let manager = FileManager.default
         guard opened.folder.standardizedFileURL.resolvingSymlinksInPath().path != target.standardizedFileURL.resolvingSymlinksInPath().path else {
-            throw PluginPackage.Failure("\(opened.name) is already there.")
+            throw PluginPackage.Failure(String(localized: "\(opened.name) is already there."))
         }
         let replacing = manager.fileExists(atPath: target.path)
         do {
@@ -259,7 +259,7 @@ public enum PluginTools {
             }
             try manager.moveItem(at: incoming, to: target)
         } catch {
-            throw PluginPackage.Failure("Couldn't install it: \(error)")
+            throw PluginPackage.Failure(String(localized: "Couldn't install it: \(String(describing: error))"))
         }
         return "\(replacing ? "Replaced" : "Installed") \(opened.name) \(opened.version), and it's off. tiri plugin enable \(opened.name) asks the person using Tiri.\n"
     }
@@ -363,18 +363,18 @@ public enum VSIXImporter {
     }
 
     public static func importFile(_ file: String, into parent: URL) throws -> Report {
-        guard FileManager.default.fileExists(atPath: file) else { throw Failure("No file at \(file).") }
+        guard FileManager.default.fileExists(atPath: file) else { throw Failure(String(localized: "No file at \(file).")) }
         let listed = run("/usr/bin/unzip", ["-Z1", file])
-        guard listed.code == 0 else { throw Failure("\(file) isn't a .vsix: it won't open as a zip.") }
+        guard listed.code == 0 else { throw Failure(String(localized: "\(file) isn't a .vsix: it won't open as a zip.")) }
         // Unpacked into a throwaway folder. A hostile archive can't climb out of it, and files are
         // copied from there one by one, only those the manifest names and only from inside.
         for entry in listed.output.split(whereSeparator: \.isNewline).map(String.init) {
-            if entry.hasPrefix("/") || entry.split(separator: "/").contains("..") { throw Failure("\(file) has a file outside itself: \(entry).") }
+            if entry.hasPrefix("/") || entry.split(separator: "/").contains("..") { throw Failure(String(localized: "\(file) has a file outside itself: \(entry).")) }
         }
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("tiri-vsix-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-        guard run("/usr/bin/unzip", ["-q", "-o", file, "-d", scratch.path]).code == 0 else { throw Failure("Couldn't unpack \(file).") }
+        guard run("/usr/bin/unzip", ["-q", "-o", file, "-d", scratch.path]).code == 0 else { throw Failure(String(localized: "Couldn't unpack \(file).")) }
         return try build(from: scratch.appendingPathComponent("extension", isDirectory: true), into: parent)
     }
 
@@ -382,13 +382,13 @@ public enum VSIXImporter {
     static func build(from source: URL, into parent: URL) throws -> Report {
         guard let data = try? Data(contentsOf: source.appendingPathComponent("package.json")),
               let package = try? JSONSerialization.jsonObject(with: Data(JSONC.strip(String(decoding: data, as: UTF8.self)).utf8)) as? [String: Any] else {
-            throw Failure("It has no readable extension/package.json, so it isn't a VS Code extension.")
+            throw Failure(String(localized: "It has no readable extension/package.json, so it isn't a VS Code extension."))
         }
         let rawName = (package["name"] as? String ?? "extension").lowercased()
         let name = String(rawName.map { $0.isLetter && $0.isASCII || $0.isNumber || $0 == "-" ? $0 : "-" }).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        guard PluginValidator.isValidName(name) else { throw Failure("Can't make a plugin name from \"\(rawName)\".") }
+        guard PluginValidator.isValidName(name) else { throw Failure(String(localized: "Can't make a plugin name from \"\(rawName)\".")) }
         let target = parent.appendingPathComponent(name, isDirectory: true)
-        guard !FileManager.default.fileExists(atPath: target.path) else { throw Failure("\(target.path) already exists. Remove it first with tiri plugin remove \(name).") }
+        guard !FileManager.default.fileExists(atPath: target.path) else { throw Failure(String(localized: "\(target.path) already exists. Remove it first with tiri plugin remove \(name).")) }
 
         let contributes = package["contributes"] as? [String: Any] ?? [:]
         var dropped: [String] = []
@@ -491,7 +491,7 @@ public enum VSIXImporter {
         written += dropped.isEmpty ? "Nothing was left behind.\n" : "## What didn't come across\n\n" + dropped.map { "- " + $0 }.joined(separator: "\n") + "\n"
         try written.write(to: staging.appendingPathComponent("IMPORT-REPORT.md"), atomically: true, encoding: .utf8)
         let issues = PluginValidator.validate(manifest, folder: staging).filter { $0.severity == .error }
-        guard issues.isEmpty else { throw Failure("What came across isn't a valid plugin: " + issues.map(\.message).joined(separator: "; ")) }
+        guard issues.isEmpty else { throw Failure(String(localized: "What came across isn't a valid plugin: \(issues.map(\.message).joined(separator: "; "))")) }
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         try FileManager.default.moveItem(at: staging, to: target)
         return report

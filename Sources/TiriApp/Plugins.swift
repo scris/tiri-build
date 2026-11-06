@@ -193,8 +193,8 @@ final class PluginHost {
         for plugin in plugins {
             guard case .changed = plugin.state, announcedChanges[plugin.name] != plugin.hash else { continue }
             announcedChanges[plugin.name] = plugin.hash
-            model.showToast(title: "\(plugin.title) changed, so it's off", detail: "Its files aren't the ones you approved.", symbol: "exclamationmark.shield",
-                            tint: .orange, actionTitle: "Review", duration: 12) { [weak self] in self?.askToEnable(plugin.name) }
+            model.showToast(title: String(localized: "\(plugin.title) changed, so it's off"), detail: String(localized: "Its files aren't the ones you approved."), symbol: "exclamationmark.shield",
+                            tint: .orange, actionTitle: String(localized: "Review"), duration: 12) { [weak self] in self?.askToEnable(plugin.name) }
         }
     }
 
@@ -215,7 +215,8 @@ final class PluginHost {
         }
         // Every panel can be shown, whether or not a command mentions it.
         for panel in manifest.panels ?? [] where !(manifest.commands ?? []).contains(where: { $0.panel == panel.id }) {
-            list.append(AppCommand(id: "\(name).panel.\(panel.id)", title: "Show \(panel.title)", category: manifest.displayName) { model in
+            list.append(AppCommand(id: "\(name).panel.\(panel.id)", title: "Show \(panel.title)", category: manifest.displayName,
+                                   shown: String(localized: "Show \(panel.title)")) { model in
                 model.plugins.openPanel(plugin: name, panel: panel.id, args: [:], opening: .tab)
             })
         }
@@ -270,8 +271,8 @@ final class PluginHost {
             if !quietly {
                 let trimmed = done.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 if done.code != 0 {
-                    model.showToast(title: "\(command.title) failed", detail: String((done.failure ?? trimmed).suffix(300)), symbol: "exclamationmark.triangle", tint: .orange,
-                                    actionTitle: "Logs", duration: 10) { [weak self] in self?.showLog(plugin.name) }
+                    model.showToast(title: String(localized: "\(command.title) failed"), detail: String((done.failure ?? trimmed).suffix(300)), symbol: "exclamationmark.triangle", tint: .orange,
+                                    actionTitle: String(localized: "Logs"), duration: 10) { [weak self] in self?.showLog(plugin.name) }
                 } else if command.show != PluginManifest.Display.none, !trimmed.isEmpty {
                     model.showToast(title: command.title, detail: String(trimmed.suffix(300)), symbol: "puzzlepiece.extension", tint: .accentColor)
                 }
@@ -293,8 +294,8 @@ final class PluginHost {
             case .failure(let failure):
                 result = RunResult(ok: false, output: "", problem: failure.message)
                 if !quietly {
-                    model.showToast(title: "\(command.title) failed", detail: failure.message, symbol: "exclamationmark.triangle", tint: .orange,
-                                    actionTitle: "Logs", duration: 10) { [weak self] in self?.showLog(plugin.name) }
+                    model.showToast(title: String(localized: "\(command.title) failed"), detail: failure.message, symbol: "exclamationmark.triangle", tint: .orange,
+                                    actionTitle: String(localized: "Logs"), duration: 10) { [weak self] in self?.showLog(plugin.name) }
                 }
             }
         } else {
@@ -310,14 +311,14 @@ final class PluginHost {
     /// you something, where your next Return would answer it.
     func deliverToAgent(_ text: String) {
         let words = PluginTemplate.plain(text)
-        model.withAgent(asking: "Which session should get this?") { [weak model] terminal, agent in
+        model.withAgent(asking: String(localized: "Which session should get this?")) { [weak model] terminal, agent in
             guard let model else { return }
             guard terminal.terminalView.holdsPastes else {
-                model.showToast(title: "Didn't send that to \(agent.title)", detail: "It can't hold words as a paste, so they could run by themselves.", symbol: "exclamationmark.shield", tint: .orange)
+                model.showToast(title: String(localized: "Didn't send that to \(agent.title)"), detail: String(localized: "It can't hold words as a paste, so they could run by themselves."), symbol: "exclamationmark.shield", tint: .orange)
                 return
             }
             if model.runtimes[terminal.itemID]?.status == .needsInput {
-                model.showToast(title: "\(agent.title) is waiting for your answer", detail: "Answer it first, then try again.", symbol: "exclamationmark.circle", tint: .orange)
+                model.showToast(title: String(localized: "\(agent.title) is waiting for your answer"), detail: String(localized: "Answer it first, then try again."), symbol: "exclamationmark.circle", tint: .orange)
                 return
             }
             model.focusAgent(terminal)
@@ -349,7 +350,7 @@ final class PluginHost {
     func showLog(_ name: String) {
         let file = PluginProcesses.logFile(name)
         if !FileManager.default.fileExists(atPath: file.path) {
-            model.showToast(title: "\(name) hasn't logged anything", detail: nil, symbol: "doc.text", tint: .secondary)
+            model.showToast(title: String(localized: "\(name) hasn't logged anything"), detail: nil, symbol: "doc.text", tint: .secondary)
             return
         }
         model.open(path: file.path, intent: .peek(takeFocus: false))
@@ -375,35 +376,37 @@ final class PluginHost {
         guard let plugin = plugin(named: name), let manifest = plugin.manifest else { return }
         builds.removeAll { $0.plugin == name }
         if case .broken(let why) = plugin.state {
-            model.showToast(title: "\(plugin.title) can't run", detail: why, symbol: "exclamationmark.triangle", tint: .orange)
+            model.showToast(title: String(localized: "\(plugin.title) can't run"), detail: why, symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
         guard let window = model.window, window.attachedSheet == nil else { return }
         let alert = NSAlert()
         var words: [String] = []
         if case .changed(let changes) = plugin.state {
-            alert.messageText = "\(plugin.title) has changed. Turn it on again?"
-            if !changes.summary.isEmpty { words.append(changes.summary) }
+            alert.messageText = String(localized: "\(plugin.title) has changed. Turn it on again?")
+            if !changes.summary.isEmpty { words.append(changes.shownSummary) }
         } else {
-            alert.messageText = "Turn on \(plugin.title)?"
+            alert.messageText = String(localized: "Turn on \(plugin.title)?")
             if let approval = PluginLibrary.approvals()[name], approval.hash != plugin.hash {
                 let changes = PluginChanges(from: approval.files, to: plugin.files)
-                if !changes.summary.isEmpty { words.append("Since you last approved it:\n" + changes.summary) }
+                if !changes.summary.isEmpty { words.append(String(localized: "Since you last approved it:\n\(changes.shownSummary)")) }
             }
         }
         if let description = manifest.description { words.insert(description, at: 0) }
-        words.append("Adds " + (manifest.additions.isEmpty ? "nothing" : manifest.additions.joined(separator: ", ")) + ".")
+        let additions = manifest.shownAdditions
+        words.append(additions.isEmpty ? String(localized: "Adds nothing.") : String(localized: "Adds \(additions.formatted(.list(type: .and, width: .narrow)))."))
         if !manifest.programs.isEmpty {
-            words.append("Runs these with your full access, including all your files:\n" + manifest.programs.prefix(8).map { "• " + $0 }.joined(separator: "\n")
-                + (manifest.programs.count > 8 ? "\n• and \(manifest.programs.count - 8) more" : ""))
+            var programs = manifest.programs.prefix(8).map { "• " + $0 }
+            if manifest.programs.count > 8 { programs.append(String(localized: "• and \(manifest.programs.count - 8) more")) }
+            words.append(String(localized: "Runs these with your full access, including all your files:\n\(programs.joined(separator: "\n"))"))
         }
-        if !manifest.networkAddresses.isEmpty { words.append("Its panels can reach " + manifest.networkAddresses.joined(separator: ", ") + ".") }
-        words += manifest.panelPowers
+        if !manifest.networkAddresses.isEmpty { words.append(String(localized: "Its panels can reach \(manifest.networkAddresses.joined(separator: ", ")).")) }
+        words += manifest.shownPanelPowers
         if let part = ClaudeParts.summary(of: plugin) { words.append(part) }
-        words.append("From " + (plugin.folder.path as NSString).abbreviatingWithTildeInPath)
+        words.append(String(localized: "From \((plugin.folder.path as NSString).abbreviatingWithTildeInPath)"))
         alert.informativeText = words.joined(separator: "\n\n")
-        let turnOn = alert.addButton(withTitle: "Turn On")
-        let cancel = alert.addButton(withTitle: "Cancel")
+        let turnOn = alert.addButton(withTitle: String(localized: "Turn On"))
+        let cancel = alert.addButton(withTitle: String(localized: "Cancel"))
         turnOn.keyEquivalent = ""
         cancel.keyEquivalent = "\r"
         alert.window.initialFirstResponder = cancel
@@ -432,18 +435,18 @@ final class PluginHost {
             // Every file read again, whatever the cache says: this is the record of what you approved.
             let found = await Task.detached(priority: .userInitiated) { PluginLibrary.scan(trustingCache: false) }.value
             guard let plugin = found.first(where: { $0.name == name }), plugin.hash == shown else {
-                model.showToast(title: "It changed while you were reading", detail: "Nothing was turned on. Have another look.", symbol: "exclamationmark.shield", tint: .orange)
+                model.showToast(title: String(localized: "It changed while you were reading"), detail: String(localized: "Nothing was turned on. Have another look."), symbol: "exclamationmark.shield", tint: .orange)
                 rescan()
                 return
             }
             await runner.ensureUserPath()
             if let failure = await PluginDependencies.install(plugin, path: model.userPath) {
-                model.showToast(title: "\(plugin.title) couldn't set up", detail: failure, symbol: "exclamationmark.triangle", tint: .orange, duration: 12)
+                model.showToast(title: String(localized: "\(plugin.title) couldn't set up"), detail: failure, symbol: "exclamationmark.triangle", tint: .orange, duration: 12)
                 return
             }
             PluginLibrary.approve(plugin)
             rescan { [weak self] in
-                self?.model.showToast(title: "\(plugin.title) is on", detail: plugin.manifest?.additions.joined(separator: ", "), symbol: "puzzlepiece.extension", tint: .green)
+                self?.model.showToast(title: String(localized: "\(plugin.title) is on"), detail: plugin.manifest?.shownAdditions.formatted(.list(type: .and, width: .narrow)), symbol: "puzzlepiece.extension", tint: .green)
             }
         }
     }
@@ -456,10 +459,10 @@ final class PluginHost {
     func askToRemove(_ name: String) {
         guard let plugin = plugin(named: name), let window = model.window, window.attachedSheet == nil else { return }
         let alert = NSAlert()
-        alert.messageText = "Remove \(plugin.title)?"
-        alert.informativeText = "Its folder goes to the Trash, with its settings and its panels' storage."
-        let remove = alert.addButton(withTitle: "Remove")
-        let cancel = alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Remove \(plugin.title)?")
+        alert.informativeText = String(localized: "Its folder goes to the Trash, with its settings and its panels' storage.")
+        let remove = alert.addButton(withTitle: String(localized: "Remove"))
+        let cancel = alert.addButton(withTitle: String(localized: "Cancel"))
         remove.keyEquivalent = ""
         cancel.keyEquivalent = "\r"
         pendingAlert = (alert, name)
@@ -531,8 +534,8 @@ final class PluginHost {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = Self.importableTypes
-        panel.prompt = "Import"
-        panel.message = "A .tiriplugin file, a plugin's folder, a .zip of one, or a VS Code .vsix"
+        panel.prompt = String(localized: "Import")
+        panel.message = String(localized: "A .tiriplugin file, a plugin's folder, a .zip of one, or a VS Code .vsix")
         panel.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 if response == .OK, let url = panel.url { self?.importPlugin(at: url) }
@@ -543,7 +546,7 @@ final class PluginHost {
     /// It always arrives off, and then the usual question says what it adds and runs.
     func importPlugin(at url: URL) {
         Task {
-            let couldNot = "Couldn't import \(url.lastPathComponent)"
+            let couldNot = String(localized: "Couldn't import \(url.lastPathComponent)")
             if url.pathExtension.lowercased() == "vsix" {
                 let result = await Task.detached(priority: .userInitiated) { () -> Result<String, Error> in
                     Result { try VSIXImporter.importFile(url.path, into: PluginLibrary.folder).name }
@@ -567,7 +570,7 @@ final class PluginHost {
                     if existing.hash == opened.hash {
                         opened.discard()
                         lastShare = "same \(opened.name)"
-                        model.showToast(title: "You already have this", detail: "\(existing.title) \(opened.version) is the same, file for file.", symbol: "checkmark.circle", tint: .secondary)
+                        model.showToast(title: String(localized: "You already have this"), detail: String(localized: "\(existing.title) \(opened.version) is the same, file for file."), symbol: "checkmark.circle", tint: .secondary)
                         return
                     }
                     askToReplace(existing, with: opened)
@@ -585,10 +588,10 @@ final class PluginHost {
         }
         let alert = NSAlert()
         let from = existing.manifest?.version ?? ""
-        alert.messageText = "Replace \(existing.title) \(from) with \(opened.version)?"
-        alert.informativeText = "The one you have goes to the Trash. The new one stays off until you've seen what it adds and runs."
-        let replace = alert.addButton(withTitle: "Replace")
-        let cancel = alert.addButton(withTitle: "Cancel")
+        alert.messageText = String(localized: "Replace \(existing.title) \(from) with \(opened.version)?")
+        alert.informativeText = String(localized: "The one you have goes to the Trash. The new one stays off until you've seen what it adds and runs.")
+        let replace = alert.addButton(withTitle: String(localized: "Replace"))
+        let cancel = alert.addButton(withTitle: String(localized: "Cancel"))
         replace.keyEquivalent = ""
         cancel.keyEquivalent = "\r"
         pendingAlert = (alert, opened.name)
@@ -609,7 +612,7 @@ final class PluginHost {
             }.value
             switch result {
             case .success: arrived(opened.name)
-            case .failure(let error): shareFailed("Couldn't import \(opened.title)", error)
+            case .failure(let error): shareFailed(String(localized: "Couldn't import \(opened.title)"), error)
             }
         }
     }
@@ -629,8 +632,8 @@ final class PluginHost {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = PluginPackage.defaultFileName(name: plugin.name, version: plugin.manifest?.version ?? "0.0.0")
         panel.allowedContentTypes = [UTType(filenameExtension: PluginPackage.fileExtension) ?? .data]
-        panel.prompt = "Export"
-        panel.message = "One file to hand to someone. Its settings stay here."
+        panel.prompt = String(localized: "Export")
+        panel.message = String(localized: "One file to hand to someone. Its settings stay here.")
         panel.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 if response == .OK, let url = panel.url { self?.exportPlugin(name, to: url) }
@@ -647,12 +650,13 @@ final class PluginHost {
             }.value
             switch result {
             case .failure(let error):
-                shareFailed("Couldn't export \(plugin.title)", error)
+                shareFailed(String(localized: "Couldn't export \(plugin.title)"), error)
             case .success(let exported):
                 lastShare = "exported \(name)"
-                let left = exported.leftOut.isEmpty ? "" : " Left out, in case they hold secrets: " + exported.leftOut.joined(separator: ", ") + "."
-                model.showToast(title: "Exported \(plugin.title)", detail: file.lastPathComponent + "." + left, symbol: "square.and.arrow.up", tint: .green,
-                                actionTitle: "Show in Finder", duration: 10) { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+                let detail = exported.leftOut.isEmpty ? file.lastPathComponent
+                    : String(localized: "\(file.lastPathComponent). Left out, in case they hold secrets: \(exported.leftOut.joined(separator: ", ")).")
+                model.showToast(title: String(localized: "Exported \(plugin.title)"), detail: detail, symbol: "square.and.arrow.up", tint: .green,
+                                actionTitle: String(localized: "Show in Finder"), duration: 10) { NSWorkspace.shared.activateFileViewerSelecting([file]) }
             }
         }
     }
@@ -785,16 +789,16 @@ final class PluginHost {
     }
 
     private func ask(_ provider: PluginManifest.Provider, plugin: InstalledPlugin) async -> Result<JSONValue, PluginProcesses.Failure> {
-        guard await stillApproved(plugin) else { return .failure(.init(message: "It changed, so it's off until you approve it again.")) }
+        guard await stillApproved(plugin) else { return .failure(.init(message: String(localized: "It changed, so it's off until you approve it again."))) }
         let context = runner.context(plugin: plugin, args: [:], using: provider.exec ?? [])
         if let process = provider.process, let method = provider.method {
             return await processes.call(plugin: plugin, process: process, method: method, params: .object([:]), context: context)
         }
-        guard let exec = provider.exec else { return .failure(.init(message: "It has no provider.")) }
+        guard let exec = provider.exec else { return .failure(.init(message: String(localized: "It has no provider."))) }
         let done = await runner.exec(exec, plugin: plugin, context: context, place: provider.where ?? .workspace, timeout: provider.timeout ?? 30)
-        guard done.code == 0 else { return .failure(.init(message: done.failure ?? "It failed.")) }
+        guard done.code == 0 else { return .failure(.init(message: done.failure ?? String(localized: "It failed."))) }
         guard let value = try? JSONDecoder().decode(JSONValue.self, from: Data(done.output.utf8)) else {
-            return .failure(.init(message: "It didn't print JSON."))
+            return .failure(.init(message: String(localized: "It didn't print JSON.")))
         }
         return .success(value)
     }
@@ -906,7 +910,7 @@ final class PluginHost {
 
     func openPanel(plugin name: String, panel id: String, args: [String: JSONValue], opening: PluginManifest.Opening) {
         guard let plugin = enabledPlugin(named: name), let panel = plugin.manifest?.panels?.first(where: { $0.id == id }) else {
-            model.showToast(title: "\(name) isn't on", detail: nil, symbol: "puzzlepiece.extension", tint: .secondary)
+            model.showToast(title: String(localized: "\(name) isn't on"), detail: nil, symbol: "puzzlepiece.extension", tint: .secondary)
             return
         }
         let same = { (item: Item) -> Bool in
@@ -1021,7 +1025,7 @@ enum PluginDependencies {
         guard FileManager.default.fileExists(atPath: plugin.folder.appendingPathComponent("package-lock.json").path) else { return nil }
         let done = await LocalProgram.run(argv: ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], environment: [:], directory: plugin.folder.path,
                                           path: path, timeout: 300, logName: plugin.name)
-        return done.code == 0 ? nil : String((done.failure ?? "npm ci failed").suffix(300))
+        return done.code == 0 ? nil : String((done.failure ?? String(localized: "npm ci failed")).suffix(300))
     }
 }
 
@@ -1072,12 +1076,13 @@ enum ClaudeParts {
         let manager = FileManager.default
         var parts: [String] = []
         let skills = ((try? manager.contentsOfDirectory(atPath: root.appendingPathComponent("skills").path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
-        if !skills.isEmpty { parts.append("skills: " + skills.joined(separator: ", ")) }
+        if !skills.isEmpty { parts.append(String(localized: "skills: \(skills.joined(separator: ", "))")) }
         let agents = ((try? manager.contentsOfDirectory(atPath: root.appendingPathComponent("agents").path)) ?? []).filter { !$0.hasPrefix(".") }
-        if !agents.isEmpty { parts.append("\(agents.count) subagents") }
-        if manager.fileExists(atPath: root.appendingPathComponent("hooks").path) { parts.append("hooks, which run by themselves") }
-        if manager.fileExists(atPath: root.appendingPathComponent(".mcp.json").path) { parts.append("MCP servers") }
-        return "Adds to Claude Code, in Tiri's terminals only: " + (parts.isEmpty ? "a plugin" : parts.joined(separator: "; ")) + "."
+        if agents.count == 1 { parts.append(String(localized: "1 subagent")) } else if agents.count > 1 { parts.append(String(localized: "\(agents.count) subagents")) }
+        if manager.fileExists(atPath: root.appendingPathComponent("hooks").path) { parts.append(String(localized: "hooks, which run by themselves")) }
+        if manager.fileExists(atPath: root.appendingPathComponent(".mcp.json").path) { parts.append(String(localized: "MCP servers")) }
+        return parts.isEmpty ? String(localized: "Adds to Claude Code, in Tiri's terminals only: a plugin.")
+            : String(localized: "Adds to Claude Code, in Tiri's terminals only: \(parts.joined(separator: "; ")).")
     }
 }
 

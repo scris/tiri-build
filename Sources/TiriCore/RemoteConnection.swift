@@ -450,7 +450,7 @@ public final class RemoteConnection: @unchecked Sendable {
         do {
             try process.run()
         } catch {
-            setState(.failed("Couldn't run ssh: \(error.localizedDescription)"))
+            setState(.failed(String(localized: "Couldn't run ssh: \(error.localizedDescription)")))
             return
         }
         master = process
@@ -526,14 +526,14 @@ public final class RemoteConnection: @unchecked Sendable {
     static func explain(_ message: String, destination: String) -> String {
         let lower = message.lowercased()
         let name = SSHConfigFile.displayName(of: destination)
-        if lower.contains("could not resolve hostname") { return "\(name) isn't a host this Mac can find." }
-        if lower.contains("permission denied") { return "\(name) didn't accept your key or password." }
-        if lower.contains("connection refused") { return "\(name) refused the connection. SSH may not be running there." }
-        if lower.contains("timed out") { return "\(name) didn't answer." }
-        if lower.contains("host key verification failed") { return "\(name)'s identity couldn't be confirmed, so Tiri didn't connect." }
-        if lower.contains("no route to host") || lower.contains("network is unreachable") { return "This Mac can't reach \(name) from this network." }
+        if lower.contains("could not resolve hostname") { return String(localized: "\(name) isn't a host this Mac can find.") }
+        if lower.contains("permission denied") { return String(localized: "\(name) didn't accept your key or password.") }
+        if lower.contains("connection refused") { return String(localized: "\(name) refused the connection. SSH may not be running there.") }
+        if lower.contains("timed out") { return String(localized: "\(name) didn't answer.") }
+        if lower.contains("host key verification failed") { return String(localized: "\(name)'s identity couldn't be confirmed, so Tiri didn't connect.") }
+        if lower.contains("no route to host") || lower.contains("network is unreachable") { return String(localized: "This Mac can't reach \(name) from this network.") }
         let last = message.split(whereSeparator: \.isNewline).last.map(String.init)
-        return last ?? "\(name) closed the connection."
+        return last ?? String(localized: "\(name) closed the connection.")
     }
 
     // MARK: Getting the server ready
@@ -555,7 +555,7 @@ public final class RemoteConnection: @unchecked Sendable {
         """
         guard let answer = exec(probe, stdin: nil, timeout: 30), answer.status != 255, answer.status != 124 else { return Self.connectionGone }
         guard answer.succeeded else {
-            return "\(SSHConfigFile.displayName(of: destination)) connected, but wouldn't run a command."
+            return String(localized: "\(SSHConfigFile.displayName(of: destination)) connected, but wouldn't run a command.")
         }
         var values: [String: String] = [:]
         for line in answer.text.split(whereSeparator: \.isNewline) {
@@ -563,7 +563,7 @@ public final class RemoteConnection: @unchecked Sendable {
             if parts.count == 2 { values[String(parts[0])] = String(parts[1]) }
         }
         guard let home = values["home"], home.hasPrefix("/") else {
-            return "\(SSHConfigFile.displayName(of: destination)) connected, but didn't say where its home folder is."
+            return String(localized: "\(SSHConfigFile.displayName(of: destination)) connected, but didn't say where its home folder is.")
         }
         lock.withLock {
             _home = home
@@ -1247,8 +1247,8 @@ public final class RemoteConnection: @unchecked Sendable {
     }
 
     private func download(_ local: String) -> Result<Void, RemoteFailure> {
-        guard let remote = map.remote(local) else { return .failure(RemoteFailure("Not a file on this server.")) }
-        guard state.isReady else { return .failure(RemoteFailure("Not connected to \(SSHConfigFile.displayName(of: destination)).")) }
+        guard let remote = map.remote(local) else { return .failure(RemoteFailure(String(localized: "Not a file on this server."))) }
+        guard state.isReady else { return .failure(RemoteFailure(String(localized: "Not connected to \(SSHConfigFile.displayName(of: destination))."))) }
         let parent = (local as NSString).deletingLastPathComponent
         mkdirs(parent)
         // Beside the copy, not in it: on the same disk so it can be renamed into place, but where the
@@ -1269,14 +1269,14 @@ public final class RemoteConnection: @unchecked Sendable {
         }
         // Well past anything worth reading here, and a server shouldn't be able to fill this disk.
         let limit: Int64 = 8 * 1024 * 1024 * 1024
-        if let size = record(forLocal: local)?.size, size > limit { return .failure(RemoteFailure("That file is too big to open here.")) }
+        if let size = record(forLocal: local)?.size, size > limit { return .failure(RemoteFailure(String(localized: "That file is too big to open here."))) }
         guard let result = run("head -c \(limit) -- \(ShellQuote.quote(remote))", timeout: 3600, outputFile: temporary) else {
-            return .failure(RemoteFailure("The connection went away."))
+            return .failure(RemoteFailure(String(localized: "The connection went away.")))
         }
         guard result.succeeded else {
             // `head: cannot open 'x' for reading: Permission denied`: only the end says anything.
             let reason = result.errorText.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: ": ").last ?? ""
-            return .failure(RemoteFailure(reason.isEmpty ? "Couldn't read it." : "Couldn't read \((local as NSString).lastPathComponent). \(reason)."))
+            return .failure(RemoteFailure(reason.isEmpty ? String(localized: "Couldn't read it.") : String(localized: "Couldn't read \((local as NSString).lastPathComponent). \(reason).")))
         }
         setModified(temporary.path, modified)
         if rename(temporary.path, local) != 0 { return .failure(RemoteFailure(String(cString: strerror(errno)))) }
@@ -1287,7 +1287,7 @@ public final class RemoteConnection: @unchecked Sendable {
     /// and goes when the connection's back. Saves of one file go one at a time, last one last.
     public func push(_ local: String, completion: @escaping @Sendable (Result<Void, RemoteFailure>) -> Void) {
         guard let remote = map.remote(local) else {
-            completion(.failure(RemoteFailure("Not a file on this server.")))
+            completion(.failure(RemoteFailure(String(localized: "Not a file on this server."))))
             return
         }
         mirrorQueue.async { [self] in
@@ -1339,8 +1339,8 @@ public final class RemoteConnection: @unchecked Sendable {
     private static let conflictMessage = "changed on the server"
 
     private func upload(_ local: String, remote: String, ifModified expected: Int64?) -> Result<Void, RemoteFailure> {
-        guard let data = FileManager.default.contents(atPath: local) else { return .failure(RemoteFailure("Couldn't read the file here.")) }
-        guard state.isReady else { return .failure(RemoteFailure("Waiting for the connection.")) }
+        guard let data = FileManager.default.contents(atPath: local) else { return .failure(RemoteFailure(String(localized: "Couldn't read the file here."))) }
+        guard state.isReady else { return .failure(RemoteFailure(String(localized: "Waiting for the connection."))) }
         // An empty copy of a file with contents is a placeholder, not an edit. Never send one.
         if data.isEmpty, let record = record(forLocal: local), record.size > 0, expected != nil, !savedByEditor(remote) {
             mirrorQueue.async { [self] in
@@ -1359,12 +1359,12 @@ public final class RemoteConnection: @unchecked Sendable {
             let temporary = ShellQuote.quote(remote + ".tiri-upload")
             script = "cat > \(temporary) && [ \"$(wc -c < \(temporary) | tr -d ' ')\" = \(data.count) ] && mv \(temporary) \(target) && printf '0 %s\\n' \(data.count)"
         }
-        guard let result = run(script, stdin: data, timeout: 600) else { return .failure(RemoteFailure("The connection went away.")) }
+        guard let result = run(script, stdin: data, timeout: 600) else { return .failure(RemoteFailure(String(localized: "The connection went away."))) }
         guard result.succeeded else {
             if result.status == 9 { return .failure(RemoteFailure(Self.conflictMessage)) }
             let reason = result.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if result.status == 255 || result.status == 124 { return .failure(RemoteFailure("The connection went away.")) }
-            return .failure(RemoteFailure(reason.isEmpty ? "The server wouldn't take it." : reason))
+            if result.status == 255 || result.status == 124 { return .failure(RemoteFailure(String(localized: "The connection went away."))) }
+            return .failure(RemoteFailure(reason.isEmpty ? String(localized: "The server wouldn't take it.") : reason))
         }
         let words = result.text.split(separator: " ")
         if words.count == 2, let modified = Int64(words[0]), let size = Int64(words[1].trimmingCharacters(in: .whitespacesAndNewlines)) {
@@ -1445,11 +1445,11 @@ public final class RemoteConnection: @unchecked Sendable {
     /// so it can never claim something happened that didn't.
     public func perform(_ script: String, affecting remotes: [String]) -> Result<Void, RemoteFailure> {
         guard let result = run(script, timeout: 60) else {
-            return .failure(RemoteFailure("Not connected to \(SSHConfigFile.displayName(of: destination))."))
+            return .failure(RemoteFailure(String(localized: "Not connected to \(SSHConfigFile.displayName(of: destination)).")))
         }
         guard result.succeeded else {
             let reason = result.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failure(RemoteFailure(reason.isEmpty ? "The server said no." : reason))
+            return .failure(RemoteFailure(reason.isEmpty ? String(localized: "The server said no.") : reason))
         }
         refresh(remotes)
         return .success(())

@@ -9,7 +9,7 @@ enum DefaultBrowser {
     }
 
     static var name: String {
-        guard let app else { return "Browser" }
+        guard let app else { return String(localized: "Browser") }
         let name = FileManager.default.displayName(atPath: app.path)
         return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
     }
@@ -37,8 +37,8 @@ extension AppModel {
     func sendsToBrowser(_ url: URL, openHere: @escaping () -> Void) -> Bool {
         guard let rule = BrowserRules.matching(url, in: settings.webOpenInBrowser) else { return false }
         openInBrowser(url)
-        showToast(title: "Opened in \(DefaultBrowser.name)", detail: "\(rule) always opens there", symbol: "arrow.up.forward.app",
-                  tint: .secondary, actionTitle: "Open Here", duration: 8, action: openHere)
+        showToast(title: String(localized: "Opened in \(DefaultBrowser.name)"), detail: String(localized: "\(rule) always opens there"), symbol: "arrow.up.forward.app",
+                  tint: .secondary, actionTitle: String(localized: "Open Here"), duration: 8, action: openHere)
         return true
     }
 
@@ -53,8 +53,8 @@ extension AppModel {
         }
         guard setSetting("web.openInBrowser", to: .array(rules.map(JSONValue.string))) == nil else { return }
         if on {
-            showToast(title: "\(rule) opens in \(DefaultBrowser.name) now", detail: nil, symbol: "arrow.up.forward.app", tint: .secondary,
-                      actionTitle: "Undo") { [weak self] in self?.setOpensInBrowser(rule, false) }
+            showToast(title: String(localized: "\(rule) opens in \(DefaultBrowser.name) now"), detail: nil, symbol: "arrow.up.forward.app", tint: .secondary,
+                      actionTitle: String(localized: "Undo")) { [weak self] in self?.setOpensInBrowser(rule, false) }
         }
     }
 
@@ -86,10 +86,12 @@ struct OpenElsewhereButton: View {
         if url != nil || path != nil {
             let browser = DefaultBrowser.name
             let editor = ExternalEditor.displayName(of: model.settings.externalEditors, pathEnv: ProcessInfo.processInfo.environment["PATH"])
+            let target = url != nil ? browser : editor
+            let title = String(localized: "Open in \(target)")
             Menu {
                 choices(url: url, browser: browser, editor: editor)
             } label: {
-                Label(url != nil ? "Open in \(browser)" : "Open in \(editor)", systemImage: "arrow.up.forward.square")
+                Label(title, systemImage: "arrow.up.forward.square")
                     .labelStyle(.iconOnly)
             } primaryAction: {
                 if let page, url != nil { model.movePageToBrowser(page.itemID) } else if let path { model.openExternally(path: path) }
@@ -101,10 +103,10 @@ struct OpenElsewhereButton: View {
             .frame(width: 24, height: 24)
             .contentShape(Rectangle())
             .contextMenu { choices(url: url, browser: browser, editor: editor) }
-            .help(url != nil ? "Open in \(browser). Hold for more" : "Open in \(editor). Hold for more")
+            .help(String(localized: "Open in \(target). Hold for more"))
             // One button to VoiceOver, with the menu's choices as its actions.
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(url != nil ? "Open in \(browser)" : "Open in \(editor)")
+            .accessibilityLabel(title)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction(.default) {
                 if let page, url != nil { model.movePageToBrowser(page.itemID) } else if let path { model.openExternally(path: path) }

@@ -69,12 +69,17 @@ nonisolated final class MathEngine: @unchecked Sendable {
 enum DiagramDrawing {
     static let world = WKContentWorld.world(name: "tiri-diagrams")
 
+    /// Tiri's words in the page, as script strings.
+    private static func script(_ text: String) -> String {
+        String(data: try! JSONEncoder().encode(text), encoding: .utf8)!
+    }
+
     /// Marks anything still waiting as not drawn, so its source shows.
     static let giveUp = """
     for (const figure of document.querySelectorAll('figure.mermaid.pending')) {
       figure.classList.replace('pending', 'broken');
       const note = document.createElement('figcaption');
-      note.textContent = "Can't draw this diagram.";
+      note.textContent = \(script(String(localized: "Can't draw this diagram.")));
       figure.append(note);
     }
     """
@@ -103,7 +108,7 @@ enum DiagramDrawing {
       } catch (error) {
         for (const stray of document.querySelectorAll('#' + id + ', #d' + id)) stray.remove();
         const detail = String(error && error.message || error).split('\\n')[0].replace(/[:.\\s]+$/, '');
-        const reason = "Can't draw this diagram: " + detail + '.';
+        const reason = \(script(String(localized: "Can't draw this diagram: \("%@")."))).replace('%@', () => detail);
         figure.classList.replace('pending', 'broken');
         const note = document.createElement('figcaption');
         note.textContent = reason;

@@ -44,6 +44,8 @@ public enum WordWrap: String, Codable, Sendable, CaseIterable {
 /// Settings use the flat dotted keys Cursor users already know. Unknown keys are ignored
 /// so a newer settings file can't break an older app.
 public struct TiriSettings: Equatable, Sendable {
+    /// The language of Tiri's own words. A change shows after a restart.
+    public var language = AppLanguage.system
     public var theme: ThemeMode = .system
     /// The themes for each look, by name: built in, or one in the themes folder.
     public var darkTheme = Theme.tiriDark.name
@@ -115,6 +117,8 @@ public struct TiriSettings: Equatable, Sendable {
     public static let defaultFileContents = """
     {
       // Tiri settings. Saved changes apply immediately.
+      // Tiri's own words: "system", "en", "zh-Hans" or "zh-Hant". Shows after a restart.
+      "language": "system",
       // "system", "light" or "dark"
       "theme": "system",
       // Colors for terminals, the editor and highlights, by look. `tiri theme` lists them and brings more in.
@@ -195,9 +199,9 @@ public struct TiriSettings: Equatable, Sendable {
 
         public var description: String {
             switch self {
-            case .invalidJSON(let why): "Invalid JSON: \(why)"
-            case .notAnObject: "The top level must be an object"
-            case .wrongType(let key, let expected): "\"\(key)\" must be \(expected)"
+            case .invalidJSON(let why): String(localized: "Invalid JSON: \(why)")
+            case .notAnObject: String(localized: "The top level must be an object")
+            case .wrongType(let key, let expected): String(localized: "\"\(key)\" must be \(expected)")
             }
         }
     }
@@ -217,34 +221,40 @@ public struct TiriSettings: Equatable, Sendable {
 
         func string(_ key: String, _ apply: (String) -> Void) throws {
             guard let value = object[key] else { return }
-            guard let text = value as? String else { throw ParseError.wrongType(key: key, expected: "a string") }
+            guard let text = value as? String else { throw ParseError.wrongType(key: key, expected: String(localized: "a string")) }
             apply(text)
         }
         func number(_ key: String, _ apply: (Double) -> Void) throws {
             guard let value = object[key] else { return }
             guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
-                throw ParseError.wrongType(key: key, expected: "a number")
+                throw ParseError.wrongType(key: key, expected: String(localized: "a number"))
             }
             apply(number.doubleValue)
         }
         func bool(_ key: String, _ apply: (Bool) -> Void) throws {
             guard let value = object[key] else { return }
             guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
-                throw ParseError.wrongType(key: key, expected: "true or false")
+                throw ParseError.wrongType(key: key, expected: String(localized: "true or false"))
             }
             apply(number.boolValue)
         }
         func strings(_ key: String, _ apply: ([String]) -> Void) throws {
             guard let value = object[key] else { return }
-            guard let list = value as? [String] else { throw ParseError.wrongType(key: key, expected: "a list of strings") }
+            guard let list = value as? [String] else { throw ParseError.wrongType(key: key, expected: String(localized: "a list of strings")) }
             apply(list)
         }
 
         var settings = TiriSettings()
+        if let raw = object["language"] {
+            guard let text = raw as? String, let language = AppLanguage(rawValue: text) else {
+                throw ParseError.wrongType(key: "language", expected: AppLanguage.settingValues)
+            }
+            settings.language = language
+        }
         try string("theme") { _ in }
         if let raw = object["theme"] as? String {
             guard let theme = ThemeMode(rawValue: raw) else {
-                throw ParseError.wrongType(key: "theme", expected: "\"system\", \"light\" or \"dark\"")
+                throw ParseError.wrongType(key: "theme", expected: String(localized: "\"system\", \"light\" or \"dark\""))
             }
             settings.theme = theme
         }
@@ -264,25 +274,25 @@ public struct TiriSettings: Equatable, Sendable {
         try string("terminal.shell") { settings.terminalShell = $0 }
         if let value = object["terminal.presets"] {
             guard let list = value as? [[String: Any]] else {
-                throw ParseError.wrongType(key: "terminal.presets", expected: "a list of { name, command }")
+                throw ParseError.wrongType(key: "terminal.presets", expected: String(localized: "a list of { name, command }"))
             }
             settings.terminalPresets = try list.map { entry in
                 guard let name = entry["name"] as? String else {
-                    throw ParseError.wrongType(key: "terminal.presets", expected: "a list of { name, command }")
+                    throw ParseError.wrongType(key: "terminal.presets", expected: String(localized: "a list of { name, command }"))
                 }
                 return TerminalPreset(name: name, command: entry["command"] as? String ?? "", isEnabled: entry["enabled"] as? Bool ?? true)
             }
         }
         if let value = object["terminal.resume"] {
             guard let map = value as? [String: String] else {
-                throw ParseError.wrongType(key: "terminal.resume", expected: "an object of tool → command")
+                throw ParseError.wrongType(key: "terminal.resume", expected: String(localized: "an object of tool → command"))
             }
             settings.terminalResume = map
         }
         try bool("terminal.restoreWithResume") { settings.terminalRestoreWithResume = $0 }
         if let raw = object["terminal.linkOpens"] {
             guard let text = raw as? String, let target = LinkOpenTarget(rawValue: text) else {
-                throw ParseError.wrongType(key: "terminal.linkOpens", expected: "\"peek\", \"tab\" or \"external\"")
+                throw ParseError.wrongType(key: "terminal.linkOpens", expected: String(localized: "\"peek\", \"tab\" or \"external\""))
             }
             settings.terminalLinkOpens = target
         }
@@ -292,7 +302,7 @@ public struct TiriSettings: Equatable, Sendable {
         try bool("code.wordWrap") { settings.editorWordWrap = $0 ? .on : .off }
         if let raw = object["editor.wordWrap"] {
             guard let text = raw as? String, let wrap = WordWrap(rawValue: text) else {
-                throw ParseError.wrongType(key: "editor.wordWrap", expected: "\"off\", \"on\" or \"bounded\"")
+                throw ParseError.wrongType(key: "editor.wordWrap", expected: String(localized: "\"off\", \"on\" or \"bounded\""))
             }
             settings.editorWordWrap = wrap
         }
@@ -544,7 +554,7 @@ public enum Keymap {
 
         public var description: String {
             switch self {
-            case .invalidJSON(let why): "Invalid JSON: \(why)"
+            case .invalidJSON(let why): String(localized: "Invalid JSON: \(why)")
             case .badEntry(let why): why
             }
         }
@@ -568,14 +578,14 @@ public enum Keymap {
             throw ParseError.invalidJSON(message)
         }
         guard let list = root as? [[String: Any]] else {
-            throw ParseError.badEntry("keybindings.json must be a list of { key, command }")
+            throw ParseError.badEntry(String(localized: "keybindings.json must be a list of { key, command }"))
         }
         return try list.map { entry in
             guard let key = entry["key"] as? String, let command = entry["command"] as? String else {
-                throw ParseError.badEntry("Each keybinding needs a \"key\" and a \"command\"")
+                throw ParseError.badEntry(String(localized: "Each keybinding needs a \"key\" and a \"command\""))
             }
             guard parseStrokes(key) != nil else {
-                throw ParseError.badEntry("Can't read the key \"\(key)\"")
+                throw ParseError.badEntry(String(localized: "Can't read the key \"\(key)\""))
             }
             return (key, command)
         }
@@ -608,23 +618,60 @@ public enum Keymap {
 }
 
 extension Keymap {
-    /// Why this key can't be used for this command, if there's a reason.
+    /// Why this key can't be used for this command, if there's a reason. In English, for `tiri keys`.
     public static func problem(with key: String, command: String, bindings: [Keybinding]) -> String? {
-        guard let strokes = parseStrokes(key) else { return "Can't read the key \"\(key)\". Write it like cmd+shift+p." }
-        guard strokes.count <= 2 else { return "A shortcut can be at most two key presses." }
+        keyProblem(with: key, command: command, bindings: bindings)?.english
+    }
+
+    /// The same, in Tiri's language, for the screen.
+    public static func shownProblem(with key: String, command: String, bindings: [Keybinding]) -> String? {
+        keyProblem(with: key, command: command, bindings: bindings)?.shown
+    }
+
+    private enum KeyProblem {
+        case unreadable(String)
+        case tooLong
+        case needsModifier
+        case startsLonger(keys: String, longer: String, command: String)
+        case alreadyTaken(keys: String, command: String)
+
+        var english: String {
+            switch self {
+            case .unreadable(let key): "Can't read the key \"\(key)\". Write it like cmd+shift+p."
+            case .tooLong: "A shortcut can be at most two key presses."
+            case .needsModifier: "A shortcut needs ⌘, ⌃ or ⌥, or typing that key would stop working."
+            case .startsLonger(let keys, let longer, let command): "\(keys) already starts \(longer) (\(command))."
+            case .alreadyTaken(let keys, let command): "\(keys) is already \(command), so it can't start a longer shortcut."
+            }
+        }
+
+        var shown: String {
+            switch self {
+            case .unreadable(let key): String(localized: "Can't read the key \"\(key)\". Write it like cmd+shift+p.")
+            case .tooLong: String(localized: "A shortcut can be at most two key presses.")
+            case .needsModifier: String(localized: "A shortcut needs ⌘, ⌃ or ⌥, or typing that key would stop working.")
+            case .startsLonger(let keys, let longer, let command): String(localized: "\(keys) already starts \(longer) (\(command)).")
+            case .alreadyTaken(let keys, let command): String(localized: "\(keys) is already \(command), so it can't start a longer shortcut.")
+            }
+        }
+    }
+
+    private static func keyProblem(with key: String, command: String, bindings: [Keybinding]) -> KeyProblem? {
+        guard let strokes = parseStrokes(key) else { return .unreadable(key) }
+        guard strokes.count <= 2 else { return .tooLong }
         let first = strokes[0]
         let isFunctionKey = first.key.hasPrefix("f") && first.key.count > 1 && first.key.dropFirst().allSatisfy(\.isNumber)
         if first.modifiers.subtracting(.shift).isEmpty, !isFunctionKey {
-            return "A shortcut needs ⌘, ⌃ or ⌥, or typing that key would stop working."
+            return .needsModifier
         }
         for binding in bindings where binding.command != command && command != "clearTerminal" {
             // ⌘K can be both: it waits a moment to see whether a second press follows.
             if binding.command == "clearTerminal" { continue }
             if binding.strokes.count > strokes.count, Array(binding.strokes.prefix(strokes.count)) == strokes {
-                return "\(strokes.map(\.symbol).joined(separator: " ")) already starts \(binding.symbol) (\(binding.command))."
+                return .startsLonger(keys: strokes.map(\.symbol).joined(separator: " "), longer: binding.symbol, command: binding.command)
             }
             if strokes.count > binding.strokes.count, Array(strokes.prefix(binding.strokes.count)) == binding.strokes {
-                return "\(binding.symbol) is already \(binding.command), so it can't start a longer shortcut."
+                return .alreadyTaken(keys: binding.symbol, command: binding.command)
             }
         }
         return nil

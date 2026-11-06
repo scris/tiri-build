@@ -6,9 +6,9 @@ enum RepositoryTransfer {
 
     var title: String {
         switch self {
-        case .fetching: "Fetching"
-        case .pulling: "Pulling"
-        case .pushing: "Pushing"
+        case .fetching: String(localized: "Fetching")
+        case .pulling: String(localized: "Pulling")
+        case .pushing: String(localized: "Pushing")
         }
     }
 }
@@ -68,9 +68,9 @@ struct RepositoryStatusItem: View {
     private var transfer: RepositoryTransfer? { model.repositoryTransfers[repository.root] }
 
     private var summary: String {
-        var lines = [repository.branch.map { "On \($0)" } ?? "Not on a branch"]
-        if let upstream = repository.upstream { lines.append("Tracks \(upstream)") }
-        if repository.isDirty { lines.append("Has uncommitted changes") }
+        var lines = [repository.branch.map { String(localized: "On \($0)") } ?? String(localized: "Not on a branch")]
+        if let upstream = repository.upstream { lines.append(String(localized: "Tracks \(upstream)")) }
+        if repository.isDirty { lines.append(String(localized: "Has uncommitted changes")) }
         lines.append((repository.root as NSString).abbreviatingWithTildeInPath)
         return lines.joined(separator: "\n")
     }
@@ -81,7 +81,7 @@ struct RepositoryStatusItem: View {
                 Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Text(repository.title + (repository.isDirty ? "*" : ""))
+                Text(repository.displayTitle + (repository.isDirty ? "*" : ""))
                     .font(.system(size: 12))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -117,21 +117,21 @@ struct RepositoryStatusItem: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help("Fetch from \(repository.remote ?? "the remote")")
+            .help(repository.remote.map { String(localized: "Fetch from \($0)") } ?? String(localized: "Fetch from the remote"))
             .accessibilityLabel("Fetch")
             if repository.canPublish {
                 Button("Publish") { model.confirmPush(repository) }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Color.accentColor)
-                    .help("Push this branch to \(repository.remote ?? "the remote") for the first time")
+                    .help(repository.remote.map { String(localized: "Push this branch to \($0) for the first time") } ?? String(localized: "Push this branch to the remote for the first time"))
             } else if repository.upstream != nil {
-                count(repository.behind, arrow: "↓", label: "Pull",
-                      help: repository.behind > 0 ? "Pull from \(repository.upstream ?? "the remote")" : "Nothing to pull, as of the last fetch") {
+                count(repository.behind, arrow: "↓", label: String(localized: "Pull"),
+                      help: repository.behind > 0 ? String(localized: "Pull from \(repository.upstream ?? "")") : String(localized: "Nothing to pull, as of the last fetch")) {
                     model.pull(repository)
                 }
-                count(repository.ahead, arrow: "↑", label: "Push",
-                      help: repository.ahead > 0 ? "Push to \(repository.upstream ?? "the remote")" : "Nothing to push") {
+                count(repository.ahead, arrow: "↑", label: String(localized: "Push"),
+                      help: repository.ahead > 0 ? String(localized: "Push to \(repository.upstream ?? "")") : String(localized: "Nothing to push")) {
                     model.confirmPush(repository)
                 }
             }
@@ -170,7 +170,7 @@ struct RemoteStatusItem: View {
 
     var body: some View {
         Menu {
-            Text(state.label)
+            Text(L10n.display(state.label))
             if case .failed(let message) = state { Text(message) }
             Divider()
             Button("Reconnect") { model.remote.connect(destination) }
@@ -187,13 +187,13 @@ struct RemoteStatusItem: View {
             }
             Divider()
             Button("Forward a Port…") {
-                model.openPrompt(title: "Port on the server to reach from this Mac", initial: "") { text in
+                model.openPrompt(title: String(localized: "Port on the server to reach from this Mac"), initial: "") { text in
                     guard let port = Int(text.trimmingCharacters(in: .whitespaces)) else { return }
                     Task {
                         if let local = await model.remote.forward(remotePort: port, on: destination) {
                             model.openWeb(url: "http://localhost:\(local)", split: nil)
                         } else {
-                            model.showToast(title: "Couldn't forward port \(port)", detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
+                            model.showToast(title: String(localized: "Couldn't forward port \(port)"), detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
                         }
                     }
                 }
@@ -209,6 +209,6 @@ struct RemoteStatusItem: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help(state.label)
+        .help(L10n.display(state.label))
     }
 }

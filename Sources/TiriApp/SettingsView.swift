@@ -133,15 +133,15 @@ extension AppModel {
     }
 
     func agentEntriesMatching(_ query: String) -> [AgentEntry] {
-        agentEntries.filter { SettingsSchema.matches(query, in: [$0.name, $0.command, "agents hooks resume"]) }
+        agentEntries.filter { SettingsSchema.matches(query, in: [$0.name, $0.command, "agents hooks resume", L10n.display(SettingsPane.agents.title)]) }
     }
 
     func pluginsMatching(_ query: String) -> [InstalledPlugin] {
-        plugins.plugins.filter { SettingsSchema.matches(query, in: [$0.title, $0.name, $0.manifest?.description ?? "", "plugins extensions"]) }
+        plugins.plugins.filter { SettingsSchema.matches(query, in: [$0.title, $0.name, $0.manifest?.description ?? "", "plugins extensions", L10n.display(SettingsPane.plugins.title)]) }
     }
 
     func languagesMatching(_ query: String) -> [LanguageServerDefinition] {
-        LanguageServerCatalog.all.filter { SettingsSchema.matches(query, in: [$0.language, $0.id, "language server"]) }
+        LanguageServerCatalog.all.filter { SettingsSchema.matches(query, in: [$0.language, $0.id, "language server", String(localized: "Language Servers")]) }
     }
 
     /// How much a search finds in each pane.
@@ -213,7 +213,7 @@ struct SettingsNavigationRow: View {
                 Image(systemName: pane.symbol)
                     .foregroundStyle(.secondary)
                     .frame(width: 18)
-                Text(pane.title)
+                Text(L10n.display(pane.title))
                 Spacer(minLength: 4)
                 if let count {
                     Text("\(count)")
@@ -281,11 +281,11 @@ struct SettingsCompactBar: View {
                     ui.query = ""
                     ui.pane = pane
                 } label: {
-                    Label(pane.title, systemImage: pane.symbol)
+                    Label(L10n.display(pane.title), systemImage: pane.symbol)
                 }
             }
         } label: {
-            Text(ui.pane.title)
+            Text(L10n.display(ui.pane.title))
         }
         .fixedSize()
     }
@@ -386,7 +386,7 @@ struct SettingsContent: View {
                         SettingsSearchResults()
                     } else {
                         if !isTight {
-                            Text(ui.pane.title)
+                            Text(L10n.display(ui.pane.title))
                                 .font(.title2.weight(.semibold))
                         }
                         paneBody(ui.pane)
@@ -443,7 +443,7 @@ struct SettingsContent: View {
         switch pane {
         case .general:
             SchemaGroups(pane: .general)
-            SettingsGroup("Command Line") {
+            SettingsGroup(String(localized: "Command Line")) {
                 SettingsCard { CommandLineRow() }
             }
         case .agents:
@@ -500,7 +500,7 @@ struct SettingsSearchResults: View {
                         model.yourTiri.beginChange(surface: "Settings, searching for \u{201C}\(query)\u{201D}", initial: query)
                     }
                 }
-                Text("Nothing here matches \u{201C}\(query)\u{201D}.")
+                Text("Nothing here matches “\(query)”.")
                     .foregroundStyle(.secondary)
                 if let preset = model.runnableAgentPresets().first {
                     Button("Ask \(preset.name)") { model.askAgentAboutSettings(preset: preset) }
@@ -509,7 +509,7 @@ struct SettingsSearchResults: View {
         }
         ForEach(SettingsPane.allCases.filter { counts[$0] != nil }) { pane in
             VStack(alignment: .leading, spacing: 8) {
-                Text(pane.title).font(.title3.weight(.semibold))
+                Text(L10n.display(pane.title)).font(.title3.weight(.semibold))
                 results(in: pane, query: query)
             }
         }
@@ -608,7 +608,7 @@ struct SchemaGroups: View {
 
     var body: some View {
         ForEach(SettingsSchema.groups(in: pane), id: \.name) { group in
-            SettingsGroup(group.name) {
+            SettingsGroup(L10n.display(group.name)) {
                 SettingRows(definitions: group.settings)
             }
         }
@@ -687,8 +687,8 @@ struct SettingRow: View {
 
     private var waitingLine: String? {
         guard needsModel, !applies else { return nil }
-        if model.settings.conversationsSummarizeAll { return "On, and waiting for Apple Intelligence." }
-        return macModelState == .ready ? "Needs Titles and search with Apple Intelligence, above." : "Needs Apple Intelligence."
+        if model.settings.conversationsSummarizeAll { return String(localized: "On, and waiting for Apple Intelligence.") }
+        return macModelState == .ready ? String(localized: "Needs Titles and search with Apple Intelligence, above.") : String(localized: "Needs Apple Intelligence.")
     }
 
     var body: some View {
@@ -712,10 +712,13 @@ struct SettingRow: View {
         }
     }
 
+    /// The title on screen. The definition's own stays English for `tiri settings`.
+    private var title: String { L10n.display(definition.title) }
+
     private var words: some View {
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 5) {
-                Text(definition.title)
+                Text(title)
                 if let note = definition.note, !isBlockedModelRow {
                     Button {
                         showsNote.toggle()
@@ -725,26 +728,47 @@ struct SettingRow: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help(note)
-                    .accessibilityLabel(showsNote ? "Hide more about \(definition.title)" : "More about \(definition.title)")
+                    .help(L10n.display(note))
+                    .accessibilityLabel(showsNote ? String(localized: "Hide more about \(title)") : String(localized: "More about \(title)"))
                 }
             }
             if isBlockedModelRow, let message = macModelState.message {
-                caption(message)
+                caption(L10n.display(message))
             } else if !definition.titleIsEnough {
-                caption(definition.explanation)
+                caption(L10n.display(definition.explanation))
             }
             if let waitingLine { caption(waitingLine) }
             if showsNote, let note = definition.note {
-                caption(note)
+                caption(L10n.display(note))
             }
-            if definition.key == "conversations.summarizeAll", model.settings.conversationsSummarizeAll {
-                let done = model.conversationsSummarized.map { $0.done >= $0.total ? "All \($0.total) summarized" : "\($0.done) of \($0.total) summarized" }
-                let waiting = AppModel.isPluggedIn ? nil : "Waiting to be plugged in"
-                let status = [done, waiting].compactMap { $0 }
-                if !status.isEmpty { caption(status.joined(separator: ". ")) }
+            if definition.key == "conversations.summarizeAll", model.settings.conversationsSummarizeAll, let status = summarizingStatus {
+                caption(status)
             }
         }
+    }
+
+    /// How far titling everything has got, and whether it's waiting, as one sentence.
+    private var summarizingStatus: String? {
+        let waiting = !AppModel.isPluggedIn
+        guard let progress = model.conversationsSummarized else {
+            return waiting ? String(localized: "Waiting to be plugged in") : nil
+        }
+        let (done, total) = (progress.done, progress.total)
+        switch (done >= total, waiting) {
+        case (true, false): return String(localized: "All \(total) summarized")
+        case (false, false): return String(localized: "\(done) of \(total) summarized")
+        case (true, true): return String(localized: "All \(total) summarized. Waiting to be plugged in")
+        case (false, true): return String(localized: "\(done) of \(total) summarized. Waiting to be plugged in")
+        }
+    }
+
+    /// The default, as the row shows its choices.
+    private var shownDefault: String {
+        let value = definition.value(TiriSettings())
+        if let on = value.boolValue { return on ? String(localized: "On") : String(localized: "Off") }
+        if let label = definition.kind.choices?.first(where: { $0.value == value.stringValue })?.label { return L10n.display(label) }
+        if value.stringValue == "" { return String(localized: "Empty") }
+        return SettingsSchema.display(value)
     }
 
     private func caption(_ text: String) -> some View {
@@ -763,8 +787,8 @@ struct SettingRow: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .help("Back to the default: \(SettingsSchema.display(definition.value(TiriSettings())))")
-        .accessibilityLabel("Reset \(definition.title)")
+        .help("Back to the default: \(shownDefault)")
+        .accessibilityLabel("Reset \(title)")
     }
 
     @ViewBuilder private var rowControl: some View {
@@ -792,6 +816,24 @@ struct SettingRow: View {
         }
     }
 
+    /// An option's words. The language setting's System also says which language that is now.
+    private func menuLabel(_ option: SettingDefinition.Option) -> String {
+        if definition.key == "language", option.value == AppLanguage.system.rawValue, let now = Self.systemLanguage {
+            return String(localized: "System (\(now.nativeName))")
+        }
+        return L10n.display(option.label)
+    }
+
+    /// The language System means now. This launch is in it when it was started in System. Otherwise it's
+    /// the Mac's own choice, since Tiri's language setting is what replaced it for Tiri.
+    private static var systemLanguage: AppLanguage? {
+        let preferences = AppLanguage.launched == .system
+            ? Bundle.main.preferredLocalizations
+            : (CFPreferencesCopyValue("AppleLanguages" as CFString, kCFPreferencesAnyApplication, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) as? [String]) ?? []
+        let found = Bundle.preferredLocalizations(from: Bundle.main.localizations, forPreferences: preferences).first
+        return found.flatMap(AppLanguage.init(rawValue:)).flatMap { $0 == .system ? nil : $0 }
+    }
+
     @ViewBuilder private var control: some View {
         switch definition.kind {
         case .toggle:
@@ -799,35 +841,46 @@ struct SettingRow: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .accessibilityLabel(definition.title)
+                .accessibilityLabel(title)
         case .choice(let options):
             let picker = Picker("", selection: Binding(get: { value.stringValue ?? "" }, set: { set(.string($0)) })) {
-                ForEach(options, id: \.self) { Text($0.label).tag($0.value) }
+                ForEach(options, id: \.self) { Text(L10n.display($0.label)).tag($0.value) }
             }
             .labelsHidden()
             .fixedSize()
-            .accessibilityLabel(definition.title)
+            .accessibilityLabel(title)
             // Segments don't fold, and they're no use cut off, so they're only for a few short choices.
             if rowsStack || options.count > 4 || options.contains(where: { $0.label.count > 14 }) {
                 picker.pickerStyle(.menu)
             } else {
                 picker.pickerStyle(.segmented)
             }
+        case .menu(let groups):
+            Picker("", selection: Binding(get: { value.stringValue ?? "" }, set: { set(.string($0)) })) {
+                ForEach(Array(groups.enumerated()), id: \.offset) { index, options in
+                    if index > 0 { Divider() }
+                    ForEach(options, id: \.self) { Text(menuLabel($0)).tag($0.value) }
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            .accessibilityLabel(title)
         case .number(let minimum, let maximum, let step):
-            NumberControl(title: definition.title, value: value.numberValue ?? minimum, range: minimum...maximum, step: step) { number in
+            NumberControl(title: title, value: value.numberValue ?? minimum, range: minimum...maximum, step: step) { number in
                 set(number == number.rounded() ? .int(Int(number)) : .double(number))
             }
         case .font:
             FontPicker(selection: value.stringValue ?? "") { set(.string($0)) }
-                .accessibilityLabel(definition.title)
+                .accessibilityLabel(title)
         case .text where definition.key == ThemeSlot.dark.settingKey:
             ThemeSettings()
         case .text(let placeholder):
-            CommitField(placeholder: placeholder, text: value.stringValue ?? "") { set(.string($0)) }
+            CommitField(placeholder: L10n.display(placeholder), text: value.stringValue ?? "") { set(.string($0)) }
                 .frame(maxWidth: rowsStack ? .infinity : 220)
-                .accessibilityLabel(definition.title)
+                .accessibilityLabel(title)
         case .list(let placeholder):
-            TokenList(title: definition.title, placeholder: placeholder, items: value.arrayValue?.compactMap(\.stringValue) ?? []) { items in
+            TokenList(title: title, placeholder: L10n.display(placeholder), items: value.arrayValue?.compactMap(\.stringValue) ?? []) { items in
                 set(.array(items.map(JSONValue.string)))
             }
         case .presets, .commandMap:
@@ -1015,17 +1068,17 @@ struct CommandLineRow: View {
     @Environment(\.settingsRowsStack) private var rowsStack
 
     static func matches(_ query: String) -> Bool {
-        SettingsSchema.matches(query, in: ["tiri command", "command line", "install"])
+        SettingsSchema.matches(query, in: ["tiri command", "command line", "install", String(localized: "tiri command"), String(localized: "Command Line")])
     }
 
     private var path: String { (model.commandLineLink.path as NSString).abbreviatingWithTildeInPath }
 
     private var detail: String {
         switch model.commandLineState() {
-        case .installed: "Works in your other terminals too, through a link at \(path)."
-        case .notInstalled: "Works in every terminal inside Tiri. This adds it to your other terminals, at \(path)."
-        case .stale: "The link at \(path) points to a copy of Tiri that has moved. Install fixes it."
-        case .otherFile: "There's another file at \(path). Install replaces it with a link to this copy of Tiri."
+        case .installed: String(localized: "Works in your other terminals too, through a link at \(path).")
+        case .notInstalled: String(localized: "Works in every terminal inside Tiri. This adds it to your other terminals, at \(path).")
+        case .stale: String(localized: "The link at \(path) points to a copy of Tiri that has moved. Install fixes it.")
+        case .otherFile: String(localized: "There's another file at \(path). Install replaces it with a link to this copy of Tiri.")
         }
     }
 
@@ -1040,7 +1093,7 @@ struct CommandLineRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Button(installed ? "Remove" : "Install…") { model.confirmCommandLineTool(install: !installed) }
+            Button(installed ? String(localized: "Remove") : String(localized: "Install…")) { model.confirmCommandLineTool(install: !installed) }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)

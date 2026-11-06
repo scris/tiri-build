@@ -10,7 +10,7 @@ public enum AgentHooks {
     public enum Failure: Error, CustomStringConvertible {
         case notAnObject
 
-        public var description: String { "The file isn't a JSON object, so Tiri left it alone." }
+        public var description: String { String(localized: "The file isn't a JSON object, so Tiri left it alone.") }
     }
 
     public static func configURL(for tool: Tool, environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -54,9 +54,9 @@ public enum AgentHooks {
     /// What's going in, in words and in the config's own format, for the question on screen.
     public static func summary(of tool: Tool) -> String {
         switch tool.profile?.hookInstall {
-        case .jsonSettings: "Adds this to each of \(claudeEvents.joined(separator: ", ")):\n\n\(claudeCommand)\n\nYour other hooks and settings stay."
+        case .jsonSettings: String(localized: "Adds this to each of \(claudeEvents.joined(separator: ", ")):\n\n\(claudeCommand)\n\nYour other hooks and settings stay.")
         case .tomlSection: codexBlock
-        case .ownFile: "A file of Tiri's own, which runs this on each of \((tool.profile?.hookEvents ?? []).joined(separator: ", ")):\n\n\(tool.profile?.hookCommand ?? "")\n\nNone of your files change."
+        case .ownFile: String(localized: "A file of Tiri's own, which runs this on each of \((tool.profile?.hookEvents ?? []).joined(separator: ", ")):\n\n\(tool.profile?.hookCommand ?? "")\n\nNone of your files change.")
         case nil: ""
         }
     }

@@ -989,19 +989,19 @@ extension LanguageServerHub {
         } else {
             guard case .missing = availability(of: definition, roots: [root(for: path, definition: definition)]) else { return }
         }
-        let what = "Completion and Go to Definition."
-        let title = "Add a language server for \(definition.language)?"
+        let language = L10n.display(definition.language)
+        let title = String(localized: "Add a language server for \(language)?")
         // Only once there's something to say. Otherwise the one chance would go on nothing.
         if remote == nil, let managed = definition.managed, toolPath(managed.tool) != nil {
             guard offers(claim: definition.id) else { return }
-            openOffers[definition.id] = model.showToast(title: title, detail: "\(what) Installs \(managed.title), \(managed.megabytes) MB.",
-                                symbol: "sparkles", tint: .accentColor, actionTitle: "Add", duration: 20) { [weak self] in
+            openOffers[definition.id] = model.showToast(title: title, detail: String(localized: "Completion and Go to Definition. Installs \(managed.title), \(managed.megabytes) MB."),
+                                symbol: "sparkles", tint: .accentColor, actionTitle: String(localized: "Add"), duration: 20) { [weak self] in
                 Task { await self?.add(definition) }
             }
         } else if let preset = model.runnableAgentPresets().first {
             guard offers(claim: remote.map { "\(definition.id)@\($0.destination)" } ?? definition.id) else { return }
-            _ = model.showToast(title: title, detail: "\(what) \(preset.name) can install it for you.",
-                                symbol: "sparkles", tint: .accentColor, actionTitle: "Ask \(preset.name)", duration: 20) {
+            _ = model.showToast(title: title, detail: String(localized: "Completion and Go to Definition. \(preset.name) can install it for you."),
+                                symbol: "sparkles", tint: .accentColor, actionTitle: String(localized: "Ask \(preset.name)"), duration: 20) {
                 model.askAgentToInstall(definition, preset: preset)
             }
         }
@@ -1021,12 +1021,13 @@ extension LanguageServerHub {
         model.languageRevision += 1
         if let failure {
             let preset = model.runnableAgentPresets().first
-            _ = model.showToast(title: "Couldn't add the \(definition.language) server", detail: failure, symbol: "exclamationmark.triangle", tint: .orange,
-                                actionTitle: preset.map { "Ask \($0.name)" }) {
+            // What Tiri says is English for `tiri languages add`, and in Tiri's language here. A tool's own output stays as it is.
+            _ = model.showToast(title: String(localized: "Couldn't add the \(L10n.display(definition.language)) server"), detail: L10n.display(failure),
+                                symbol: "exclamationmark.triangle", tint: .orange, actionTitle: preset.map { String(localized: "Ask \($0.name)") }) {
                 if let preset { model.askAgentToInstall(definition, preset: preset) }
             }
         } else {
-            _ = model.showToast(title: "\(definition.language) server added", detail: nil, symbol: "checkmark.circle", tint: .green)
+            _ = model.showToast(title: String(localized: "\(L10n.display(definition.language)) server added"), detail: nil, symbol: "checkmark.circle", tint: .green)
             forgetFailures()
             startForOpenFiles()
         }
@@ -1059,10 +1060,10 @@ extension AppModel {
         guard let window else { return false }
         let project = ((executable as NSString).abbreviatingWithTildeInPath)
         let alert = NSAlert()
-        alert.messageText = "Run this project's own \(language) server?"
-        alert.informativeText = "\(project) came with this project, so it's the project's code. Run it only if you trust the project.\n\nWithout it, Tiri searches the files instead."
-        alert.addButton(withTitle: "Run It")
-        alert.addButton(withTitle: "Not Now")
+        alert.messageText = String(localized: "Run this project's own \(L10n.display(language)) server?")
+        alert.informativeText = String(localized: "\(project) came with this project, so it's the project's code. Run it only if you trust the project.\n\nWithout it, Tiri searches the files instead.")
+        alert.addButton(withTitle: String(localized: "Run It"))
+        alert.addButton(withTitle: String(localized: "Not Now"))
         let response = await alert.beginSheetModal(for: window)
         guard response == .alertFirstButtonReturn else { return false }
         languageTrust.trust(executable)
@@ -1126,17 +1127,17 @@ struct LanguageServersSection: View {
     }
 
     private func status(_ definition: LanguageServerDefinition, _ availability: LanguageServerHub.Availability) -> String {
-        if model.languageServers.isRunning(definition) { return line(definition, "Running now.") }
-        if model.languageServers.isStarting(definition) { return "Starting…" }
+        if model.languageServers.isRunning(definition) { return line(definition, String(localized: "Running now.")) }
+        if model.languageServers.isStarting(definition) { return String(localized: "Starting…") }
         switch availability {
-        case .looking: return "Looking…"
-        case .found: return definition.filesLine ?? "Ready when you open one of its files."
-        case .needsTrust: return line(definition, "Only inside this project. Tiri asks before running it.")
-        case .wontStart: return "It stopped without answering. It may not be fully installed."
-        case .installing: return "Adding it…"
+        case .looking: return String(localized: "Looking…")
+        case .found: return definition.filesLine ?? String(localized: "Ready when you open one of its files.")
+        case .needsTrust: return line(definition, String(localized: "Only inside this project. Tiri asks before running it."))
+        case .wontStart: return String(localized: "It stopped without answering. It may not be fully installed.")
+        case .installing: return String(localized: "Adding it…")
         case .missing:
             if canAdd(definition), let add = definition.addLine { return line(definition, add) }
-            return line(definition, "To install it: \(definition.installHint)")
+            return line(definition, String(localized: "To install it: \(L10n.display(definition.installHint))"))
         }
     }
 
@@ -1154,7 +1155,7 @@ struct LanguageServersSection: View {
         let isShowing = showingWhere.contains(definition.id)
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(definition.language)
+                Text(L10n.display(definition.language))
                 Text(status(definition, entry.availability))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1177,8 +1178,8 @@ struct LanguageServersSection: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help(isShowing ? "Hide" : "Where it is on this Mac")
-                .accessibilityLabel(isShowing ? "Hide where it is" : "Where it is on this Mac")
+                .help(isShowing ? String(localized: "Hide") : String(localized: "Where it is on this Mac"))
+                .accessibilityLabel(isShowing ? String(localized: "Hide where it is") : String(localized: "Where it is on this Mac"))
             }
             if case .installing = entry.availability {
                 ProgressView().controlSize(.small)
@@ -1189,7 +1190,7 @@ struct LanguageServersSection: View {
                         .accessibilityLabel("Add \(managed.title)")
                 } else if let preset = model.runnableAgentPresets().first {
                     Button("Ask \(preset.name)") { model.askAgentToInstall(definition, preset: preset) }
-                        .help("Prepares a request to install it: \(definition.installHint)")
+                        .help("Prepares a request to install it: \(L10n.display(definition.installHint))")
                 }
             }
         }
@@ -1230,7 +1231,7 @@ struct LanguageServersSection: View {
                         }
                     }
                     if !ready.isEmpty {
-                        SettingsGroup("On This Mac", caption: "Already installed. Each starts by itself when you open one of its files.") {
+                        SettingsGroup(String(localized: "On This Mac"), caption: String(localized: "Already installed. Each starts by itself when you open one of its files.")) {
                             Button("Look Again") { model.languageServers.refreshLocations() }
                                 .controlSize(.small)
                                 .help("Look for language servers again, after installing one yourself")
@@ -1239,7 +1240,7 @@ struct LanguageServersSection: View {
                         }
                     }
                     if !addable.isEmpty {
-                        SettingsGroup("Ready to Add", caption: "Adding one gives that language Go to Definition, errors and suggestions. It goes in Tiri's own folder and changes nothing else.") {
+                        SettingsGroup(String(localized: "Ready to Add"), caption: String(localized: "Adding one gives that language Go to Definition, errors and suggestions. It goes in Tiri's own folder and changes nothing else.")) {
                             card(addable)
                         }
                     }
@@ -1320,13 +1321,13 @@ struct LanguageStatusItem: View {
                         Label("\(warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
                     if model.languageServers.isStarting(definition) {
-                        Text("\(definition.language): starting")
+                        Text("\(L10n.display(definition.language)): starting")
                             .foregroundStyle(.secondary)
                     } else if !model.languageServers.isRunning(definition) {
-                        Text("\(definition.language): no language server")
+                        Text("\(L10n.display(definition.language)): no language server")
                             .foregroundStyle(.faint)
                     } else {
-                        Text(definition.language)
+                        Text(L10n.display(definition.language))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -1334,7 +1335,8 @@ struct LanguageStatusItem: View {
                 .labelStyle(.titleAndIcon)
             }
             .buttonStyle(.plain)
-            .help(model.languageServers.isRunning(definition) ? "A language server is answering for this file" : "No language server is answering yet, so Go to Definition searches the files. Click to add one.")
+            .help(model.languageServers.isRunning(definition) ? String(localized: "A language server is answering for this file")
+                  : String(localized: "No language server is answering yet, so Go to Definition searches the files. Click to add one."))
         }
     }
 }

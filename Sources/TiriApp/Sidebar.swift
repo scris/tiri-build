@@ -32,7 +32,7 @@ struct SidebarView: View {
         let itemsFill = !explorerOpen && !changesFill && itemsOpen
         VStack(spacing: 0) {
             WorkspaceSwitcher()
-            sectionHeader("Explorer", isOpen: $explorerOpen) {
+            sectionHeader(String(localized: "Explorer"), isOpen: $explorerOpen) {
                 // With no folder there's nowhere to put one.
                 if !model.active.folders.isEmpty {
                     Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
@@ -61,7 +61,7 @@ struct SidebarView: View {
             }
             if hasChangesSection {
                 Divider()
-                sectionHeader("Changes", isOpen: $changesOpen) {
+                sectionHeader(String(localized: "Changes"), isOpen: $changesOpen) {
                     if !model.needsGit {
                         ChangesScopeMenu()
                         Text("\(model.visibleChangesCount)")
@@ -95,7 +95,7 @@ struct SidebarView: View {
             }
             if !model.active.review.isEmpty {
                 Divider()
-                sectionHeader("Review", isOpen: $reviewOpen) {
+                sectionHeader(String(localized: "Review"), isOpen: $reviewOpen) {
                     ReviewHeaderActions()
                 }
                 if reviewOpen {
@@ -114,7 +114,7 @@ struct SidebarView: View {
             }
             let agents = model.agentRows
             if !agents.isEmpty {
-                sectionHeader("Agents", isOpen: $agentsOpen) {
+                sectionHeader(String(localized: "Agents"), isOpen: $agentsOpen) {
                     Button { model.openConversationPicker() } label: {
                         Image(systemName: "clock.arrow.circlepath").font(.system(size: 10.5))
                     }
@@ -131,7 +131,7 @@ struct SidebarView: View {
                 }
                 Divider()
             }
-            sectionHeader("Open Items", isOpen: $itemsOpen) {
+            sectionHeader(String(localized: "Open Items"), isOpen: $itemsOpen) {
                 Text("\(model.active.items.count)")
                     .foregroundStyle(.faint)
                     .font(.caption)
@@ -189,8 +189,8 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .accessibilityLabel(isOpen.wrappedValue ? "Fold \(title)" : "Unfold \(title)")
-            .help(isOpen.wrappedValue ? "Fold \(title)" : "Unfold \(title)")
+            .accessibilityLabel(isOpen.wrappedValue ? String(localized: "Fold \(title)") : String(localized: "Unfold \(title)"))
+            .help(isOpen.wrappedValue ? String(localized: "Fold \(title)") : String(localized: "Unfold \(title)"))
             Spacer()
             actions()
                 .buttonStyle(.plain)
@@ -307,7 +307,7 @@ struct WorkspaceRow: View {
                 .font(.system(size: 11))
                 .foregroundStyle(connectionTint ?? (isActive ? Color.accentColor : .secondary))
                 .frame(width: 16)
-            Text(workspace.name)
+            Text(workspace.shownName)
                 .font(.system(size: 13, weight: isActive ? .medium : .regular))
                 .lineLimit(1)
             Spacer(minLength: 4)
@@ -335,7 +335,7 @@ struct WorkspaceRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { model.switchWorkspace(workspace.id) }
-        .accessibleRow(workspace.name, value: attentionWords(counts), selected: isActive) { model.switchWorkspace(workspace.id) }
+        .accessibleRow(workspace.shownName, value: attentionWords(counts), selected: isActive) { model.switchWorkspace(workspace.id) }
         .accessibilityAction(named: "Rename") { model.promptRenameWorkspace(workspace.id) }
         .contextMenu {
             if inAnotherWindow {
@@ -356,8 +356,9 @@ struct WorkspaceRow: View {
 /// What the badges beside a workspace say, in words.
 @MainActor func attentionWords(_ counts: (needsInput: Int, done: Int)) -> String {
     var parts: [String] = []
-    if counts.needsInput > 0 { parts.append("\(counts.needsInput) need\(counts.needsInput == 1 ? "s" : "") input") }
-    if counts.done > 0 { parts.append("\(counts.done) done") }
+    if counts.needsInput == 1 { parts.append(String(localized: "1 needs input")) }
+    if counts.needsInput > 1 { parts.append(String(localized: "\(counts.needsInput) need input")) }
+    if counts.done > 0 { parts.append(String(localized: "\(counts.done) done")) }
     return parts.joined(separator: ", ")
 }
 
@@ -408,10 +409,10 @@ struct OpenItemRow: View {
     private var statusText: String? {
         guard let runtime else { return nil }
         switch runtime.status {
-        case .working: return "working"
-        case .needsInput: return "needs input"
-        case .done: return "done"
-        case .exited: return "exited"
+        case .working: return String(localized: "working")
+        case .needsInput: return String(localized: "needs input")
+        case .done: return String(localized: "done")
+        case .exited: return String(localized: "exited")
         case .idle: return nil
         }
     }
@@ -494,9 +495,13 @@ struct AgentOverviewRowView: View {
     @Environment(AppModel.self) private var model
     @State private var hovering = false
 
+    /// The conversation's name, with the words Tiri makes up in the language Tiri is in.
+    private var name: String { AppModel.shownConversationName(row.name) }
+
     /// Always which agent and which workspace, in that order, and then what's happening if anything is.
     private var detail: String {
-        var parts = [row.agent, row.workspace]
+        let workspace = model.workspaces.first { $0.name == row.workspace }?.shownName ?? row.workspace
+        var parts = [row.agent, workspace]
         switch row.status {
         case .working:
             if let doing = row.doing { parts.append(doing) }
@@ -524,7 +529,7 @@ struct AgentOverviewRowView: View {
                 .font(.system(size: 11))
                 .frame(width: 16, height: 16)
             VStack(alignment: .leading, spacing: 0) {
-                Text(row.name)
+                Text(name)
                     .font(.system(size: 12.5))
                     .lineLimit(1)
                 Text(detail)
@@ -546,7 +551,7 @@ struct AgentOverviewRowView: View {
             model.crossfade()
             model.focusItem(row.item)
         }
-        .accessibleRow(row.name, value: (row.status.spoken.map { $0 + ", " } ?? "") + detail) {
+        .accessibleRow(name, value: (row.status.spoken.map { $0 + ", " } ?? "") + detail) {
             model.crossfade()
             model.focusItem(row.item)
         }

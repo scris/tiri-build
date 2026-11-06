@@ -310,8 +310,9 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self, self.renderGeneration == generation, !self.hasRenderedPage, self.fallbackNotice == nil else { return }
             self.showingOpeningNote = true
+            let opening = MarkdownRenderer.escapeText(String(localized: "Opening…"))
             self.webView.loadHTMLString("""
-            <!DOCTYPE html><meta charset="utf-8"><style>:root{color-scheme:light dark}html{height:100%}body{height:100%;margin:0;display:flex;align-items:center;justify-content:center;font:13px -apple-system;color:GrayText}</style>Opening…
+            <!DOCTYPE html><meta charset="utf-8"><style>:root{color-scheme:light dark}html{height:100%}body{height:100%;margin:0;display:flex;align-items:center;justify-content:center;font:13px -apple-system;color:GrayText}</style>\(opening)
             """, baseURL: nil)
         }
     }
@@ -1052,9 +1053,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     /// Reopen with Encoding: the same file, read another way. Unsaved edits would be lost, so not with any.
     func reopen(as wanted: String.Encoding) -> String? {
-        guard !isDirty else { return "Save or undo your edits first." }
+        guard !isDirty else { return String(localized: "Save or undo your edits first.") }
         let read = Self.read(path: path, as: wanted)
-        guard read.encoding == wanted else { return "It isn't valid \(TextEncodings.name(of: wanted))." }
+        guard read.encoding == wanted else { return String(localized: "It isn't valid \(TextEncodings.name(of: wanted)).") }
         chosenEncoding = wanted
         loadedOnce = false
         display(read)
@@ -1063,7 +1064,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     /// Save as UTF-8: what's showing, written back as UTF-8 from now on.
     func convertToUTF8() -> String? {
-        guard let bytes = textView.string.data(using: .utf8) else { return "Couldn't write it as UTF-8." }
+        guard let bytes = textView.string.data(using: .utf8) else { return String(localized: "Couldn't write it as UTF-8.") }
         do {
             try bytes.write(to: URL(fileURLWithPath: path), options: .atomic)
         } catch {
@@ -1091,7 +1092,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     /// read the way it was written, or the way chosen, and saved the same way.
     nonisolated private static func read(path: String, as wanted: String.Encoding? = nil) -> Read {
         guard let handle = FileHandle(forReadingAtPath: path) else {
-            let text = FileManager.default.fileExists(atPath: path) ? "Tiri isn't allowed to read this file. Check its permissions." : ""
+            let text = FileManager.default.fileExists(atPath: path) ? String(localized: "Tiri isn't allowed to read this file. Check its permissions.") : ""
             return Read(text: text, editable: false, encoding: .utf8, start: Data())
         }
         defer { try? handle.close() }
@@ -1101,7 +1102,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         var text = decoded?.text ?? String(decoding: data, as: UTF8.self)
         let start = data.prefix(4)
         if data.count == maximumBytes {
-            text += "\n\n… truncated at \(maximumBytes / (1024 * 1024)) MB. Open it in an external editor to see the rest."
+            text += "\n\n" + String(localized: "… truncated at \(maximumBytes / (1024 * 1024)) MB. Open it in an external editor to see the rest.")
             return Read(text: text, editable: false, encoding: decoded?.encoding ?? .utf8, start: start)
         }
         return Read(text: text, editable: decoded?.roundTrips == true, encoding: decoded?.encoding ?? .utf8, start: start)
@@ -1114,8 +1115,9 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         if isDirty {
             if text != savedText {
                 diskChangedUnderEdits = true
-                model.showToast(title: "\((path as NSString).lastPathComponent) changed on disk", detail: "You have unsaved changes here, so they're still showing.",
-                                symbol: "exclamationmark.triangle", tint: .orange, actionTitle: "Use Disk Version") { [weak self] in
+                model.showToast(title: String(localized: "\((path as NSString).lastPathComponent) changed on disk"),
+                                detail: String(localized: "You have unsaved changes here, so they're still showing."),
+                                symbol: "exclamationmark.triangle", tint: .orange, actionTitle: String(localized: "Use Disk Version")) { [weak self] in
                     self?.discardEdits()
                 }
             }
@@ -1199,19 +1201,19 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             menu.insertItem(item, at: index)
             index += 1
         }
-        if view.selectedRange().length > 0 { add("Quote in Agent", #selector(quoteSelection)) }
-        add("Add Comment", #selector(addComment))
+        if view.selectedRange().length > 0 { add(String(localized: "Quote in Agent"), #selector(quoteSelection)) }
+        add(String(localized: "Add Comment"), #selector(addComment))
         if SymbolText.word(in: view.string as NSString, at: charIndex) != nil {
             // A right-click doesn't move the cursor, and it's what was clicked that's being asked about.
             view.setSelectedRange(NSRange(location: charIndex, length: 0))
-            add("Go to Definition", #selector(goToDefinitionFromMenu))
-            add("Find References", #selector(findReferencesFromMenu))
+            add(String(localized: "Go to Definition"), #selector(goToDefinitionFromMenu))
+            add(String(localized: "Find References"), #selector(findReferencesFromMenu))
         }
         if let line = fileLocation(ofCharacter: charIndex)?.line {
             let problems = model.languageServers.knownDiagnostics(for: path).filter { $0.line <= line && line <= $0.endLine }
             if !problems.isEmpty {
                 menuProblems = problems
-                add("Quote Problem in Agent", #selector(quoteProblems))
+                add(String(localized: "Quote Problem in Agent"), #selector(quoteProblems))
             }
         }
         menu.insertItem(.separator(), at: index)
@@ -1268,7 +1270,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         let onDisk = Self.read(path: path, as: encoding).text
         if !overwriting, onDisk != savedText, FileManager.default.fileExists(atPath: path) { return .changedOnDisk }
         guard let bytes = TextEncodings.encode(textView.string, as: encoding, bom: startOnDisk) else {
-            return .failed("\(TextEncodings.name(of: encoding)) can't hold everything typed here. Choose Save as UTF-8 from its encoding above the file.")
+            return .failed(String(localized: "\(TextEncodings.name(of: encoding)) can't hold everything typed here. Choose Save as UTF-8 from its encoding above the file."))
         }
         do {
             try bytes.write(to: URL(fileURLWithPath: path), options: .atomic)
@@ -1453,7 +1455,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             return find(query, backwards: false, incremental: false, caseSensitive: caseSensitive)
         }
         let after = selection.location + (replacement as NSString).length
-        textView.apply(TextEdit(changes: [TextChange(range: selection, text: replacement)], selection: NSRange(location: after, length: 0)), name: "Replace")
+        textView.apply(TextEdit(changes: [TextChange(range: selection, text: replacement)], selection: NSRange(location: after, length: 0)), name: String(localized: "Replace"))
         updateFind(query, caseSensitive: caseSensitive)
         currentMatch = TextSearch.index(atOrAfter: after, in: findMatches)
         if let currentMatch {
@@ -1469,7 +1471,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         updateFind(query, caseSensitive: caseSensitive)
         let count = findMatches.count
         guard count > 0 else { return 0 }
-        textView.apply(TextSearch.replaceAll(findMatches, with: replacement, selection: textView.selectedRange()), name: "Replace All")
+        textView.apply(TextSearch.replaceAll(findMatches, with: replacement, selection: textView.selectedRange()), name: String(localized: "Replace All"))
         updateFind(query, caseSensitive: caseSensitive)
         currentMatch = nil
         markVisibleMatches()
@@ -2119,7 +2121,7 @@ final class TiriPDFView: PDFView {
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event)
         guard let menu, currentSelection?.string?.isEmpty == false else { return menu }
-        let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteFromMenu), keyEquivalent: "")
+        let item = NSMenuItem(title: String(localized: "Quote in Agent"), action: #selector(quoteFromMenu), keyEquivalent: "")
         item.target = self
         menu.insertItem(item, at: 0)
         menu.insertItem(.separator(), at: 1)
@@ -2408,7 +2410,7 @@ final class AudioPlayerView: NSView {
 
     private func updatePlayButton() {
         let symbol = player.timeControlStatus == .paused ? "play.fill" : "pause.fill"
-        playButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol == "play.fill" ? "Play" : "Pause")
+        playButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol == "play.fill" ? String(localized: "Play") : String(localized: "Pause"))
     }
 
     @objc private func togglePlay() {
@@ -2541,9 +2543,9 @@ final class CSVController: NSObject, ItemController, NSTableViewDataSource, NSTa
         var notice: String?
         if let file {
             if file.header.isEmpty {
-                notice = "This file is empty."
+                notice = String(localized: "This file is empty.")
             } else if file.isTruncated {
-                notice = "Showing the first \(file.rowCount.formatted()) rows."
+                notice = String(localized: "Showing the first \(file.rowCount.formatted()) rows.")
             }
         }
         if let notice {
@@ -2790,7 +2792,7 @@ extension MarkdownController {
 
     func deleteCurrentCell() {
         guard let index = currentCell else {
-            model.showNotebookNotice("Click a cell first.")
+            model.showNotebookNotice(String(localized: "Click a cell first."))
             return
         }
         keep()
@@ -2813,9 +2815,9 @@ extension MarkdownController {
             try change(data).write(to: URL(fileURLWithPath: path), options: .atomic)
             model.remote.didSave(path)
         } catch NotebookEditing.Failure.changedMeanwhile {
-            model.showNotebookNotice("Something else changed this cell while you were editing it, so your edit wasn't saved.")
+            model.showNotebookNotice(String(localized: "Something else changed this cell while you were editing it, so your edit wasn't saved."))
         } catch {
-            model.showNotebookNotice("Couldn't change this notebook: \(error.localizedDescription)")
+            model.showNotebookNotice(String(localized: "Couldn't change this notebook: \(error.localizedDescription)"))
         }
     }
 

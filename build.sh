@@ -38,6 +38,8 @@ cp Resources/AppIcon.icns Resources/Assets.car "$APP/Contents/Resources/"
 cp -R Resources/textmate Resources/grammars Resources/language-servers "$APP/Contents/Resources/"
 cp -R Resources/remote "$APP/Contents/Resources/remote"
 cp -R Resources/web "$APP/Contents/Resources/web"
+# Words in other languages, one folder each. See Resources/Localization/README.md.
+cp -R Resources/Localization/*.lproj "$APP/Contents/Resources/"
 
 IDENTITY="${TIRI_SIGN_IDENTITY:-}"
 KEYCHAIN="${TIRI_SIGN_KEYCHAIN:-}"

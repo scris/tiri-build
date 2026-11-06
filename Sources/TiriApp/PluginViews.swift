@@ -16,7 +16,7 @@ struct PluginsSection: View {
         let _ = host.revision
         VStack(alignment: .leading, spacing: 28) {
             NewPluginSection()
-            SettingsGroup("Installed") {
+            SettingsGroup(String(localized: "Installed")) {
                 Button("Import…") { host.chooseFileToImport() }
                     .controlSize(.small)
                     .help("A .tiriplugin file, a plugin's folder, a .zip of one, or a VS Code .vsix")
@@ -25,7 +25,7 @@ struct PluginsSection: View {
                     let waiting = host.liveBuilds.filter { build in build.plugin.map { host.plugin(named: $0) == nil } ?? true }
                     ForEach(Array(waiting.enumerated()), id: \.element.id) { index, build in
                         if index > 0 { SettingsRowDivider() }
-                        PluginBuildRow(title: build.request ?? build.plugin ?? "A new plugin", symbol: "puzzlepiece.extension", item: build.item)
+                        PluginBuildRow(title: build.request ?? build.plugin ?? String(localized: "A new plugin"), symbol: "puzzlepiece.extension", item: build.item)
                     }
                     if !waiting.isEmpty, !host.plugins.isEmpty { SettingsRowDivider() }
                     if host.plugins.isEmpty, waiting.isEmpty {
@@ -92,19 +92,19 @@ struct NewPluginSection: View {
     }
 
     private static let examples = [
-        Example(kind: .port, caption: "Port a VS Code extension by name", start: "Port the VS Code extension "),
-        Example(kind: .sidebar, caption: "Show my pull requests in the sidebar"),
-        Example(kind: .viewer, caption: "Open .csv files as a chart"),
-        Example(kind: .button, caption: "Add a Run button above test files"),
-        Example(kind: .status, caption: "Show today's token usage in the bottom bar"),
-        Example(kind: .language, caption: "Add colors for a language Tiri doesn't know"),
+        Example(kind: .port, caption: String(localized: "Port a VS Code extension by name"), start: String(localized: "Port the VS Code extension ")),
+        Example(kind: .sidebar, caption: String(localized: "Show my pull requests in the sidebar")),
+        Example(kind: .viewer, caption: String(localized: "Open .csv files as a chart")),
+        Example(kind: .button, caption: String(localized: "Add a Run button above test files")),
+        Example(kind: .status, caption: String(localized: "Show today's token usage in the bottom bar")),
+        Example(kind: .language, caption: String(localized: "Add colors for a language Tiri doesn't know")),
     ]
 
     private var trimmed: String { model.settingsUI.newPluginRequest.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            FoldHeading(title: "New plugin", isOpen: $isOpen)
+            FoldHeading(title: String(localized: "New plugin"), isOpen: $isOpen)
             if isOpen {
                 content
                     .transition(.opacity)
@@ -219,7 +219,7 @@ struct FoldHeading: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isOpen ? "Fold \(title)" : "Unfold \(title)")
+        .accessibilityLabel(isOpen ? String(localized: "Fold \(title)") : String(localized: "Unfold \(title)"))
     }
 }
 
@@ -237,7 +237,7 @@ struct PluginSettingsGroup: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            FoldHeading(title: "\(name) settings", isOpen: $isOpen)
+            FoldHeading(title: String(localized: "\(name) settings"), isOpen: $isOpen)
             if isOpen {
                 SettingRows(definitions: settings)
                     .transition(.opacity)
@@ -435,7 +435,7 @@ extension AppModel {
             openPluginSettings()
             return
         }
-        openPrompt(title: "What should the plugin do? \(preset.name) will write it, and you'll turn it on.", initial: "") { [weak self] text in
+        openPrompt(title: String(localized: "What should the plugin do? \(preset.name) will write it, and you'll turn it on."), initial: "") { [weak self] text in
             let request = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !request.isEmpty else { return }
             self?.askAgentToBuildPlugin(preset: preset, request: request)
@@ -450,6 +450,12 @@ struct PluginBuildRow: View {
     let item: ItemID
     @Environment(AppModel.self) private var model
 
+    private func status(of row: AppModel.AgentOverviewRow?) -> String {
+        let needsYou = row?.status == .needsInput
+        guard let agent = row?.agent else { return needsYou ? String(localized: "Your agent needs you") : String(localized: "Your agent is building this") }
+        return needsYou ? String(localized: "\(agent) needs you") : String(localized: "\(agent) is building this")
+    }
+
     var body: some View {
         let row = model.agentRows.first { $0.item == item }
         HStack(spacing: 10) {
@@ -460,7 +466,7 @@ struct PluginBuildRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .lineLimit(1)
-                Text(row?.status == .needsInput ? "\(row?.agent ?? "Your agent") needs you" : "\(row?.agent ?? "Your agent") is building this")
+                Text(status(of: row))
                     .font(.caption)
                     .foregroundStyle(row?.status == .needsInput ? Color.orange : .secondary)
             }
@@ -481,7 +487,7 @@ struct PluginRow: View {
     private var note: (text: String, tint: Color)? {
         switch plugin.state {
         case .on, .off: nil
-        case .changed: ("Changed since you approved it, so it's off", .orange)
+        case .changed: (String(localized: "Changed since you approved it, so it's off"), .orange)
         case .broken(let why): (why, .red)
         }
     }
@@ -522,8 +528,8 @@ struct PluginRow: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help(showsDetail ? "Hide" : "What it adds and runs")
-                .accessibilityLabel(showsDetail ? "Hide details of \(plugin.title)" : "What \(plugin.title) adds and runs")
+                .help(showsDetail ? String(localized: "Hide") : String(localized: "What it adds and runs"))
+                .accessibilityLabel(showsDetail ? String(localized: "Hide details of \(plugin.title)") : String(localized: "What \(plugin.title) adds and runs"))
                 Menu {
                     actions
                 } label: {
@@ -555,14 +561,14 @@ struct PluginRow: View {
             if showsDetail, let manifest = plugin.manifest {
                 VStack(alignment: .leading, spacing: 3) {
                     if !manifest.additions.isEmpty {
-                        Text("Adds " + manifest.additions.joined(separator: ", ") + ".")
+                        Text("Adds \(manifest.shownAdditions.formatted(.list(type: .and, width: .narrow))).")
                     }
                     if !manifest.programs.isEmpty {
-                        Text("Runs with your full access: " + manifest.programs.joined(separator: ", "))
+                        Text("Runs with your full access: \(manifest.programs.joined(separator: ", "))")
                             .textSelection(.enabled)
                     }
                     if !manifest.networkAddresses.isEmpty {
-                        Text("Its panels can reach " + manifest.networkAddresses.joined(separator: ", ") + ".")
+                        Text("Its panels can reach \(manifest.networkAddresses.joined(separator: ", ")).")
                     }
                     ForEach(Array(plugin.issues.enumerated()), id: \.offset) { _, issue in
                         Text(issue.description)
@@ -628,7 +634,7 @@ struct PluginSidebarSection: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .accessibilityLabel(isOpen ? "Fold \(section.section.title)" : "Unfold \(section.section.title)")
+                .accessibilityLabel(isOpen ? String(localized: "Fold \(section.section.title)") : String(localized: "Unfold \(section.section.title)"))
                 Spacer()
                 if section.state.isLoading {
                     ProgressView().controlSize(.mini)
@@ -668,7 +674,7 @@ struct PluginSidebarSection: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 4)
         } else if section.state.items.isEmpty {
-            Text(section.state.hasLoaded || section.section.provider == nil ? (section.section.emptyText ?? "Nothing here") : "Loading…")
+            Text(section.state.hasLoaded || section.section.provider == nil ? (section.section.emptyText ?? String(localized: "Nothing here")) : String(localized: "Loading…"))
                 .font(.caption)
                 .foregroundStyle(.faint)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -748,7 +754,7 @@ struct PluginTreeRow: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(item.tooltip ?? item.title)
-        .accessibilityValue(item.children.isEmpty ? (item.detail ?? "") : isExpanded ? "expanded" : "collapsed")
+        .accessibilityValue(item.children.isEmpty ? (item.detail ?? "") : isExpanded ? String(localized: "expanded") : String(localized: "collapsed"))
     }
 }
 
@@ -859,7 +865,7 @@ extension AppModel {
     func askAgentToAddLanguage(_ ext: String) {
         let prompt = "Tiri doesn't know .\(ext) files, so they have no colors. Please write a Tiri plugin for this language. Read `tiri plugin api`, find a good TextMate grammar and check its licence, and add a language server if there's one worth having. Then check it with `tiri plugin validate` and ask me to turn it on with `tiri plugin enable`."
         guard let preset = firstAgentPreset else {
-            showToast(title: "No agent to ask", detail: "Turn one on in Settings.", symbol: "sparkles", tint: .secondary)
+            showToast(title: String(localized: "No agent to ask"), detail: String(localized: "Turn one on in Settings."), symbol: "sparkles", tint: .secondary)
             return
         }
         askAgent(preset: preset, prompt: prompt)

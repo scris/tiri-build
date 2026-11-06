@@ -451,7 +451,7 @@ struct PluginOffView: View {
                 Image(systemName: "puzzlepiece.extension")
                     .font(.system(size: 30))
                     .foregroundStyle(.faint)
-                Text(found == nil ? "\(spec.plugin) isn't installed any more" : "\(found?.title ?? spec.plugin) is off")
+                Text(found == nil ? String(localized: "\(spec.plugin) isn't installed any more") : String(localized: "\(found?.title ?? spec.plugin) is off"))
                     .foregroundStyle(.secondary)
                 if found != nil {
                     Button("Turn On…") { model.plugins.askToEnable(spec.plugin) }

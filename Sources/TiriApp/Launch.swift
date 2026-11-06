@@ -5,7 +5,16 @@ import TiriCore
 /// The first thing a launch does. Everyone who has never changed Tiri pays for one failed file open here.
 @main
 enum TiriEntry {
+    /// A test copy is in English unless its test says otherwise, so checks that read words pass on any Mac.
+    /// `TIRI_DEV_LANGUAGE=settings` lets its settings.json decide, as for anyone else.
+    private static var testLanguage: AppLanguage? {
+        guard AppModel.isTestCopy, let value = ProcessInfo.processInfo.environment["TIRI_DEV_LANGUAGE"], value != "settings" else { return nil }
+        return AppLanguage(rawValue: value) ?? .english
+    }
+
     static func main() {
+        // Before anything looks up a word: Foundation settles on a language the first time, and keeps it.
+        AppLanguage.applyAtLaunch(testLanguage ?? AppLanguage.fromSettingsFile(TiriPaths.configDirectory.appendingPathComponent("settings.json")))
         // Before any look at state: this is the new release putting itself in place of the old one.
         if let flag = CommandLine.arguments.firstIndex(of: UpdateInstall.flag), CommandLine.arguments.count > flag + 1 {
             UpdateInstall.run(target: CommandLine.arguments[flag + 1])
@@ -48,7 +57,7 @@ enum TiriEntry {
             var changed = state ?? CopyState()
             changed.active = .plain
             changed.trial = nil
-            changed.notice = "Your copy of Tiri wasn't there, so this is Plain Tiri. Your changes are kept."
+            changed.notice = String(localized: "Your copy of Tiri wasn't there, so this is Plain Tiri. Your changes are kept.")
             try? changed.save()
             TiriApplication.main()
         }
@@ -97,7 +106,7 @@ enum UpdateInstall {
                 try? state.save()
             }
         } else if var state = CopyState.load() {
-            state.notice = "Tiri couldn't put the update in place, so nothing changed."
+            state.notice = String(localized: "Tiri couldn't put the update in place, so nothing changed.")
             try? state.save()
         }
         // -n, or macOS would call this process, which has the same bundle ID, that app already running.
@@ -181,8 +190,8 @@ final class HandOff: NSObject, NSApplicationDelegate {
         guard let path = CopyState.load()?.plainPath, FileManager.default.isExecutableFile(atPath: path + "/Contents/MacOS/Tiri") else {
             // There's nowhere to hand over to, and being something is better than being nothing.
             let alert = NSAlert()
-            alert.messageText = "Tiri can't find the app it came from."
-            alert.informativeText = "Open Tiri from where you installed it."
+            alert.messageText = String(localized: "Tiri can't find the app it came from.")
+            alert.informativeText = String(localized: "Open Tiri from where you installed it.")
             alert.runModal()
             exit(1)
         }

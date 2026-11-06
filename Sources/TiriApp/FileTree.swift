@@ -496,18 +496,18 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     private func confirmDeleteOnServer(_ nodes: [FileNode], connection: RemoteConnection, window: NSWindow) {
         let alert = NSAlert()
         alert.messageText = nodes.count == 1
-            ? "Delete \u{201C}\(nodes[0].name)\u{201D} from \(SSHConfigFile.displayName(of: connection.destination))?"
-            : "Delete \(nodes.count) items from \(SSHConfigFile.displayName(of: connection.destination))?"
-        alert.informativeText = "A server has no Trash, so this can't be undone."
+            ? String(localized: "Delete “\(nodes[0].name)” from \(SSHConfigFile.displayName(of: connection.destination))?")
+            : String(localized: "Delete \(nodes.count) items from \(SSHConfigFile.displayName(of: connection.destination))?")
+        alert.informativeText = String(localized: "A server has no Trash, so this can't be undone.")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: String(localized: "Delete"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 guard response == .alertFirstButtonReturn, let model = self?.model else { return }
                 let remotes = nodes.compactMap { connection.map.remote($0.path) }
                 model.remote.perform("rm -rf -- \(RemoteShell.arguments(remotes))", affecting: remotes, on: connection,
-                                     failure: "Couldn't delete \(nodes.count == 1 ? nodes[0].name : "those")")
+                                     failure: nodes.count == 1 ? String(localized: "Couldn't delete \(nodes[0].name)") : String(localized: "Couldn't delete those"))
             }
         }
     }
@@ -526,11 +526,11 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
         let alert = NSAlert()
         alert.messageText = nodes.count == 1
-            ? "Are you sure you want to delete \u{201C}\(nodes[0].name)\u{201D}?"
-            : "Are you sure you want to delete \(nodes.count) items?"
-        alert.informativeText = "You can restore from the Trash."
-        alert.addButton(withTitle: "Move to Trash")
-        alert.addButton(withTitle: "Cancel")
+            ? String(localized: "Are you sure you want to delete “\(nodes[0].name)”?")
+            : String(localized: "Are you sure you want to delete \(nodes.count) items?")
+        alert.informativeText = String(localized: "You can restore from the Trash.")
+        alert.addButton(withTitle: String(localized: "Move to Trash"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 guard response == .alertFirstButtonReturn else { return }
@@ -538,7 +538,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                     do {
                         try FileManager.default.trashItem(at: URL(fileURLWithPath: node.path), resultingItemURL: nil)
                     } catch {
-                        self?.model?.showToast(title: "Couldn't move \(node.name) to the Trash", detail: error.localizedDescription,
+                        self?.model?.showToast(title: String(localized: "Couldn't move \(node.name) to the Trash"), detail: error.localizedDescription,
                                                symbol: "exclamationmark.triangle", tint: .orange)
                     }
                 }
@@ -646,7 +646,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                     case .success:
                         model?.fileRenamed(from: oldPath, to: destination)
                     case .failure(let failure):
-                        model?.showToast(title: "Couldn't rename \((oldPath as NSString).lastPathComponent)", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange)
+                        model?.showToast(title: String(localized: "Couldn't rename \((oldPath as NSString).lastPathComponent)"), detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange)
                     }
                     model?.fileTree.reload()
                 }
@@ -661,7 +661,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             expanded.subtract(moved)
             expanded.formUnion(moved.map { destination + $0.dropFirst(node.path.count) })
         } catch {
-            model?.showToast(title: "Couldn't rename \(node.name)", detail: error.localizedDescription,
+            model?.showToast(title: String(localized: "Couldn't rename \(node.name)"), detail: error.localizedDescription,
                              symbol: "exclamationmark.triangle", tint: .orange)
         }
         if let parent = node.parent { refresh(parent) }
@@ -673,7 +673,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         let path = (parent.path as NSString).appendingPathComponent(name)
         let manager = FileManager.default
         guard !manager.fileExists(atPath: path) else {
-            model?.showToast(title: "\(name) already exists", detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
+            model?.showToast(title: String(localized: "\(name) already exists"), detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
         if let connection = RemoteRegistry.shared.connection(forLocal: path), let remote = connection.map.remote(path) {
@@ -685,7 +685,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                 let result = connection.perform(script, affecting: [remote])
                 await MainActor.run {
                     if case .failure(let failure) = result {
-                        model?.showToast(title: "Couldn't create \(name)", detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange)
+                        model?.showToast(title: String(localized: "Couldn't create \(name)"), detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange)
                         return
                     }
                     self?.refresh(parent)
@@ -705,7 +705,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                 guard manager.createFile(atPath: path, contents: Data()) else { throw CocoaError(.fileWriteUnknown) }
             }
         } catch {
-            model?.showToast(title: "Couldn't create \(name)", detail: error.localizedDescription,
+            model?.showToast(title: String(localized: "Couldn't create \(name)"), detail: error.localizedDescription,
                              symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
@@ -726,29 +726,29 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             item.representedObject = node
             menu.addItem(item)
         }
-        add("New File…", #selector(menuNewFile))
-        add("New Folder…", #selector(menuNewFolder))
+        add(String(localized: "New File…"), #selector(menuNewFile))
+        add(String(localized: "New Folder…"), #selector(menuNewFolder))
         if node != nil {
             menu.addItem(.separator())
-            add("Reveal in Finder", #selector(menuRevealInFinder))
-            add("Open in Integrated Terminal", #selector(menuOpenTerminal))
-            add("Add to Agent", #selector(menuAddToAgent), key: "l", modifiers: [.command])
-            if node?.isDirectory == false { add("Open in External Editor", #selector(menuOpenExternal)) }
+            add(String(localized: "Reveal in Finder"), #selector(menuRevealInFinder))
+            add(String(localized: "Open in Integrated Terminal"), #selector(menuOpenTerminal))
+            add(String(localized: "Add to Agent"), #selector(menuAddToAgent), key: "l", modifiers: [.command])
+            if node?.isDirectory == false { add(String(localized: "Open in External Editor"), #selector(menuOpenExternal)) }
             menu.addItem(.separator())
-            add("Copy Path", #selector(menuCopyPath), key: "c", modifiers: [.option, .command])
-            add("Copy Relative Path", #selector(menuCopyRelativePath), key: "c", modifiers: [.option, .shift, .command])
+            add(String(localized: "Copy Path"), #selector(menuCopyPath), key: "c", modifiers: [.option, .command])
+            add(String(localized: "Copy Relative Path"), #selector(menuCopyRelativePath), key: "c", modifiers: [.option, .shift, .command])
             if node?.isRoot == false {
                 menu.addItem(.separator())
-                add("Rename", #selector(menuRename), key: "\r", modifiers: [])
-                let delete = NSMenuItem(title: "Delete", action: #selector(menuDelete), keyEquivalent: "\u{8}")
+                add(String(localized: "Rename"), #selector(menuRename), key: "\r", modifiers: [])
+                let delete = NSMenuItem(title: String(localized: "Delete"), action: #selector(menuDelete), keyEquivalent: "\u{8}")
                 delete.keyEquivalentModifierMask = .command
                 delete.target = self
                 menu.addItem(delete)
             }
         }
         menu.addItem(.separator())
-        add("Add Folder to Workspace…", #selector(menuAddFolder))
-        if node?.isRoot == true { add("Remove Folder from Workspace", #selector(menuRemoveFolder)) }
+        add(String(localized: "Add Folder to Workspace…"), #selector(menuAddFolder))
+        if node?.isRoot == true { add(String(localized: "Remove Folder from Workspace"), #selector(menuRemoveFolder)) }
         return menu
     }
 
@@ -862,7 +862,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         } else {
             let status = fileChanges[node.path]
             cell.showMark(status?.letter ?? "", tint: status.map(ChangeTint.color))
-            cell.badge.toolTip = status?.rawValue.capitalized
+            cell.badge.toolTip = status?.title
         }
         return cell
     }

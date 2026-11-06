@@ -86,10 +86,10 @@ final class PaletteModel {
 
     var placeholder: String {
         switch mode {
-        case .files: "Search files by name. Add :line to jump, or > for commands."
-        case .commands: "Type a command"
+        case .files: String(localized: "Search files by name. Add :line to jump, or > for commands.")
+        case .commands: String(localized: "Type a command")
         case .prompt(let title, _), .choices(let title, _), .dynamic(let title, _): title
-        case .search: "Search in files"
+        case .search: String(localized: "Search in files")
         case .goToLine, .symbols, .workspaceSymbols: ""
         }
     }
@@ -145,7 +145,7 @@ final class PaletteModel {
         if !previews { endPreview() }
         // Nothing to show is still an answer.
         if case .commands = effectiveMode, rows.isEmpty, !query.isEmpty {
-            note = "No command matches."
+            note = String(localized: "No command matches.")
             offerToAdd()
         }
     }
@@ -154,15 +154,16 @@ final class PaletteModel {
     private func offerToAdd() {
         let asked = (query.hasPrefix(">") ? String(query.dropFirst()) : query).trimmingCharacters(in: .whitespaces)
         guard !asked.isEmpty, model.yourTiri.entriesAreOn, let preset = model.runnableAgentPresets().first else { return }
-        rows = [Row(id: "ask-to-add", title: "Ask \(preset.name) to add this", positions: [], shortcut: nil) { [model] _ in
+        rows = [Row(id: "ask-to-add", title: String(localized: "Ask \(preset.name) to add this"), positions: [], shortcut: nil) { [model] _ in
             model.closePalette()
             model.yourTiri.beginChange(surface: "the command palette, searching for \u{201C}\(asked)\u{201D}", initial: asked)
         }]
         selection = 0
     }
 
-    private func noFileNote(for what: String) -> String {
-        model.active.activeItem?.filePath == nil ? "Open a file first." : "This kind of file has no \(what) to go to."
+    /// `otherwise` is what to say when a file is open, but it isn't the kind that has this.
+    private func noFileNote(otherwise: String) -> String {
+        model.active.activeItem?.filePath == nil ? String(localized: "Open a file first.") : otherwise
     }
 
     // MARK: Showing what's selected
@@ -206,7 +207,7 @@ final class PaletteModel {
     private func refreshGoToLine() {
         guard let target = outlineTarget() else {
             rows = []
-            note = noFileNote(for: "lines")
+            note = noFileNote(otherwise: String(localized: "This kind of file has no lines to go to."))
             return
         }
         let parts = query.dropFirst().split(separator: ":").map { Int($0.trimmingCharacters(in: .whitespaces)) }
@@ -214,7 +215,8 @@ final class PaletteModel {
         guard let wanted = parts.first ?? nil else {
             selection = 0
             let here = target.outlineCurrentLine
-            rows = [Row(id: "line", title: "Type a line number, from 1 to \(lineCount.formatted()). You're on line \(here.formatted()).") { [model] _ in
+            let ask = String(localized: "Type a line number, from 1 to \(lineCount.formatted()). You're on line \(here.formatted()).")
+            rows = [Row(id: "line", title: ask) { [model] _ in
                 model.closePalette()
             }]
             return
@@ -222,7 +224,7 @@ final class PaletteModel {
         let line = min(max(wanted, 1), lineCount)
         let col = parts.count > 1 ? parts[1] : nil
         let path = target.path
-        let row = Row(id: "line", title: "Go to line \(line.formatted())", preview: { target.previewLine(line) }) { [model] _ in
+        let row = Row(id: "line", title: String(localized: "Go to line \(line.formatted())"), preview: { target.previewLine(line) }) { [model] _ in
             model.closePalette(restoreFocus: false)
             model.navigate(to: SymbolLocation(path: path, line: line, column: col ?? 1, text: ""))
             model.requestFocus()
@@ -241,7 +243,7 @@ final class PaletteModel {
     private func refreshSymbols() {
         guard let target = outlineTarget() else {
             rows = []
-            note = noFileNote(for: "symbols")
+            note = noFileNote(otherwise: String(localized: "This kind of file has no symbols to go to."))
             return
         }
         if symbolsPath != target.path {
@@ -295,7 +297,7 @@ final class PaletteModel {
         }
         rows = list
         selection = previous.flatMap { id in list.firstIndex { $0.id == id } } ?? 0
-        if list.isEmpty, !isIndexing { note = text.isEmpty ? "No symbols found in this file." : "No symbol matches." } else { note = nil }
+        if list.isEmpty, !isIndexing { note = text.isEmpty ? String(localized: "No symbols found in this file.") : String(localized: "No symbol matches.") } else { note = nil }
         // Typing jumps to the best match. Just opening stays where you are.
         if moved, !text.isEmpty, list.indices.contains(selection) { list[selection].preview?() }
     }
@@ -341,11 +343,12 @@ final class PaletteModel {
             guard !Task.isCancelled else { return }
             self.isIndexing = false
             guard let found else {
-                self.note = "No language server running here can search the whole workspace. ⌘⇧O works on one file, and ⌘⇧F searches the text."
+                self.note = String(localized: "No language server running here can search the whole workspace. ⌘⇧O works on one file, and ⌘⇧F searches the text.")
                 return
             }
             if found.isEmpty {
-                self.note = text.isEmpty ? "Type a name to find it anywhere in this workspace." : "No symbol matches. A language server may still be reading the project."
+                self.note = text.isEmpty ? String(localized: "Type a name to find it anywhere in this workspace.")
+                    : String(localized: "No symbol matches. A language server may still be reading the project.")
             }
             self.rows = found.prefix(200).map { self.workspaceSymbolRow($0) }
             self.selection = 0
@@ -452,7 +455,7 @@ final class PaletteModel {
         let commands = model.allCommands
         var scored: [(Int, Row)] = []
         for (order, command) in commands.enumerated() {
-            let label = command.title.hasPrefix(command.category + ":") ? command.title : "\(command.category): \(command.title)"
+            let (label, english) = command.paletteLabel
             let row = { [model] (positions: [Int]) in
                 Row(id: command.id, title: label, positions: positions,
                     shortcut: model.shortcutSymbol(for: command.id)) { _ in
@@ -464,6 +467,9 @@ final class PaletteModel {
                 scored.append((-order, row([])))
             } else if let match = FuzzyMatcher.match(query: trimmed, candidate: label, nameStart: 0) {
                 scored.append((match.score, row(match.positions)))
+            } else if english != label, let match = FuzzyMatcher.match(query: trimmed, candidate: english, nameStart: 0) {
+                // Typed in English, as in a guide or by habit. What matched isn't on the row to mark.
+                scored.append((match.score, row([])))
             }
         }
         scored.sort { $0.0 > $1.0 }
@@ -548,7 +554,7 @@ final class PaletteModel {
                 }
                 self.selection = 0
                 self.isIndexing = false
-                self.note = top.isEmpty && !files.isEmpty ? "No file matches." : nil
+                self.note = top.isEmpty && !files.isEmpty ? String(localized: "No file matches.") : nil
             }
         }
     }
@@ -652,7 +658,7 @@ struct PaletteView: View {
 
             if palette.searchFoundNothing || palette.note != nil {
                 Divider()
-                Text(palette.note ?? "Nothing in this workspace matches.")
+                Text(palette.note ?? String(localized: "Nothing in this workspace matches."))
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 12)

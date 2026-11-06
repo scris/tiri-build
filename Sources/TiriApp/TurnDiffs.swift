@@ -33,7 +33,7 @@ extension AppModel {
         guard settings.perTurnDiffs, let (workspace, folders) = turnRoots(for: item), let source = anyItem(item) else { return }
         // Two hooks can report one event: an agent's own, and another's it also runs.
         if let last = turns.last(where: { $0.item == item }), last.isOpen, Date().timeIntervalSince(last.started) < 3 { return }
-        let turn = AgentTurn(workspace: workspace.id, item: item, title: title(for: source), prompt: AgentTurn.shortPrompt(prompt))
+        let turn = AgentTurn(workspace: workspace.id, item: item, title: englishTitle(for: source), prompt: AgentTurn.shortPrompt(prompt))
         let previous = turns.last { $0.item == item && $0.isOpen }?.id
         turns.append(turn)
         let snapshots = self.snapshots
@@ -126,13 +126,13 @@ extension AppModel {
     func emptyChangesText(in id: WorkspaceID) -> String {
         let bases = lives[id]?.branchBases ?? []
         return switch lives[id]?.changesScope ?? .sinceCommit {
-        case .sinceCommit: "No changes since the last commit."
-        case .latestTurn, .turn: "This turn didn't change any files."
-        case .branch: bases.count == 1 ? bases[0].emptyDescription : "Nothing changed."
-        case .recentCommits: "No commits yet."
-        case .commit: "This commit didn't change any files here."
-        case .otherWork: "No other branches or worktrees."
-        case .work: "Nothing changed here."
+        case .sinceCommit: String(localized: "No changes since the last commit.")
+        case .latestTurn, .turn: String(localized: "This turn didn't change any files.")
+        case .branch: bases.count == 1 ? bases[0].emptyDescription : String(localized: "Nothing changed.")
+        case .recentCommits: String(localized: "No commits yet.")
+        case .commit: String(localized: "This commit didn't change any files here.")
+        case .otherWork: String(localized: "No other branches or worktrees.")
+        case .work: String(localized: "Nothing changed here.")
         }
     }
 
@@ -286,31 +286,31 @@ struct ChangesScopeMenu: View {
 
     private var label: String {
         switch here.changesScope {
-        case .sinceCommit: "Since commit"
-        case .latestTurn: "Latest turn"
-        case .turn: "One turn"
-        case .branch: "This branch"
-        case .recentCommits: "Recent commits"
+        case .sinceCommit: String(localized: "Since commit")
+        case .latestTurn: String(localized: "Latest turn")
+        case .turn: String(localized: "One turn")
+        case .branch: String(localized: "This branch")
+        case .recentCommits: String(localized: "Recent commits")
         case .commit(let commit): commit.shortOID
-        case .otherWork: "Other work"
+        case .otherWork: String(localized: "Other work")
         case .work(let work): work.branch
         }
     }
 
     var body: some View {
         Menu {
-            scopeButton("Since Last Commit", .sinceCommit)
-            scopeButton("This Branch", .branch)
-            scopeButton("Recent Commits", .recentCommits)
-            scopeButton(here.otherWork.isEmpty ? "Other Work" : "Other Work (\(here.otherWork.count))", .otherWork)
+            scopeButton(String(localized: "Since Last Commit"), .sinceCommit)
+            scopeButton(String(localized: "This Branch"), .branch)
+            scopeButton(String(localized: "Recent Commits"), .recentCommits)
+            scopeButton(here.otherWork.isEmpty ? String(localized: "Other Work") : String(localized: "Other Work (\(here.otherWork.count))"), .otherWork)
             let offered = here.offeredTurns
             if !offered.isEmpty || here.changesScope == .latestTurn {
-                scopeButton("Latest Turn", .latestTurn)
+                scopeButton(String(localized: "Latest Turn"), .latestTurn)
             }
             if !offered.isEmpty {
                 Divider()
                 ForEach(offered) { turn in
-                    scopeButton(AppModel.describe(turn) + (turn.isOpen ? " (working)" : ""), .turn(turn.id))
+                    scopeButton(turn.isOpen ? String(localized: "\(AppModel.describe(turn)) (working)") : AppModel.describe(turn), .turn(turn.id))
                 }
             }
         } label: {
@@ -335,7 +335,7 @@ struct BranchCaption: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(bases, id: \.root) { base in
-                Text(bases.count > 1 ? (base.root as NSString).lastPathComponent + ": " + base.description : base.description)
+                Text(bases.count > 1 ? (base.root as NSString).lastPathComponent + ": " + base.displayDescription : base.displayDescription)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -370,7 +370,7 @@ struct CommitCaption: View {
                 Text(commit.subject)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(([commit.shortOID, RelativeTime.text(commit.date)] + (commit.isMerge ? ["compared with its first parent"] : [])).joined(separator: " · "))
+                Text(([commit.shortOID, RelativeTime.display(commit.date)] + (commit.isMerge ? [String(localized: "compared with its first parent")] : [])).joined(separator: " · "))
                     .foregroundStyle(.faint)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -455,11 +455,11 @@ extension AppModel {
             if let preset = firstAgentPreset {
                 askAgent(preset: preset, prompt: prompt)
             } else {
-                showToast(title: "No agent is running", detail: "Start one from the + button, then try again.", symbol: "sparkles", tint: .secondary)
+                showToast(title: String(localized: "No agent is running"), detail: String(localized: "Start one from the + button, then try again."), symbol: "sparkles", tint: .secondary)
             }
             return
         }
-        withAgent(asking: "Which session should do this?") { [weak self] terminal, _ in
+        withAgent(asking: String(localized: "Which session should do this?")) { [weak self] terminal, _ in
             self?.focusAgent(terminal)
             terminal.send(text: AgentReference.bracketedPaste(prompt))
         }
@@ -487,8 +487,8 @@ struct OtherWorkHint: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 9))
-                Text(unfinished == 0 ? "\(here.otherWork.count) merged, ready to clean up"
-                     : unfinished == 1 ? "1 more branch not merged" : "\(unfinished) more branches not merged")
+                Text(unfinished == 0 ? String(localized: "\(here.otherWork.count) merged, ready to clean up")
+                     : unfinished == 1 ? String(localized: "1 more branch not merged") : String(localized: "\(unfinished) more branches not merged"))
                 Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
             }
             .font(.system(size: 10.5))
@@ -515,7 +515,7 @@ struct WorkRow: View {
                 Text(work.branch)
                     .font(.system(size: 12.5))
                     .lineLimit(1)
-                Text(([model.agentName(inWorktree: work.worktree)].compactMap { $0 } + [work.summary]).joined(separator: " · "))
+                Text(([model.agentName(inWorktree: work.worktree)].compactMap { $0 } + [work.displaySummary]).joined(separator: " · "))
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -554,11 +554,11 @@ struct WorkCaption: View {
                 .help("Back to Other Work")
                 .accessibilityLabel("Back to Other Work")
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(work.summary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    Text(work.displaySummary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     Text(work.subject).foregroundStyle(.faint).lineLimit(1)
                 }
             }
-            Button(work.isUnfinished ? "Ask Agent to Merge" : "Ask Agent to Clean Up") {
+            Button(work.isUnfinished ? String(localized: "Ask Agent to Merge") : String(localized: "Ask Agent to Clean Up")) {
                 model.askAgent(aboutWork: work, prompt: work.isUnfinished ? work.mergeRequest : work.cleanUpRequest)
             }
             .controlSize(.small)

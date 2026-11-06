@@ -65,6 +65,21 @@ public struct WorkLine: Hashable, Identifiable, Sendable {
         return parts.joined(separator: " · ")
     }
 
+    /// The same, for the screen. `summary` is what `tiri` reports.
+    public var displaySummary: String {
+        var parts: [String] = []
+        if files > 0 { parts.append(files == 1 ? String(localized: "1 file changed") : String(localized: "\(files) files changed")) }
+        if uncommitted > 0 { parts.append(String(localized: "\(uncommitted) not committed")) }
+        if merged, uncommitted == 0 {
+            parts.append(String(localized: "merged into \(base)"))
+        } else if commits > 0 {
+            parts.append(commits == 1 ? String(localized: "1 commit, not merged") : String(localized: "\(commits) commits, not merged"))
+        } else if parts.isEmpty {
+            parts.append(String(localized: "nothing yet"))
+        }
+        return parts.joined(separator: " · ")
+    }
+
     /// `git worktree list --porcelain`: stanzas with `worktree`, `HEAD`, and `branch` or `detached`.
     static func parseWorktrees(_ output: String) -> [(path: String, branch: String?)] {
         var found: [(path: String, branch: String?)] = []
@@ -162,12 +177,23 @@ public struct BranchBase: Equatable, Sendable {
         }
     }
 
+    /// The same, for the screen.
+    public var displayDescription: String {
+        switch state {
+        case .found(let name, _, let short): String(localized: "Since \(name) (\(short))")
+        case .isBase(let name): String(localized: "This is \(name), so only uncommitted work shows")
+        case .none: String(localized: "No main branch to compare with, so only uncommitted work shows")
+        case .unrelated(let name): String(localized: "Shares no history with \(name), so only uncommitted work shows")
+        case .noCommits: String(localized: "No commits yet, so everything is new")
+        }
+    }
+
     /// What the Changes section says when there's nothing to list.
     public var emptyDescription: String {
         switch state {
-        case .found(let name, _, _): "Nothing changed since \(name)."
-        case .noCommits: "No commits yet, and no files."
-        default: "No uncommitted changes."
+        case .found(let name, _, _): String(localized: "Nothing changed since \(name).")
+        case .noCommits: String(localized: "No commits yet, and no files.")
+        default: String(localized: "No uncommitted changes.")
         }
     }
 
@@ -243,6 +269,23 @@ public enum RelativeTime {
         let formatter = DateFormatter()
         formatter.dateFormat = days < 300 ? "MMM d" : "MMM d, yyyy"
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter.string(from: date)
+    }
+
+    /// The same, in the language Tiri is in, for the screen. `text` stays English for `tiri` and agents.
+    public static func display(_ date: Date, now: Date = Date()) -> String {
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 60 { return String(localized: "just now") }
+        let locale = L10n.locale
+        if seconds < 30 * 86400 {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.locale = locale
+            formatter.dateTimeStyle = .named
+            return formatter.localizedString(for: date, relativeTo: now)
+        }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.setLocalizedDateFormatFromTemplate(seconds < 300 * 86400 ? "MMMd" : "yMMMd")
         return formatter.string(from: date)
     }
 }

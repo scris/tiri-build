@@ -167,7 +167,7 @@ public enum SSHConfigFile {
         public var hostName: String?
         public var user: String?
         public var detail: String? {
-            guard let hostName, hostName != alias else { return user.map { "as \($0)" } }
+            guard let hostName, hostName != alias else { return user.map { String(localized: "as \($0)") } }
             return user.map { "\($0)@\(hostName)" } ?? hostName
         }
     }

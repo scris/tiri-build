@@ -10,7 +10,7 @@ struct NeedsGitRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
-            Text(installing ? "Installing Apple's tools…" : "Changes need Git, from Apple's free tools")
+            Text(installing ? String(localized: "Installing Apple's tools…") : String(localized: "Changes need Git, from Apple's free tools"))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)

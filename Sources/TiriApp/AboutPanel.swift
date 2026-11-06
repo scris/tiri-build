@@ -47,15 +47,18 @@ enum AboutPanel {
         }
 
         let out = NSMutableAttributedString()
-        out.append(text("A Mac workspace for coding agents.\n", note))
-        out.append(text("Made by "))
-        out.append(link(authorName, authorURL))
+        out.append(text(String(localized: "A Mac workspace for coding agents.") + "\n", note))
+        // One sentence, with the name linked wherever the language puts it.
+        let made = NSMutableAttributedString(attributedString: text(String(localized: "Made by \(authorName)")))
+        let name = (made.string as NSString).range(of: authorName)
+        if name.location != NSNotFound { made.addAttribute(.link, value: authorURL, range: name) }
+        out.append(made)
         out.append(text("\n"))
         out.append(link("tiri.build", websiteURL))
         out.append(text(" · "))
         out.append(link("GitHub", sourceURL))
         out.append(text("\n"))
-        out.append(text("Free and open source under MPL-2.0.", note))
+        out.append(text(String(localized: "Free and open source under MPL-2.0."), note))
         return out
     }
 }

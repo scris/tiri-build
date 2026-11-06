@@ -135,8 +135,9 @@ public struct CopyState: Codable, Equatable, Sendable {
             active = .plain
         }
         rejectedChange = trial?.change
-        let what = sentence.map { "“\($0)”" } ?? "Your latest change"
-        notice = "\(what) kept Tiri from starting, so Tiri went back. Nothing is lost."
+        // Written by the app as it starts, so in its language.
+        notice = sentence.map { String(localized: "“\($0)” kept Tiri from starting, so Tiri went back. Nothing is lost.") }
+            ?? String(localized: "Your latest change kept Tiri from starting, so Tiri went back. Nothing is lost.")
         trial = nil
         attempts = 0
         lastAttempt = nil
@@ -194,7 +195,7 @@ public enum CopyFiles {
 
     public static func swap(_ first: URL, _ second: URL) throws {
         let result = first.path.withCString { a in second.path.withCString { b in renamex_np(a, b, UInt32(RENAME_SWAP)) } }
-        if result != 0 { throw MoveFailure(description: "Couldn't swap \(first.lastPathComponent): \(String(cString: strerror(errno)))") }
+        if result != 0 { throw MoveFailure(description: String(localized: "Couldn't swap \(first.lastPathComponent): \(String(cString: strerror(errno)))")) }
     }
 
     /// `to` is replaced if it's there.
@@ -215,7 +216,7 @@ public enum CopyFiles {
     public static func promoteReady(ready: URL = YourTiri.ready, current: URL = YourTiri.current, previous: URL = YourTiri.previous) throws -> Bool {
         let manager = FileManager.default
         guard manager.fileExists(atPath: ready.appendingPathComponent("Contents/MacOS/Tiri").path) else {
-            throw MoveFailure(description: "There's no copy ready to try.")
+            throw MoveFailure(description: String(localized: "There's no copy ready to try."))
         }
         guard manager.fileExists(atPath: current.path) else {
             try move(ready, to: current)

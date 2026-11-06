@@ -298,7 +298,7 @@ extension Conversations {
         let asked = (AgentHookEvent.promptLine(prompt) ?? prompt)
         let line = asked.replacingOccurrences(of: attachment, with: "", options: [.regularExpression, .caseInsensitive])
             .trimmingCharacters(in: .whitespaces)
-        if line.isEmpty, !asked.isEmpty { return asked.lowercased().contains("image") ? "Shared an image" : "Pasted something" }
+        if line.isEmpty, !asked.isEmpty { return asked.lowercased().contains("image") ? String(localized: "Shared an image") : String(localized: "Pasted something") }
         let words = line.split(whereSeparator: \.isWhitespace).map { word -> String in
             let bare = word.trimmingCharacters(in: CharacterSet(charactersIn: "'\"`‘’“”,()[]<>"))
             if bare.hasPrefix("http://") || bare.hasPrefix("https://"), let url = URL(string: bare), let host = url.host() {

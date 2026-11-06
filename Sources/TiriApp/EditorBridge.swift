@@ -397,7 +397,7 @@ extension AppModel {
     func withAgent(asking question: String, _ deliver: @escaping (TerminalController, AgentReference.Agent) -> Void) {
         let sessions = activeAgentSessions()
         guard let first = sessions.first else {
-            showToast(title: "No agent is running", detail: "Start one from the + button, then try again.",
+            showToast(title: String(localized: "No agent is running"), detail: String(localized: "Start one from the + button, then try again."),
                       symbol: "sparkles", tint: .secondary)
             return
         }
@@ -407,9 +407,9 @@ extension AppModel {
         }
         let rows = sessions.map { session in
             let name = session.agent.title
-            let status = runtimes[session.item.id]?.status.rawValue ?? "idle"
+            let status = runtimes[session.item.id]?.status.spoken ?? String(localized: "Idle")
             return PaletteModel.Row(id: session.item.id, title: name + " · " + title(for: session.item),
-                                    detail: session.workspace.name + " · " + status,
+                                    detail: session.workspace.shownName + " · " + status,
                                     symbol: session.agent.profile?.symbol ?? "terminal") { [weak self] _ in
                 self?.closePalette(restoreFocus: false)
                 deliver(session.terminal, session.agent)
@@ -436,7 +436,7 @@ extension AppModel {
             if let preset = firstAgentPreset {
                 askAgent(preset: preset, prompt: prompt)
             } else {
-                showToast(title: "No agent is running", detail: "Start one from the + button, then try again.", symbol: "sparkles", tint: .secondary)
+                showToast(title: String(localized: "No agent is running"), detail: String(localized: "Start one from the + button, then try again."), symbol: "sparkles", tint: .secondary)
             }
             return
         }
@@ -456,7 +456,7 @@ extension AppModel {
                 deliver(maker.terminal)
                 return
             }
-            self.withAgent(asking: "Which session made this change?") { terminal, _ in deliver(terminal) }
+            self.withAgent(asking: String(localized: "Which session made this change?")) { terminal, _ in deliver(terminal) }
         }
     }
 
@@ -469,14 +469,14 @@ extension AppModel {
             return
         }
         guard case .file(let spec) = item.content else {
-            showToast(title: "There's nothing to add from here", detail: "Open a file, then press ⌘L.", symbol: "sparkles", tint: .secondary)
+            showToast(title: String(localized: "There's nothing to add from here"), detail: String(localized: "Open a file, then press ⌘L."), symbol: "sparkles", tint: .secondary)
             return
         }
         addFilesToAgent([spec.path])
     }
 
     func addReference(_ reference: AgentSelection) {
-        withAgent(asking: "Which session should get \(reference.shortDescription)?") { [weak self] terminal, agent in
+        withAgent(asking: reference.whichSessionQuestion) { [weak self] terminal, agent in
             self?.deliver(reference, to: terminal, agent: agent)
         }
     }
@@ -497,8 +497,9 @@ extension AppModel {
 
     func addFilesToAgent(_ paths: [String]) {
         guard !paths.isEmpty else { return }
-        let what = paths.count == 1 ? (paths[0] as NSString).lastPathComponent : "\(paths.count) files"
-        withAgent(asking: "Which session should get \(what)?") { [weak self] terminal, agent in
+        let question = paths.count == 1 ? String(localized: "Which session should get \((paths[0] as NSString).lastPathComponent)?")
+                                        : String(localized: "Which session should get \(paths.count) files?")
+        withAgent(asking: question) { [weak self] terminal, agent in
             self?.focusAgent(terminal)
             self?.insert(paths, into: terminal, agent: agent)
         }
@@ -548,8 +549,8 @@ extension AppModel {
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        panel.message = "Choose files or images to add to your agent"
-        panel.prompt = "Add"
+        panel.message = String(localized: "Choose files or images to add to your agent")
+        panel.prompt = String(localized: "Add")
         panel.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 guard response == .OK else { return }
@@ -596,11 +597,15 @@ struct AgentSelection {
     /// Text that isn't simply lines of the file as it stands, like a PDF's or a diff's, goes in as a quotation.
     var quote: String?
 
-    var shortDescription: String {
+    /// Asked when there's more than one agent it could go to.
+    var whichSessionQuestion: String {
         let name = (path as NSString).lastPathComponent
-        guard let firstLine else { return quote == nil ? name : "this from \(name)" }
+        guard let firstLine else {
+            return quote == nil ? String(localized: "Which session should get \(name)?") : String(localized: "Which session should get this from \(name)?")
+        }
         let count = (lastLine ?? firstLine) - firstLine + 1
-        return count == 1 ? "line \(firstLine + 1) of \(name)" : "\(count) lines of \(name)"
+        return count == 1 ? String(localized: "Which session should get line \(firstLine + 1) of \(name)?")
+                          : String(localized: "Which session should get \(count) lines of \(name)?")
     }
 }
 
@@ -652,13 +657,13 @@ final class QuoteButton: NSButton {
         wantsLayer = true
         layer?.cornerRadius = 6
         layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        attributedTitle = NSAttributedString(string: "Quote in Agent  ⌘L", attributes: [
+        attributedTitle = NSAttributedString(string: String(localized: "Quote in Agent") + "  ⌘L", attributes: [
             .font: NSFont.systemFont(ofSize: 11.5, weight: .medium), .foregroundColor: NSColor.white,
         ])
         isHidden = true
         sizeToFit()
         setFrameSize(NSSize(width: frame.width + 18, height: 22))
-        toolTip = "Add this selection to your agent's input"
+        toolTip = String(localized: "Add this selection to your agent's input")
         host.addSubview(self)
         commentButton.isBordered = false
         commentButton.wantsLayer = true
@@ -666,12 +671,12 @@ final class QuoteButton: NSButton {
         commentButton.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         commentButton.layer?.borderWidth = 1
         commentButton.layer?.borderColor = NSColor.separatorColor.cgColor
-        commentButton.attributedTitle = NSAttributedString(string: "Comment  ⌥⌘L", attributes: [
+        commentButton.attributedTitle = NSAttributedString(string: String(localized: "Comment") + "  ⌥⌘L", attributes: [
             .font: NSFont.systemFont(ofSize: 11.5, weight: .medium), .foregroundColor: NSColor.labelColor,
         ])
         commentButton.sizeToFit()
         commentButton.setFrameSize(NSSize(width: commentButton.frame.width + 18, height: 22))
-        commentButton.toolTip = "Keep a comment on this for your next batch to the agent"
+        commentButton.toolTip = String(localized: "Keep a comment on this for your next batch to the agent")
         commentButton.target = self
         commentButton.action = #selector(commentPressed)
         commentButton.isHidden = true
@@ -940,7 +945,7 @@ final class TiriWebView: WKWebView, WKScriptMessageHandler {
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
         guard selection != nil else { return }
-        let item = NSMenuItem(title: "Quote in Agent", action: #selector(quoteFromMenu), keyEquivalent: "")
+        let item = NSMenuItem(title: String(localized: "Quote in Agent"), action: #selector(quoteFromMenu), keyEquivalent: "")
         item.target = self
         menu.insertItem(item, at: 0)
         menu.insertItem(.separator(), at: 1)

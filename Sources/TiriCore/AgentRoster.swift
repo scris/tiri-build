@@ -19,8 +19,14 @@ public struct AgentEntry: Sendable, Equatable, Identifiable {
 /// screen, the Ask buttons and the command palette all read it, so there's nothing to keep in step.
 public enum AgentRoster {
     public struct Problem: Error, Equatable, CustomStringConvertible {
+        /// In English, for `tiri agents`.
         public var description: String
-        init(_ description: String) { self.description = description }
+        /// In Tiri's language, for Settings.
+        public var shown: String
+        init(_ description: String, shown: String) {
+            self.description = description
+            self.shown = shown
+        }
     }
 
     /// The program a command runs.
@@ -56,7 +62,7 @@ public enum AgentRoster {
     }
 
     public static func setEnabled(_ on: Bool, _ query: String, in presets: [TerminalPreset]) throws -> [TerminalPreset] {
-        guard let entry = find(query, in: presets) else { throw Problem("No agent called \"\(query)\". Run tiri agents to see them all.") }
+        guard let entry = find(query, in: presets) else { throw Problem("No agent called \"\(query)\". Run tiri agents to see them all.", shown: String(localized: "No agent called \"\(query)\". Run tiri agents to see them all.")) }
         var presets = presets
         if let index = index(of: entry, in: presets) {
             presets[index].isEnabled = on
@@ -69,34 +75,34 @@ public enum AgentRoster {
     /// Adding something already there just turns it on, wherever it was.
     public static func add(name: String, command: String, to presets: [TerminalPreset]) throws -> [TerminalPreset] {
         let command = command.trimmingCharacters(in: .whitespaces)
-        guard let tool = tool(of: command) else { throw Problem("An agent needs a command to run.") }
+        guard let tool = tool(of: command) else { throw Problem("An agent needs a command to run.", shown: String(localized: "An agent needs a command to run.")) }
         if let existing = entries(presets).first(where: { $0.id == tool }) {
             return try setEnabled(true, existing.id, in: presets)
         }
         let given = name.trimmingCharacters(in: .whitespaces)
         let chosen = given.isEmpty ? (AgentCatalog.profile(executable: tool)?.title ?? tool) : given
         if presets.contains(where: { $0.name.caseInsensitiveCompare(chosen) == .orderedSame }) {
-            throw Problem("There's already something called \(chosen).")
+            throw Problem("There's already something called \(chosen).", shown: String(localized: "There's already something called \(chosen)."))
         }
         return presets + [TerminalPreset(name: chosen, command: command)]
     }
 
     /// One of Tiri's own stays in the list, turned off, so turning it back on is one switch.
     public static func remove(_ query: String, from presets: [TerminalPreset]) throws -> [TerminalPreset] {
-        guard let entry = find(query, in: presets) else { throw Problem("No agent called \"\(query)\". Run tiri agents to see them all.") }
+        guard let entry = find(query, in: presets) else { throw Problem("No agent called \"\(query)\". Run tiri agents to see them all.", shown: String(localized: "No agent called \"\(query)\". Run tiri agents to see them all.")) }
         if !entry.isCustom { return try setEnabled(false, entry.id, in: presets) }
         return presets.filter { tool(of: $0.command) != entry.id }
     }
 
     public static func update(_ id: String, name: String, command: String, in presets: [TerminalPreset]) throws -> [TerminalPreset] {
-        guard let entry = entries(presets).first(where: { $0.id == id }) else { throw Problem("No agent called \"\(id)\".") }
+        guard let entry = entries(presets).first(where: { $0.id == id }) else { throw Problem("No agent called \"\(id)\".", shown: String(localized: "No agent called \"\(id)\".")) }
         let name = name.trimmingCharacters(in: .whitespaces)
         let command = command.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { throw Problem("An agent needs a name.") }
-        guard let newTool = tool(of: command) else { throw Problem("An agent needs a command to run.") }
-        if newTool != id, entries(presets).contains(where: { $0.id == newTool }) { throw Problem("\(newTool) is already in the list.") }
+        guard !name.isEmpty else { throw Problem("An agent needs a name.", shown: String(localized: "An agent needs a name.")) }
+        guard let newTool = tool(of: command) else { throw Problem("An agent needs a command to run.", shown: String(localized: "An agent needs a command to run.")) }
+        if newTool != id, entries(presets).contains(where: { $0.id == newTool }) { throw Problem("\(newTool) is already in the list.", shown: String(localized: "\(newTool) is already in the list.")) }
         if presets.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame && tool(of: $0.command) != id }) {
-            throw Problem("There's already something called \(name).")
+            throw Problem("There's already something called \(name).", shown: String(localized: "There's already something called \(name)."))
         }
         var presets = presets
         if let index = index(of: entry, in: presets) {

@@ -18,8 +18,16 @@ public struct PersonalChange: Codable, Equatable, Sendable, Identifiable {
     public var repairTouched: [String]
 
     public var lines: Int { added + removed }
-    public var size: String {
-        "\(files) \(files == 1 ? "file" : "files"), \(lines) \(lines == 1 ? "line" : "lines")"
+    public var size: String { Self.size(files: files, lines: lines) }
+
+    /// `tiri change list` prints this too, in English, since the command has no tables.
+    public static func size(files: Int, lines: Int) -> String {
+        switch (files == 1, lines == 1) {
+        case (true, true): String(localized: "1 file, 1 line")
+        case (true, false): String(localized: "1 file, \(lines) lines")
+        case (false, true): String(localized: "\(files) files, 1 line")
+        case (false, false): String(localized: "\(files) files, \(lines) lines")
+        }
     }
 }
 
@@ -50,6 +58,29 @@ public struct ReadyCopy: Codable, Equatable, Sendable {
     public static func load(from file: URL = YourTiri.readyNote) -> ReadyCopy? {
         guard let data = try? Data(contentsOf: file) else { return nil }
         return try? CopyState.decoder.decode(ReadyCopy.self, from: data)
+    }
+
+    /// `tiri change` writes the note, in English, and "Turn off:" is also how a trial knows which way to undo.
+    /// These are its words as people read them.
+    public static func shown(_ sentence: String) -> String {
+        if sentence.hasPrefix("Turn off: ") { return String(localized: "Turn off: \(String(sentence.dropFirst("Turn off: ".count)))") }
+        if sentence.hasPrefix("Turn on: ") { return String(localized: "Turn on: \(String(sentence.dropFirst("Turn on: ".count)))") }
+        return sentence
+    }
+
+    public var shownSentence: String { Self.shown(sentence) }
+
+    /// The size, read back from the English the note was written with.
+    public var shownSize: String {
+        let numbers = size.split { !$0.isNumber }.compactMap { Int($0) }
+        switch kind {
+        case .toggled where numbers.count == 1:
+            return numbers[0] == 1 ? String(localized: "1 change on") : String(localized: "\(numbers[0]) changes on")
+        case .change where numbers.count == 2:
+            return PersonalChange.size(files: numbers[0], lines: numbers[1])
+        default:
+            return size
+        }
     }
 
     func save(to file: URL = YourTiri.readyNote) throws {
@@ -92,11 +123,11 @@ public struct SourceRepo: Sendable {
     /// From the archive inside the app. It takes about a second, and the agent can start reading straight after.
     public func prepare(archive: URL, version: String) throws {
         guard !exists else { return }
-        guard FileManager.default.fileExists(atPath: archive.path) else { throw ChangeFailure("This copy of Tiri doesn't carry its source, so it can't be changed.") }
+        guard FileManager.default.fileExists(atPath: archive.path) else { throw ChangeFailure(String(localized: "This copy of Tiri doesn't carry its source, so it can't be changed.")) }
         let manager = FileManager.default
         try manager.createDirectory(at: folder, withIntermediateDirectories: true)
         let unpacked = Tool.run("/usr/bin/tar", ["-xzf", archive.path, "-C", folder.path])
-        guard unpacked.ok else { throw ChangeFailure("Couldn't unpack Tiri's source: \(unpacked.output)") }
+        guard unpacked.ok else { throw ChangeFailure(String(localized: "Couldn't unpack Tiri's source: \(unpacked.output)")) }
         try git(["init", "-q", "-b", "personal"], check: true)
         try configure()
         try git(["add", "-A"], check: true)

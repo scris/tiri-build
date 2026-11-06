@@ -201,7 +201,7 @@ final class NotebookKernel {
             state = .off
             waiting = []
             wantsAttachment = false
-            kernels.tell(path: path, "The kernel couldn't start", detail: started?.errorText.isEmpty == false ? started?.errorText : nil)
+            kernels.tell(path: path, String(localized: "The kernel couldn't start"), detail: started?.errorText.isEmpty == false ? started?.errorText : nil)
             return
         }
         attach()
@@ -367,7 +367,7 @@ final class NotebookKernel {
         case "input":
             asked(message)
         case "problem":
-            kernels.tell(path: path, message["message"] as? String ?? "The kernel had a problem", detail: nil)
+            kernels.tell(path: path, message["message"] as? String ?? String(localized: "The kernel had a problem"), detail: nil)
         default:
             break
         }
@@ -507,9 +507,9 @@ final class NotebookKernels {
         let name = (path as NSString).lastPathComponent
         let preset = model.firstAgentPreset
         let prompt = "Install ipykernel so that Tiri can run \(name). Use this project's virtual environment if it has one, and create one if it doesn't."
-        _ = model.showToast(title: "No Python here can run this notebook", detail: "It needs a Python with ipykernel installed.",
+        _ = model.showToast(title: String(localized: "No Python here can run this notebook"), detail: String(localized: "It needs a Python with ipykernel installed."),
                             symbol: "exclamationmark.triangle", tint: .orange,
-                            actionTitle: preset.map { "Ask \($0.name)" }) { [weak model] in
+                            actionTitle: preset.map { String(localized: "Ask \($0.name)") }) { [weak model] in
             if let preset { model?.askAgent(preset: preset, prompt: prompt) }
         }
     }
@@ -529,7 +529,7 @@ final class NotebookKernels {
                     kernel.usePython(python.path)
                 }
             }
-            model.openPalette(.choices(title: "Which Python should run \((path as NSString).lastPathComponent)?", rows: rows))
+            model.openPalette(.choices(title: String(localized: "Which Python should run \((path as NSString).lastPathComponent)?"), rows: rows))
         }
     }
 
@@ -610,7 +610,8 @@ final class NotebookKernels {
     func questionArrived(_ kernel: NotebookKernel) {
         guard model.frontNotebook?.path != kernel.path else { return }
         let name = (kernel.path as NSString).lastPathComponent
-        _ = model.showToast(title: "\(name) is waiting for input", detail: kernel.question?.prompt, symbol: "keyboard", tint: .orange, actionTitle: "Show") { [weak model] in
+        _ = model.showToast(title: String(localized: "\(name) is waiting for input"), detail: kernel.question?.prompt, symbol: "keyboard", tint: .orange,
+                            actionTitle: String(localized: "Show")) { [weak model] in
             model?.open(path: kernel.path, intent: .pinned)
             model?.requestFocus()
         }
@@ -630,6 +631,14 @@ extension NotebookKernel {
 /// in a world of its own, with the page's own scripts off.
 enum NotebookPage {
     static let handler = "tiriNotebook"
+
+    /// Tiri's own words in the page, as script strings.
+    private static let askingWords = scriptString(String(localized: "This cell is asking for input"))
+    private static let sendWord = scriptString(String(localized: "Send"))
+
+    private static func scriptString(_ text: String) -> String {
+        String(data: try! JSONEncoder().encode(text), encoding: .utf8)!
+    }
 
     static let script = #"""
     (() => {
@@ -750,13 +759,13 @@ enum NotebookPage {
           box.dataset.cell = String(index);
           box.dataset.prompt = prompt;
           const label = document.createElement('label');
-          label.textContent = prompt || 'This cell is asking for input';
+          label.textContent = prompt || \#(NotebookPage.askingWords);
           const field = document.createElement('input');
           field.type = password ? 'password' : 'text';
           field.autocomplete = 'off';
           field.spellcheck = false;
           const send = document.createElement('button');
-          send.textContent = 'Send';
+          send.textContent = \#(NotebookPage.sendWord);
           box.append(label, field, send);
           cell.querySelector('.nb-body').appendChild(box);
           // Only if you're already reading this page. It's never worth taking the keyboard for.

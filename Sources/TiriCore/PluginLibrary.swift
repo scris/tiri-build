@@ -530,6 +530,20 @@ public struct PluginChanges: Sendable, Equatable {
         if dependencies { lines.append("Its installed dependencies changed") }
         return lines.joined(separator: "\n")
     }
+
+    /// `summary` in the language Tiri is in, for the question before turning it on.
+    public var shownSummary: String {
+        func listed(_ list: [String]) -> String {
+            let shown = list.prefix(8).joined(separator: ", ")
+            return list.count > 8 ? String(localized: "\(shown) and \(list.count - 8) more") : shown
+        }
+        var lines: [String] = []
+        if !changed.isEmpty { lines.append(String(localized: "Changed: \(listed(changed))")) }
+        if !added.isEmpty { lines.append(String(localized: "Added: \(listed(added))")) }
+        if !removed.isEmpty { lines.append(String(localized: "Removed: \(listed(removed))")) }
+        if dependencies { lines.append(String(localized: "Its installed dependencies changed")) }
+        return lines.joined(separator: "\n")
+    }
 }
 
 // MARK: - The folder, and what's been approved

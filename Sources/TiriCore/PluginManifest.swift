@@ -297,6 +297,51 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         return said
     }
 
+    /// `panelPowers` in the language Tiri is in, for the question before turning it on. The English
+    /// stays as it is for `tiri plugin validate`.
+    public var shownPanelPowers: [String] {
+        var said: [String] = []
+        let panels = panels ?? []
+        if panels.contains(where: { $0.allow?.agent == true }) { said.append(String(localized: "Its panels can put words in your agent's input, for you to send.")) }
+        if panels.contains(where: { $0.allow?.openFiles == true }) { said.append(String(localized: "Its panels can open files in your workspace.")) }
+        let own = Set((commands ?? []).flatMap { [$0.id, name + "." + $0.id] })
+        let others = panels.flatMap { $0.allow?.commands ?? [] }.filter { !own.contains($0) }
+        if !others.isEmpty {
+            let list = Array(Set(others)).sorted().joined(separator: ", ")
+            said.append(String(localized: "Its panels can run these commands: \(list)."))
+        }
+        for viewer in viewers ?? [] {
+            let files = viewer.patterns.joined(separator: ", ")
+            said.append(viewer.writes == true ? String(localized: "Its viewer can read and change \(files) files you open.") : String(localized: "Its viewer can read \(files) files you open."))
+        }
+        let words = (commands ?? []).compactMap(\.ask)
+        if !words.isEmpty {
+            let list = words.prefix(5).map { "• " + $0 }.joined(separator: "\n")
+            said.append(String(localized: "It can leave these words in your agent's input, for you to send:\n\(list)"))
+        }
+        return said
+    }
+
+    /// `additions` in the language Tiri is in, for the screen.
+    public var shownAdditions: [String] {
+        func count(_ number: Int, _ one: () -> String, _ many: (Int) -> String) -> String? {
+            number == 0 ? nil : number == 1 ? one() : many(number)
+        }
+        return [
+            count(commands?.count ?? 0, { String(localized: "1 command") }, { String(localized: "\($0) commands") }),
+            count(panels?.count ?? 0, { String(localized: "1 panel") }, { String(localized: "\($0) panels") }),
+            count(viewers?.count ?? 0, { String(localized: "1 file viewer") }, { String(localized: "\($0) file viewers") }),
+            count(sidebar?.count ?? 0, { String(localized: "1 sidebar section") }, { String(localized: "\($0) sidebar sections") }),
+            count(statusBar?.count ?? 0, { String(localized: "1 status bar item") }, { String(localized: "\($0) status bar items") }),
+            count(fileButtons?.count ?? 0, { String(localized: "1 button above files") }, { String(localized: "\($0) buttons above files") }),
+            count(settings?.count ?? 0, { String(localized: "1 setting") }, { String(localized: "\($0) settings") }),
+            count(languages?.count ?? 0, { String(localized: "1 language") }, { String(localized: "\($0) languages") }),
+            count(grammars?.count ?? 0, { String(localized: "1 grammar") }, { String(localized: "\($0) grammars") }),
+            count(processes?.count ?? 0, { String(localized: "1 background process") }, { String(localized: "\($0) background processes") }),
+            agent?.claude != nil ? String(localized: "a part for Claude Code") : nil,
+        ].compactMap { $0 }
+    }
+
     /// `2 commands, 1 panel`, in plain words.
     public var additions: [String] {
         func count(_ number: Int, _ one: String, _ many: String) -> String? {

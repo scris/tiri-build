@@ -365,13 +365,19 @@ public struct ThemeColor: Equatable, Sendable {
 
 public enum ThemeImport {
     public struct Failure: Error, Equatable, CustomStringConvertible {
+        /// In English, for `tiri theme`.
         public let description: String
-        public init(_ description: String) { self.description = description }
+        /// In Tiri's language, for Settings.
+        public let shown: String
+        public init(_ description: String, shown: String) {
+            self.description = description
+            self.shown = shown
+        }
     }
 
     /// Reads a Ghostty theme, an iTerm2 `.itermcolors` file or a VS Code (or Cursor) color theme, whichever it is.
     public static func read(file url: URL) throws -> Theme {
-        guard let data = try? Data(contentsOf: url) else { throw Failure("Couldn't read \(url.lastPathComponent).") }
+        guard let data = try? Data(contentsOf: url) else { throw Failure("Couldn't read \(url.lastPathComponent).", shown: String(localized: "Couldn't read \(url.lastPathComponent).")) }
         var fallbackName = url.deletingPathExtension().lastPathComponent
             .replacingOccurrences(of: "-color-theme", with: "").replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
         // "dark plus" reads better as a name than as a file.
@@ -407,7 +413,7 @@ public enum ThemeImport {
             }
         }
         guard values["background"] != nil || ansi.contains(where: { $0 != nil }) else {
-            throw Failure("This doesn't look like a Ghostty theme: it has no background or palette.")
+            throw Failure("This doesn't look like a Ghostty theme: it has no background or palette.", shown: String(localized: "This doesn't look like a Ghostty theme: it has no background or palette."))
         }
         return complete(name: name, source: "Ghostty", terminalBackground: values["background"], terminalForeground: values["foreground"],
                         cursor: values["cursor-color"], selection: values["selection-background"], ansi: ansi)
@@ -417,7 +423,7 @@ public enum ThemeImport {
 
     public static func iTerm(_ data: Data, name: String) throws -> Theme {
         guard let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
-            throw Failure("This doesn't look like an iTerm2 color preset.")
+            throw Failure("This doesn't look like an iTerm2 color preset.", shown: String(localized: "This doesn't look like an iTerm2 color preset."))
         }
         func color(_ key: String) -> String? {
             guard let entry = plist[key] as? [String: Any],
@@ -428,7 +434,7 @@ public enum ThemeImport {
         }
         let ansi = (0..<16).map { color("Ansi \($0) Color") }
         guard color("Background Color") != nil || ansi.contains(where: { $0 != nil }) else {
-            throw Failure("This iTerm2 file has no colors in it.")
+            throw Failure("This iTerm2 file has no colors in it.", shown: String(localized: "This iTerm2 file has no colors in it."))
         }
         return complete(name: name, source: "iTerm2", terminalBackground: color("Background Color"), terminalForeground: color("Foreground Color"),
                         cursor: color("Cursor Color"), selection: color("Selection Color"), ansi: ansi)
@@ -440,7 +446,7 @@ public enum ThemeImport {
     /// `include` of a parent theme and token colors kept in a `.tmTheme` file all happen in real ones.
     public static func vsCode(_ data: Data, name: String, baseURL: URL?) throws -> Theme {
         var (colors, rules, kind, declaredName) = try vsCodeParts(data, baseURL: baseURL, depth: 0)
-        if colors.isEmpty, rules.isEmpty { throw Failure("This JSON isn't a color theme: it has no colors or tokenColors.") }
+        if colors.isEmpty, rules.isEmpty { throw Failure("This JSON isn't a color theme: it has no colors or tokenColors.", shown: String(localized: "This JSON isn't a color theme: it has no colors or tokenColors.")) }
         let dark = kind.map { !$0.contains("light") && $0 != "vs" } ?? ((colors["editor.background"].flatMap(ThemeColor.init)?.luminance ?? 0) < 0.4)
         // A rule with no scope sets the whole editor's colors.
         if colors["editor.foreground"] == nil, let global = rules.first(where: { $0.selectors.isEmpty })?.foreground { colors["editor.foreground"] = global }
@@ -478,7 +484,7 @@ public enum ThemeImport {
 
     private static func vsCodeParts(_ data: Data, baseURL: URL?, depth: Int) throws -> ([String: String], [TokenRule], String?, String?) {
         guard let object = try? JSONSerialization.jsonObject(with: Data(stripJSONC(String(decoding: data, as: UTF8.self)).utf8)) as? [String: Any] else {
-            throw Failure("This isn't JSON a color theme could be read from.")
+            throw Failure("This isn't JSON a color theme could be read from.", shown: String(localized: "This isn't JSON a color theme could be read from."))
         }
         var colors: [String: String] = [:]
         var rules: [TokenRule] = []

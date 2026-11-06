@@ -43,6 +43,9 @@ public struct UpdateStatus: Codable, Equatable, Sendable {
     public var name: String { sameVersion == true ? "A new build of Tiri" : "Tiri \(version)" }
     /// What it's called, inside one.
     public var inSentence: String { sameVersion == true ? "the new build of Tiri" : "Tiri \(version)" }
+    /// The same two, in the words people read. `name` and `inSentence` go to agents, and stay English.
+    public var shownName: String { sameVersion == true ? String(localized: "A new build of Tiri") : String(localized: "Tiri \(version)") }
+    public var shownInSentence: String { sameVersion == true ? String(localized: "the new build of Tiri") : String(localized: "Tiri \(version)") }
 
     public init(version: String, newRelease: String, phase: Phase, app: String) {
         self.version = version
@@ -68,29 +71,50 @@ public struct UpdateStatus: Codable, Equatable, Sendable {
 
     /// The line beside the button.
     public var line: String {
+        let name = shownName
         switch phase {
-        case .waiting: return "\(name) will start when the change being made is finished."
-        case .replaying, .building, .checking: return "Getting \(inSentence) ready, with your changes."
+        case .waiting: return String(localized: "\(name) will start when the change being made is finished.")
+        case .replaying, .building, .checking: return String(localized: "Getting \(shownInSentence) ready, with your changes.")
         case .needsRepair:
-            return "\(name) is almost ready. \(UpdateStatus.names(needsRepair)) \(needsRepair.count == 1 ? "has" : "have") to be redone to fit it."
+            let names = UpdateStatus.names(needsRepair)
+            return needsRepair.count == 1 ? String(localized: "\(name) is almost ready. \(names) has to be redone to fit it.")
+                : String(localized: "\(name) is almost ready. \(names) have to be redone to fit it.")
         case .ready:
             let count = carried.count + repaired.count
-            var text = count == 0 ? "\(name) is ready." : count == 1 ? "\(name) is ready, with your change." : "\(name) is ready, with your \(count) changes."
-            if let retiredLine { text += " " + retiredLine }
-            if !leftOut.isEmpty { text += " \(UpdateStatus.names(leftOut)) stays off for now." }
+            var text = count == 0 ? String(localized: "\(name) is ready.") : count == 1 ? String(localized: "\(name) is ready, with your change.")
+                : String(localized: "\(name) is ready, with your \(count) changes.")
+            if let rest = readyAfterChanges { text += " " + rest }
             return text
-        case .failed: return message ?? "\(name) couldn't be got ready."
+        case .failed: return message ?? String(localized: "\(name) couldn't be got ready.")
         }
+    }
+
+    /// What follows "… is ready": for a toast whose title says that much already. Nil when there's nothing more.
+    public var readyDetail: String? {
+        let count = carried.count + repaired.count
+        let with = count == 0 ? nil : count == 1 ? String(localized: "With your change.") : String(localized: "With your \(count) changes.")
+        let parts = [with, readyAfterChanges].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    /// What's retired and what's left out, after the line about the changes that came along.
+    private var readyAfterChanges: String? {
+        var parts: [String] = []
+        if let retiredLine { parts.append(retiredLine) }
+        if !leftOut.isEmpty { parts.append(String(localized: "\(UpdateStatus.names(leftOut)) stays off for now.")) }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 
     /// Good news, and the one thing about an update someone can't otherwise tell: what they asked for is Tiri's own now.
     public var retiredLine: String? {
         guard !retired.isEmpty else { return nil }
-        return "It does \(UpdateStatus.names(retired)) itself now, so \(retired.count == 1 ? "your change isn't" : "those changes aren't") needed any more."
+        let names = UpdateStatus.names(retired)
+        return retired.count == 1 ? String(localized: "It does \(names) itself now, so your change isn't needed any more.")
+            : String(localized: "It does \(names) itself now, so those changes aren't needed any more.")
     }
 
     public static func names(_ list: [Named]) -> String {
-        list.map { "“\($0.sentence)”" }.joined(separator: ", ")
+        L10n.list(list.map { String(localized: "“\($0.sentence)”") })
     }
 }
 
@@ -280,28 +304,28 @@ public enum UpdateTools {
         guard let info = NSDictionary(contentsOf: new.appendingPathComponent("Contents/Info.plist")),
               let version = info["CFBundleShortVersionString"] as? String,
               FileManager.default.isExecutableFile(atPath: new.appendingPathComponent("Contents/MacOS/Tiri").path) else {
-            throw ChangeFailure("That isn't a copy of Tiri.")
+            throw ChangeFailure(String(localized: "That isn't a copy of Tiri."))
         }
         guard let current = NSDictionary(contentsOf: installed.appendingPathComponent("Contents/Info.plist")),
               let currentVersion = current["CFBundleShortVersionString"] as? String else {
-            throw ChangeFailure("Can't find the Tiri that's installed, so there's nothing to compare this with.")
+            throw ChangeFailure(String(localized: "Can't find the Tiri that's installed, so there's nothing to compare this with."))
         }
         guard info["CFBundleIdentifier"] as? String == current["CFBundleIdentifier"] as? String else {
-            throw ChangeFailure("That isn't a copy of this Tiri.")
+            throw ChangeFailure(String(localized: "That isn't a copy of this Tiri."))
         }
         let isNewerBuild = version == currentVersion && isNewer(info["CFBundleVersion"] as? String ?? "0", than: current["CFBundleVersion"] as? String ?? "0")
-        guard isNewer(version, than: currentVersion) || isNewerBuild else { throw ChangeFailure("That copy of Tiri \(version) isn't newer than the \(currentVersion) you have.") }
+        guard isNewer(version, than: currentVersion) || isNewerBuild else { throw ChangeFailure(String(localized: "That copy of Tiri \(version) isn't newer than the \(currentVersion) you have.")) }
         guard Tool.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", new.path]).ok else {
-            throw ChangeFailure("That copy of Tiri isn't signed properly.")
+            throw ChangeFailure(String(localized: "That copy of Tiri isn't signed properly."))
         }
         let details = Tool.run("/usr/bin/codesign", ["-dvv", installed.path])
-        guard details.ok else { throw ChangeFailure("Can't read the signature of the Tiri that's installed.") }
+        guard details.ok else { throw ChangeFailure(String(localized: "Can't read the signature of the Tiri that's installed.")) }
         let team = details.output.split(separator: "\n").first { $0.hasPrefix("TeamIdentifier=") }.map { String($0.dropFirst("TeamIdentifier=".count)) }
         // A build from source has no team, and neither does its update. There's no maker to hold it to.
         guard let team, team != "not set" else { return }
         guard team.allSatisfy({ $0.isLetter || $0.isNumber }),
               Tool.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R=anchor apple generic and certificate leaf[subject.OU] = \"\(team)\"", new.path]).ok else {
-            throw ChangeFailure("That copy of Tiri wasn't signed by whoever made the one you have.")
+            throw ChangeFailure(String(localized: "That copy of Tiri wasn't signed by whoever made the one you have."))
         }
     }
 
@@ -644,12 +668,12 @@ public enum UpdateTools {
 
     /// Everything but the app itself: this is about to be what's real. Says where the app goes next.
     public static func commitToUpdate(repo: SourceRepo = SourceRepo()) throws {
-        guard let status = UpdateStatus.load(), status.phase == .ready else { throw ChangeFailure("There's no update ready.") }
+        guard let status = UpdateStatus.load(), status.phase == .ready else { throw ChangeFailure(String(localized: "There's no update ready.")) }
         var state = CopyState.load() ?? CopyState()
         // Changes were carried, so there has to be the copy that carries them, or the app would go backwards.
         let carriesChanges = !status.carried.isEmpty || !status.repaired.isEmpty
         let hasCopy = FileManager.default.fileExists(atPath: YourTiri.ready.path) && ReadyCopy.load()?.kind == .update
-        if carriesChanges, !hasCopy { throw ChangeFailure("The copy with your changes in it has gone. This update has to be got ready again.") }
+        if carriesChanges, !hasCopy { throw ChangeFailure(String(localized: "The copy with your changes in it has gone. This update has to be got ready again.")) }
         if repo.exists, try repo.git(["rev-parse", "-q", "--verify", updateBranch]).ok {
             // What was left out stays around, turned off, for when it can come back.
             for entry in status.leftOut {
@@ -677,13 +701,16 @@ public enum UpdateTools {
         // Said once, by the copy that comes up: good news, so not where trouble is said.
         var news: [String] = []
         let count = status.carried.count + status.repaired.count
-        if count > 0 { news.append(count == 1 ? "Your change came along." : "Your \(count) changes came along.") }
+        // Written by the app at the switch, so in its language: the copy that says it is in the same one.
+        if count > 0 { news.append(count == 1 ? String(localized: "Your change came along.") : String(localized: "Your \(count) changes came along.")) }
         if !status.retired.isEmpty {
             // What happened first, then their words, which are long and can be cut.
-            news.append("\(status.retired.count == 1 ? "Your change is" : "Those changes are") retired, since Tiri does \(status.retired.count == 1 ? "it" : "them") itself now: \(UpdateStatus.names(status.retired)).")
+            let names = UpdateStatus.names(status.retired)
+            news.append(status.retired.count == 1 ? String(localized: "Your change is retired, since Tiri does it itself now: \(names).")
+                : String(localized: "Those changes are retired, since Tiri does them itself now: \(names)."))
         }
-        if !status.leftOut.isEmpty { news.append("\(UpdateStatus.names(status.leftOut)) stays off for now, and is kept.") }
-        state.news = CopyState.News(title: status.sameVersion == true ? "Tiri is up to date" : "Updated to Tiri \(status.version)",
+        if !status.leftOut.isEmpty { news.append(String(localized: "\(UpdateStatus.names(status.leftOut)) stays off for now, and is kept.")) }
+        state.news = CopyState.News(title: status.sameVersion == true ? String(localized: "Tiri is up to date") : String(localized: "Updated to Tiri \(status.version)"),
                                     detail: news.isEmpty ? nil : news.joined(separator: " "), retired: !status.retired.isEmpty)
         state.notice = nil
         try state.save()

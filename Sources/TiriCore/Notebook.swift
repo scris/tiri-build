@@ -35,14 +35,14 @@ public struct Notebook: Sendable, Equatable {
         public var message: String {
             switch self {
             case .notJSON(let line):
-                let place = line.map { " Line \($0) is where it goes wrong." } ?? ""
-                return "This notebook isn't valid JSON, so here's its source.\(place)"
+                guard let line else { return String(localized: "This notebook isn't valid JSON, so here's its source.") }
+                return String(localized: "This notebook isn't valid JSON, so here's its source. Line \(line) is where it goes wrong.")
             case .notANotebook:
-                return "This file doesn't have notebook cells in it, so here's its source."
+                return String(localized: "This file doesn't have notebook cells in it, so here's its source.")
             case .oldFormat(let version):
-                return "This is an nbformat \(version) notebook, which Tiri can't render, so here's its source."
+                return String(localized: "This is an nbformat \(version) notebook, which Tiri can't render, so here's its source.")
             case .tooLarge(let bytes):
-                return "This notebook is too large to render (\(NotebookRenderer.size(bytes))), so here's its source."
+                return String(localized: "This notebook is too large to render (\(NotebookRenderer.size(bytes))), so here's its source.")
             }
         }
     }
@@ -339,7 +339,7 @@ public enum NotebookRenderer {
             switch cell.kind {
             case .markdown:
                 let html = fragments.html(markdown: withAttachments(cell), lineOffset: nil)
-                let empty = isEmpty ? "<p class=\"nb-note\">Empty. Double-click to write.</p>" : ""
+                let empty = isEmpty ? note(String(localized: "Empty. Double-click to write.")) : ""
                 main += "<section class=\"nb-cell\" data-kind=\"markdown\" \(line)><div class=\"nb-prompt\"></div><div class=\"nb-body nb-markdown\">\(html)\(empty)</div></section>\n"
             case .raw:
                 main += "<section class=\"nb-cell\" \(line)><div class=\"nb-prompt\"></div><div class=\"nb-body\"><pre class=\"nb-raw\"><code>\(MarkdownRenderer.escapeText(cell.source))</code></pre></div></section>\n"
@@ -352,13 +352,14 @@ public enum NotebookRenderer {
                 let outputs = self.outputs(cell.outputs, fragments: &fragments, budget: &budget, limits: limits)
                 if !outputs.isEmpty { body += "<div class=\"nb-outputs\">\(outputs)</div>" }
                 // Scripts can't run in this page. Tiri's own, in a world of their own, see these buttons.
-                let run = interactive ? "<button class=\"nb-run\" title=\"Run Cell (⇧↩)\" aria-label=\"Run Cell\">▶</button>" : ""
+                let run = interactive ? "<button class=\"nb-run\" title=\"\(MarkdownRenderer.escapeAttribute(String(localized: "Run Cell (⇧↩)")))\" aria-label=\"\(MarkdownRenderer.escapeAttribute(String(localized: "Run Cell")))\">▶</button>" : ""
                 main += "<section class=\"nb-cell\" data-kind=\"code\" \(line)><div class=\"nb-prompt\">\(run)<span class=\"nb-count\">[\(count)]</span></div><div class=\"nb-body\">\(body)</div></section>\n"
             }
         }
-        if main.isEmpty, !interactive { main = "<p class=\"nb-note\">This notebook has no cells.</p>" }
+        if main.isEmpty, !interactive { main = note(String(localized: "This notebook has no cells.")) }
         if interactive {
-            main += "<div class=\"nb-add\"><button class=\"nb-add-code\">+ Code</button><button class=\"nb-add-markdown\">+ Markdown</button></div>\n"
+            let code = MarkdownRenderer.escapeText(String(localized: "+ Code"))
+            main += "<div class=\"nb-add\"><button class=\"nb-add-code\">\(code)</button><button class=\"nb-add-markdown\">+ Markdown</button></div>\n"
         }
         let styles = MarkdownRenderer.stylesheet + notebookStyles + fragments.extraStyles()
         return RenderedDocument(html: MarkdownRenderer.wrap(main: main, baseHref: baseHref, title: title, stylesheet: styles),
@@ -419,7 +420,8 @@ public enum NotebookRenderer {
             }
         }
         if hidden > 0 {
-            html += note("\(hidden) more \(hidden == 1 ? "output" : "outputs") not shown. This notebook's outputs are too large for one page.")
+            html += note(hidden == 1 ? String(localized: "1 more output not shown. This notebook's outputs are too large for one page.")
+                                      : String(localized: "\(hidden) more outputs not shown. This notebook's outputs are too large for one page."))
         }
         return html
     }
@@ -433,7 +435,7 @@ public enum NotebookRenderer {
         // On whole lines, where there are any.
         if let end = head.lastIndex(of: 10) { head = head[..<end] }
         if let start = tail.firstIndex(of: 10) { tail = tail[tail.index(after: start)...] }
-        let cut = "\n\n… \(size(length - head.count - tail.count)) of output not shown.\n\n"
+        let cut = "\n\n" + String(localized: "… \(size(length - head.count - tail.count)) of output not shown.") + "\n\n"
         return TerminalText.html(String(decoding: head, as: UTF8.self))
             + "<span class=\"nb-cut\">\(MarkdownRenderer.escapeText(cut))</span>"
             + TerminalText.html(String(decoding: tail, as: UTF8.self))
@@ -449,7 +451,7 @@ public enum NotebookRenderer {
             if let content = data[type] { return image(type, content, width: width, height: height, limits: limits) }
         }
         if let html {
-            return htmlOutput(html, limits: limits) + note("This output needs scripts, which don't run here.")
+            return htmlOutput(html, limits: limits) + note(String(localized: "This output needs scripts, which don't run here."))
         }
         if let markdown = data["text/markdown"] {
             return "<div class=\"nb-markdown\">\(fragments.html(markdown: markdown, lineOffset: nil))</div>"
@@ -462,7 +464,7 @@ public enum NotebookRenderer {
             return "<pre class=\"nb-stream\"><code>\(terminal(plain, limit: limits.text))</code></pre>"
         }
         guard let type = data.keys.sorted().first else { return "" }
-        return note("Output of type \(type) isn't shown here.")
+        return note(String(localized: "Output of type \(type) isn't shown here."))
     }
 
     /// `text/latex` is one formula, usually with its delimiters.
@@ -493,7 +495,7 @@ public enum NotebookRenderer {
     private static func htmlOutput(_ raw: String, limits: Limits) -> String {
         let html = withoutScripts(raw)
         guard html.utf8.count <= limits.html else {
-            return note("HTML output not shown: it's \(size(html.utf8.count)).")
+            return note(String(localized: "HTML output not shown: it's \(size(html.utf8.count))."))
         }
         // Only this page's own template may close it, or the output could spill out of its root.
         let contained = html.replacing(/(?i)<(\/?template)/, with: { "&lt;\($0.1)" })
@@ -502,7 +504,7 @@ public enum NotebookRenderer {
 
     private static func image(_ type: String, _ content: String, width: Int?, height: Int?, limits: Limits) -> String {
         guard content.utf8.count <= limits.image else {
-            return note("Image not shown: it's \(size(content.utf8.count * 3 / 4)).")
+            return note(String(localized: "Image not shown: it's \(size(content.utf8.count * 3 / 4))."))
         }
         let base64: String
         if type == "image/svg+xml" {
@@ -511,7 +513,7 @@ public enum NotebookRenderer {
         } else {
             base64 = String(decoding: content.utf8.filter { $0 != 10 && $0 != 13 && $0 != 32 }, as: UTF8.self)
         }
-        guard base64.utf8.allSatisfy({ isBase64($0) }) else { return note("This image can't be read.") }
+        guard base64.utf8.allSatisfy({ isBase64($0) }) else { return note(String(localized: "This image can't be read.")) }
         var size = ""
         if let width { size += " width=\"\(width)\"" }
         if let height, width == nil { size += " height=\"\(height)\"" }

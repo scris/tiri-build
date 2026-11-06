@@ -523,7 +523,7 @@ final class CodeTextView: NSTextView {
         let ranges = CompletionEdit.ranges(heads: heads, left: left, right: right, wordStarts: wordStarts, length: string.length)
         let made = CompletionEdit.make(replacing: ranges, with: text, extra: extra)
         guard hasMultipleCursors else {
-            apply(TextEdit(changes: made.changes, selection: NSRange(location: made.carets.first ?? 0, length: 0)), name: "Completion")
+            apply(TextEdit(changes: made.changes, selection: NSRange(location: made.carets.first ?? 0, length: 0)), name: String(localized: "Completion"))
             return
         }
         commit(made.changes, cursors: made.carets.map { TextCursor(anchor: $0, head: $0) }, primaryIndex: index, typing: false)
@@ -666,7 +666,7 @@ extension TextController {
         switch command {
         case .toggleLineComment:
             guard let syntax = CommentSyntax.forFile(path) else {
-                model.showToast(title: "This kind of file has no comments", detail: nil, symbol: "text.bubble", tint: .secondary)
+                model.showToast(title: String(localized: "This kind of file has no comments"), detail: nil, symbol: "text.bubble", tint: .secondary)
                 return
             }
             edit = TextEditing.toggleLineComment(in: text, selection: selection, syntax: syntax)
@@ -682,11 +682,11 @@ extension TextController {
         case .insertLineAbove: edit = TextEditing.insertLineAbove(in: text, selection: selection)
         case .addNextOccurrence, .triggerCompletion: edit = nil
         }
-        if let edit { codeView.apply(edit, name: command.title) }
+        if let edit { codeView.apply(edit, name: L10n.display(command.title)) }
     }
 
     func insertNewline() {
-        codeView.apply(newlineEdit(in: codeView.nsText, selection: codeView.selectedRange()), name: "Typing")
+        codeView.apply(newlineEdit(in: codeView.nsText, selection: codeView.selectedRange()), name: String(localized: "Typing"))
     }
 
     func newlineEdit(in text: NSString, selection: NSRange) -> TextEdit {
@@ -697,7 +697,7 @@ extension TextController {
 
     func insertTabKey() {
         if let edit = TextEditing.tab(in: codeView.nsText, selection: codeView.selectedRange(), style: style) {
-            codeView.apply(edit, name: "Typing")
+            codeView.apply(edit, name: String(localized: "Typing"))
         }
     }
 }

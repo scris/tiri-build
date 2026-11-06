@@ -3,12 +3,20 @@ import Foundation
 /// One command as the Keyboard settings list it.
 public struct ShortcutCommand: Identifiable, Hashable, Sendable {
     public var id: String
+    /// As the screen shows it.
     public var title: String
+    /// The heading it's under, in English, which is also how the list finds that heading.
     public var group: String
-    public init(id: String, title: String, group: String) {
+    /// The title in English, as agents and `tiri keys` know it. A search matches it too.
+    public var englishTitle: String
+    /// The heading as the screen shows it.
+    public var shownGroup: String
+    public init(id: String, title: String, group: String, englishTitle: String? = nil, shownGroup: String? = nil) {
         self.id = id
         self.title = title
         self.group = group
+        self.englishTitle = englishTitle ?? title
+        self.shownGroup = shownGroup ?? group
     }
 }
 
@@ -17,9 +25,9 @@ public enum ShortcutFilter: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
     public var title: String {
         switch self {
-        case .all: "All"
-        case .assigned: "With Shortcuts"
-        case .changed: "Changed"
+        case .all: String(localized: "All")
+        case .assigned: String(localized: "With Shortcuts")
+        case .changed: String(localized: "Changed")
         }
     }
 }
@@ -38,7 +46,9 @@ public enum ShortcutRow: Identifiable, Hashable, Sendable {
 }
 
 public struct ShortcutSection: Identifiable, Hashable, Sendable {
+    /// In English: jumps and the list beside the page find a heading by it.
     public var name: String
+    public var shownName: String
     public var rows: [ShortcutRow]
     public var id: String { name }
 
@@ -54,7 +64,7 @@ public struct ShortcutSection: Identifiable, Hashable, Sendable {
 }
 
 public enum ShortcutIndex {
-    static let families = [("focusGroup", "Focus Group 1 to 9"), ("switchWorkspace", "Switch to Workspace 1 to 9")]
+    static let families = [("focusGroup", String(localized: "Focus Group 1 to 9")), ("switchWorkspace", String(localized: "Switch to Workspace 1 to 9"))]
 
     /// The commands to list, under their groups in the order they first appear.
     /// A query or a key looks at every command, whatever the filter says.
@@ -71,7 +81,7 @@ public enum ShortcutIndex {
             if !trimmed.isEmpty {
                 if let typedKeys, bound.contains(where: { $0.strokes.starts(with: typedKeys) }) { return true }
                 let symbols = bound.map(\.symbol)
-                return SettingsSchema.matches(trimmed, in: [command.title, command.group, command.id] + symbols)
+                return SettingsSchema.matches(trimmed, in: [command.title, command.shownGroup, command.englishTitle, command.group, command.id] + symbols)
             }
             switch filter {
             case .all: return true
@@ -85,7 +95,7 @@ public enum ShortcutIndex {
             if let index = sections.firstIndex(where: { $0.name == command.group }) {
                 sections[index].rows.append(.command(command))
             } else {
-                sections.append(ShortcutSection(name: command.group, rows: [.command(command)]))
+                sections.append(ShortcutSection(name: command.group, shownName: command.shownGroup, rows: [.command(command)]))
             }
         }
         // What you've searched for or changed is worth seeing by itself, not inside a fold.

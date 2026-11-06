@@ -121,7 +121,7 @@ struct PeekView: View {
                     Image(systemName: "xmark")
                 }
                 .tiriGlassButton()
-                .help(model.peekHasKeyboard ? "Close (esc)" : "Close")
+                .help(model.peekHasKeyboard ? String(localized: "Close (esc)") : String(localized: "Close"))
                 .accessibilityLabel("Close Peek")
             }
             .controlSize(.small)
@@ -176,10 +176,10 @@ struct PeekWebControls: View {
 
     var body: some View {
         if controller.canGoBack || controller.canGoForward {
-            glyph("chevron.left", "Back", enabled: controller.canGoBack) { controller.goBack() }
-            glyph("chevron.right", "Forward", enabled: controller.canGoForward) { controller.goForward() }
+            glyph("chevron.left", String(localized: "Back"), enabled: controller.canGoBack) { controller.goBack() }
+            glyph("chevron.right", String(localized: "Forward"), enabled: controller.canGoForward) { controller.goForward() }
         }
-        glyph(controller.isLoading ? "xmark" : "arrow.clockwise", controller.isLoading ? "Stop" : "Reload (⌘R)", enabled: true) {
+        glyph(controller.isLoading ? "xmark" : "arrow.clockwise", controller.isLoading ? String(localized: "Stop") : String(localized: "Reload (⌘R)"), enabled: true) {
             if controller.isLoading { controller.webView.stopLoading() } else { controller.reload() }
         }
     }

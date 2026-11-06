@@ -7,9 +7,29 @@ import TiriHighlight
 /// `tiri run` all call through this, so they can't drift apart.
 struct AppCommand: Identifiable {
     let id: String
+    /// In English, as `tiri run`, `tiri commands` and keybindings know it. The screen shows `shownTitle`.
     let title: String
     let category: String
+    /// The title on screen, for one with a name or number in it, which has no word of its own to look up.
+    var shown: String? = nil
     let action: (AppModel) -> Void
+
+    var shownTitle: String { shown ?? L10n.display(title) }
+    var shownCategory: String { L10n.display(category) }
+
+    /// The palette's row, on screen and in English: the category in front, unless the title starts with it.
+    var paletteLabel: (shown: String, english: String) {
+        if title.hasPrefix(category + ":") { return (shownTitle, title) }
+        return (String(localized: "\(shownCategory): \(shownTitle)"), "\(category): \(title)")
+    }
+
+    /// "Notebook: Run Cell" under Notebook is "Run Cell", in whichever language, when the words line up.
+    static func dropping(_ category: String, from title: String) -> String {
+        for colon in [": ", "：", ":"] where title.hasPrefix(category + colon) {
+            return String(title.dropFirst(category.count + colon.count))
+        }
+        return title
+    }
 }
 
 extension AppModel {
@@ -134,7 +154,8 @@ extension AppModel {
             AppCommand(id: "webReload", title: "Web: Reload", category: "Web") { model in
                 model.frontWebController?.reload()
             },
-            AppCommand(id: "webOpenInBrowser", title: "Web: Open in \(DefaultBrowser.name)", category: "Web") { model in
+            AppCommand(id: "webOpenInBrowser", title: "Web: Open in \(DefaultBrowser.name)", category: "Web",
+                       shown: String(localized: "Web: Open in \(DefaultBrowser.name)")) { model in
                 if let page = model.frontWebController { model.movePageToBrowser(page.itemID) }
             },
             AppCommand(id: "webDarkOn", title: "Force Dark On", category: "Web") { model in
@@ -171,11 +192,13 @@ extension AppModel {
             list.append(AppCommand(id: command.rawValue, title: command.title, category: "Editing") { $0.frontEditor?.run(command) })
         }
         for number in 1...9 {
-            list.append(AppCommand(id: "focusGroup\(number)", title: "Focus Group \(number)", category: "Tabs and Splits") { model in
+            list.append(AppCommand(id: "focusGroup\(number)", title: "Focus Group \(number)", category: "Tabs and Splits",
+                                  shown: String(localized: "Focus Group \(number)")) { model in
                 model.updateActive { $0.focusGroup(index: number - 1) }
                 model.requestFocus()
             })
-            list.append(AppCommand(id: "switchWorkspace\(number)", title: "Switch to Workspace \(number)", category: "Workspaces") {
+            list.append(AppCommand(id: "switchWorkspace\(number)", title: "Switch to Workspace \(number)", category: "Workspaces",
+                                  shown: String(localized: "Switch to Workspace \(number)")) {
                 $0.switchWorkspace(index: number - 1)
             })
         }
@@ -191,14 +214,22 @@ extension AppModel {
         var list: [ShortcutCommand] = []
         for command in allCommands where seen.insert(command.id).inserted {
             var title = command.title
-            if title.hasPrefix(command.category + ": ") { title.removeFirst(command.category.count + 2) }
-            if let entry = agentEntries.first(where: { "agent:\($0.id)" == command.id }) { title = "Turn \(entry.name) On or Off" }
-            list.append(ShortcutCommand(id: command.id, title: title, group: command.category))
+            var shown = command.shownTitle
+            if title.hasPrefix(command.category + ": ") {
+                title.removeFirst(command.category.count + 2)
+                shown = AppCommand.dropping(command.shownCategory, from: shown)
+            }
+            if let entry = agentEntries.first(where: { "agent:\($0.id)" == command.id }) {
+                title = "Turn \(entry.name) On or Off"
+                shown = String(localized: "Turn \(entry.name) On or Off")
+            }
+            list.append(ShortcutCommand(id: command.id, title: shown, group: command.category, englishTitle: title, shownGroup: command.shownCategory))
         }
         // The one you're in isn't offered as somewhere to go, but it can still have a key.
         let own = "workspace:\(active.name)"
         if seen.insert(own).inserted {
-            list.append(ShortcutCommand(id: own, title: "Switch to Workspace: \(active.name)", group: "Workspaces"))
+            list.append(ShortcutCommand(id: own, title: String(localized: "Switch to Workspace: \(active.shownName)"), group: "Workspaces",
+                                        englishTitle: "Switch to Workspace: \(active.name)", shownGroup: L10n.display("Workspaces")))
         }
         return list
     }
@@ -210,17 +241,20 @@ extension AppModel {
         if !yourTiri.entriesAreOn { list.removeAll { $0.id == "changeTiri" } }
         if !yourTiri.isUsed && !yourTiri.entriesAreOn { list.removeAll { $0.id == "showYourTiri" } }
         for preset in settings.activePresets where !preset.command.isEmpty {
-            list.append(AppCommand(id: "newTerminal:\(preset.name)", title: "New Terminal: \(preset.name)", category: "Terminal") {
+            list.append(AppCommand(id: "newTerminal:\(preset.name)", title: "New Terminal: \(preset.name)", category: "Terminal",
+                                  shown: String(localized: "New Terminal: \(preset.name)")) {
                 $0.startTerminal(command: preset.command)
             })
         }
         for entry in agentEntries {
-            list.append(AppCommand(id: "agent:\(entry.id)", title: "Agents: Turn \(entry.isEnabled ? "Off" : "On") \(entry.name)", category: "Agents") {
+            let shown = entry.isEnabled ? String(localized: "Agents: Turn Off \(entry.name)") : String(localized: "Agents: Turn On \(entry.name)")
+            list.append(AppCommand(id: "agent:\(entry.id)", title: "Agents: Turn \(entry.isEnabled ? "Off" : "On") \(entry.name)", category: "Agents", shown: shown) {
                 $0.setAgent(entry.id, enabled: !entry.isEnabled)
             })
         }
         for workspace in workspaces where workspace.id != activeID {
-            list.append(AppCommand(id: "workspace:\(workspace.name)", title: "Switch to Workspace: \(workspace.name)", category: "Workspaces") {
+            list.append(AppCommand(id: "workspace:\(workspace.name)", title: "Switch to Workspace: \(workspace.name)", category: "Workspaces",
+                                  shown: String(localized: "Switch to Workspace: \(workspace.shownName)")) {
                 $0.switchWorkspace(workspace.id)
             })
         }
@@ -440,7 +474,7 @@ enum ControlHandler {
         var object: [String: JSONValue] = [
             "id": .string(item.id),
             "kind": .string(item.content.kindName),
-            "title": .string(model.title(for: item)),
+            "title": .string(model.englishTitle(for: item)),
             "workspace": .string(workspace.name),
             "active": .bool(workspace.id == model.activeID && workspace.focused.active == item.id),
             "preview": .bool(item.isPreview),
@@ -1248,7 +1282,7 @@ enum ControlHandler {
             // What a test copy would have opened in a browser: it never opens one.
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
             return .object(["sent": .array(model.sentToBrowser.map(JSONValue.string)), "rules": .array(model.settings.webOpenInBrowser.map(JSONValue.string)),
-                            "peek": .string(model.active.peek.map { model.title(for: $0) } ?? "")])
+                            "peek": .string(model.active.peek.map { model.englishTitle(for: $0) } ?? "")])
 
         case "dev.toolbar":
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }

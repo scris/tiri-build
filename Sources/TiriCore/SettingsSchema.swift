@@ -4,16 +4,15 @@ import Foundation
 public enum MacModelState: String, CaseIterable, Sendable {
     case ready, cantRun, turnedOff, gettingReady, unavailable
 
-    private static let fallback = "titles come from your first prompt, and search finds only the words you type."
-
-    /// Why it can't be used, and what you get instead.
+    /// Why it can't be used, and what you get instead. In English, since `tiri settings explain` gives it to
+    /// agents too. The screen shows it with `L10n.display`.
     public var message: String? {
         switch self {
         case .ready: nil
-        case .cantRun: "This Mac can't run Apple Intelligence, so \(Self.fallback)"
-        case .turnedOff: "Apple Intelligence is off on this Mac. Until you turn it on, \(Self.fallback)"
-        case .gettingReady: "Apple Intelligence is still getting ready on this Mac. Tiri starts using it when it's done. Until then, \(Self.fallback)"
-        case .unavailable: "Apple Intelligence isn't working on this Mac right now. Until it is, \(Self.fallback)"
+        case .cantRun: "This Mac can't run Apple Intelligence, so titles come from your first prompt, and search finds only the words you type."
+        case .turnedOff: "Apple Intelligence is off on this Mac. Until you turn it on, titles come from your first prompt, and search finds only the words you type."
+        case .gettingReady: "Apple Intelligence is still getting ready on this Mac. Tiri starts using it when it's done. Until then, titles come from your first prompt, and search finds only the words you type."
+        case .unavailable: "Apple Intelligence isn't working on this Mac right now. Until it is, titles come from your first prompt, and search finds only the words you type."
         }
     }
 }
@@ -74,6 +73,17 @@ public struct SettingDefinition: Identifiable, Sendable {
         case list(placeholder: String)
         case presets
         case commandMap
+        /// A choice in a pop-up menu, for a list that grows. Its options come in groups, with a line between.
+        case menu([[Option]])
+
+        /// What a choice can be, whichever way it's shown.
+        public var choices: [Option]? {
+            switch self {
+            case .choice(let options): options
+            case .menu(let groups): Array(groups.joined())
+            default: nil
+            }
+        }
     }
 
     public var key: String
@@ -103,6 +113,12 @@ public enum SettingsSchema {
     private static func strings(_ values: [String]) -> JSONValue { .array(values.map(JSONValue.string)) }
 
     public static let all: [SettingDefinition] = [
+        .init(key: "language", pane: .general, group: "", title: "Language",
+              explanation: "The language of Tiri's menus, settings and messages. Your files and terminals stay as they are.",
+              note: "Tiri restarts to switch, and terminals keep running. System follows your Mac, or the language chosen for Tiri in System Settings → General → Language & Region.",
+              kind: .menu([[.init(AppLanguage.system.rawValue, AppLanguage.system.nativeName)],
+                           AppLanguage.allCases.filter { $0 != .system }.map { .init($0.rawValue, $0.nativeName) }]),
+              value: { .string($0.language.rawValue) }),
         .init(key: "theme", pane: .general, group: "Appearance", title: "Light or dark",
               explanation: "Follow your Mac, or always use light or dark.",
               kind: .choice([.init("system", "System"), .init("light", "Light"), .init("dark", "Dark")]),
@@ -259,8 +275,10 @@ public enum SettingsSchema {
         }
     }
 
+    /// In the words on screen and in English, so either finds it.
     public static func matches(_ query: String, _ definition: SettingDefinition) -> Bool {
-        matches(query, in: [definition.title, definition.fullExplanation, definition.group, definition.pane.title, definition.key])
+        let english = [definition.title, definition.explanation, definition.note ?? "", definition.group, definition.pane.title]
+        return matches(query, in: english + english.map(L10n.display) + [definition.key])
     }
 
     /// What someone means by `tiri settings open <what>`.
@@ -298,7 +316,8 @@ public enum SettingsSchema {
             case "false", "off", "no": return .bool(false)
             default: throw InvalidValue(description: "\(key) is on or off")
             }
-        case .choice(let options):
+        case .choice, .menu:
+            let options = definition.kind.choices ?? []
             guard options.contains(where: { $0.value == trimmed }) else {
                 throw InvalidValue(description: "\(key) is one of: \(options.map(\.value).joined(separator: ", "))")
             }
@@ -359,7 +378,7 @@ public enum SettingsSchema {
     public static func allowedValues(_ kind: SettingDefinition.Kind) -> String {
         switch kind {
         case .toggle: "on or off"
-        case .choice(let options): options.map(\.value).joined(separator: ", ")
+        case .choice, .menu: (kind.choices ?? []).map(\.value).joined(separator: ", ")
         case .number(let minimum, let maximum, _): "a number from \(format(minimum)) to \(format(maximum))"
         case .font: "a font name"
         case .text: "text"

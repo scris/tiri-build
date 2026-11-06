@@ -15,7 +15,7 @@ extension AppModel {
                 }
                 return
             }
-            showToast(title: "There's nothing to comment on here", detail: "Open a file or a diff, then press ⌥⌘L.", symbol: "text.bubble", tint: .secondary)
+            showToast(title: String(localized: "There's nothing to comment on here"), detail: String(localized: "Open a file or a diff, then press ⌥⌘L."), symbol: "text.bubble", tint: .secondary)
             return
         }
         presentReviewEditor(title: anchor.description, initial: "", position: controller.reviewPopoverPosition ?? centerPosition(of: controller)) { [weak self] text in
@@ -124,7 +124,8 @@ extension AppModel {
         updateActive { $0.review = [] }
         scheduleSave()
         reviewDidChange()
-        showToast(title: Self.commentCount(old.count) + " discarded", detail: nil, symbol: "trash", tint: .secondary, actionTitle: "Undo") { [weak self] in
+        let title = old.count == 1 ? String(localized: "1 comment discarded") : String(localized: "\(old.count) comments discarded")
+        showToast(title: title, detail: nil, symbol: "trash", tint: .secondary, actionTitle: String(localized: "Undo")) { [weak self] in
             self?.restoreReview(old)
         }
     }
@@ -135,15 +136,15 @@ extension AppModel {
         reviewDidChange()
     }
 
-    static func commentCount(_ count: Int) -> String { count == 1 ? "1 comment" : "\(count) comments" }
-
     /// With one agent running they go straight there. With several, you choose.
     func sendReview() {
         guard !active.review.isEmpty else {
-            showToast(title: "There are no comments to send", detail: "Select something in a file or a diff, then press ⌥⌘L.", symbol: "text.bubble", tint: .secondary)
+            showToast(title: String(localized: "There are no comments to send"), detail: String(localized: "Select something in a file or a diff, then press ⌥⌘L."), symbol: "text.bubble", tint: .secondary)
             return
         }
-        withAgent(asking: "Which session should get \(Self.commentCount(active.review.count))?") { [weak self] terminal, _ in
+        let count = active.review.count
+        let question = count == 1 ? String(localized: "Which session should get 1 comment?") : String(localized: "Which session should get \(count) comments?")
+        withAgent(asking: question) { [weak self] terminal, _ in
             self?.deliverReview(to: terminal)
         }
     }
@@ -171,8 +172,9 @@ extension AppModel {
         updateActive { $0.review = [] }
         scheduleSave()
         reviewDidChange()
-        showToast(title: Self.commentCount(comments.count) + " sent", detail: "Press Return in the session when you're ready.",
-                  symbol: "paperplane", tint: .accentColor, actionTitle: "Bring Back") { [weak self] in
+        let title = comments.count == 1 ? String(localized: "1 comment sent") : String(localized: "\(comments.count) comments sent")
+        showToast(title: title, detail: String(localized: "Press Return in the session when you're ready."),
+                  symbol: "paperplane", tint: .accentColor, actionTitle: String(localized: "Bring Back")) { [weak self] in
             self?.restoreReview(comments)
         }
     }
@@ -272,7 +274,7 @@ enum ReviewMarker {
         let rect = NSRect(x: 2, y: y + (lineHeight - size) / 2, width: size, height: size)
         let configuration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
             .applying(NSImage.SymbolConfiguration(paletteColors: [.controlAccentColor]))
-        NSImage(systemSymbolName: "text.bubble.fill", accessibilityDescription: "Comment")?
+        NSImage(systemSymbolName: "text.bubble.fill", accessibilityDescription: String(localized: "Comment"))?
             .withSymbolConfiguration(configuration)?
             .draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         return rect
@@ -329,7 +331,7 @@ struct ReviewCommentEditor: View {
                 Text("⇧↩ for a new line")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.faint)
-                Button(isEditing ? "Save" : "Add Comment") { finish() }
+                Button(isEditing ? String(localized: "Save") : String(localized: "Add Comment")) { finish() }
                     .buttonStyle(.borderedProminent)
                     .disabled(trimmed.isEmpty)
             }

@@ -43,15 +43,15 @@ struct TerminalStatusIcon: View {
         case .needsInput:
             Image(systemName: "exclamationmark.circle.fill")
                 .foregroundStyle(.orange)
-                .help(runtime.message ?? "Needs input")
+                .help(runtime.message ?? String(localized: "Needs input"))
         case .done:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .help(runtime.message ?? "Done")
+                .help(runtime.message ?? String(localized: "Done"))
         case .exited:
             Image(systemName: "xmark.circle")
                 .foregroundStyle(.secondary)
-                .help(runtime.exitCode.map { "Exited with code \($0)" } ?? "Exited")
+                .help(runtime.exitCode.map { String(localized: "Exited with code \($0)") } ?? String(localized: "Exited"))
         }
     }
 }
@@ -173,7 +173,7 @@ struct TabView: View {
             }
         }
         .contentShape(Rectangle())
-        .help(isDeleted ? "This file has been deleted. Saving puts it back." : "")
+        .help(isDeleted ? String(localized: "This file has been deleted. Saving puts it back.") : "")
         .onHover { hovering = $0 }
         .modifier(ClickOrDrag(item: item.id, title: title) { clickCount in
             model.focusItem(item.id)
@@ -208,9 +208,9 @@ struct TabView: View {
             if let status = runtime?.status.spoken { parts.append(status) }
             if let message = runtime?.message, runtime?.status == .needsInput || runtime?.status == .done { parts.append(message) }
         }
-        if model.existingController(for: item.id)?.isDirty == true { parts.append("Unsaved changes") }
-        if isDeleted { parts.append("Deleted") }
-        if item.isPreview { parts.append("Preview") }
+        if model.existingController(for: item.id)?.isDirty == true { parts.append(String(localized: "Unsaved changes")) }
+        if isDeleted { parts.append(String(localized: "Deleted")) }
+        if item.isPreview { parts.append(String(localized: "Preview")) }
         return parts.joined(separator: ", ")
     }
 

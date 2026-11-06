@@ -204,7 +204,7 @@ public enum CommandLineTool {
     /// place, and a disk image gets ejected.
     public static func problem(appPath: String) -> String? {
         guard appPath.contains("/AppTranslocation/") || appPath.hasPrefix("/Volumes/") else { return nil }
-        return "Move Tiri to your Applications folder first. From where it's running now, the link would stop working."
+        return String(localized: "Move Tiri to your Applications folder first. From where it's running now, the link would stop working.")
     }
 
     public static func install(link: URL, bundled: URL) throws {
