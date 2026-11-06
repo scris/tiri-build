@@ -1359,6 +1359,26 @@ enum ControlHandler {
             guard let terminal = model.controller(for: id) as? TerminalController else { throw ControlFailure("\(id) isn't a terminal") }
             return .object(["text": .string(terminal.readText(lines: request.args["lines"]?.intValue))])
 
+        case "dev-blocked-link":
+            // SwiftTerm's own alert, as it builds it, as if a ⌘-click on this terminal had just set it off.
+            guard AppModel.isTestCopy else { throw ControlFailure("Only in a test copy.") }
+            let id = try requireItem(request, model: model)
+            guard let terminal = model.controller(for: id) as? TerminalController, let window = terminal.terminalView.window else { throw ControlFailure("\(id) isn't a terminal on screen") }
+            BlockedLinks.clicked = (terminal.terminalView, Date(), false)
+            let alert = NSAlert()
+            alert.messageText = "Link blocked"
+            alert.informativeText = request.args["reason"]?.stringValue ?? "The target is not an absolute URL with a scheme."
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 96))
+            let text = NSTextView(frame: scroll.contentView.bounds)
+            text.string = request.args["target"]?.stringValue ?? ""
+            scroll.documentView = text
+            alert.accessoryView = scroll
+            alert.addButton(withTitle: "OK")
+            alert.beginSheetModal(for: window) { _ in }
+            let shown = window.attachedSheet != nil
+            if shown, let sheet = window.attachedSheet { window.endSheet(sheet) }
+            return .object(["alertShown": .bool(shown)])
+
         case "dev-compose":
             guard Bundle.main.bundleIdentifier?.contains(".test.") == true else { throw ControlFailure("Only in a test copy.") }
             guard let view = model.frontEditor?.codeView, let text = request.args["text"]?.stringValue else { throw ControlFailure("No file in front.") }

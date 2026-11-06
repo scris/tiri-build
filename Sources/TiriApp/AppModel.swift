@@ -276,6 +276,7 @@ final class AppModel {
         startWatchingAgents()
         guard !didFinishLaunching else { return }
         didFinishLaunching = true
+        BlockedLinks.install()
         updateSummarizingAll()
         // Another Tiri has these workspaces. Attaching to a terminal takes it from whoever has it, so
         // this one touches nothing, and brings that one forward.

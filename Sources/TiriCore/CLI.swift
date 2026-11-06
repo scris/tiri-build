@@ -325,6 +325,12 @@ public enum CLIParser {
             guard args.count == 1, let code = Int(args[0]) else { throw UsageError("usage: tiri dev-key <key code>   (test copies only)") }
             return request("dev.key", ["code": .int(code)])
 
+        case "dev-blocked-link":
+            guard args.count >= 2 else { throw UsageError("usage: tiri dev-blocked-link <item-id> <target> [<reason>]   (test copies only)") }
+            var payload: [String: JSONValue] = ["item": .string(args[0]), "target": .string(args[1])]
+            if args.count > 2 { payload["reason"] = .string(args[2]) }
+            return request("dev-blocked-link", payload)
+
         case "dev-compose":
             // What an input method does, which keys posted to a process can't: `dev-compose ni` shows
             // letters still being worked on, and `dev-compose --commit 你` settles on some.
