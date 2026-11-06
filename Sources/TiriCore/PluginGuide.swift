@@ -141,8 +141,11 @@ public enum PluginGuide {
     expression (ICU, as `NSRegularExpression` reads it), matched within one line, and `group` colors only that
     group. `${settings.key}` in a pattern is that setting's value as plain text, and a list setting becomes
     `(?:A|B)`, so people can choose the words. `onlyInComments` keeps it to where the file's language says there's
-    a comment. Lines over 2,000 characters aren't colored. Several highlights can match the same text: the first
-    one listed wins. Use `background` with transparency, like `#ffcc0033`, so the text stays readable.
+    a comment. Lines over 2,000 characters aren't colored. A pattern gets 2 ms a line: one that takes longer is
+    turned off for that file, with a line in `tiri plugin logs`, and `validate` refuses one that's slow on a line of
+    60 characters. A repeat inside a repeat, like `(\\w+\\s?)+:`, is what usually makes one slow. Several highlights
+    can match the same text: the first one listed wins. Use `background` with transparency, like `#ffcc0033`, so
+    the text stays readable.
 
     **Nothing runs while the person types, scrolls or reads a terminal.** There are no events for those, on
     purpose, and a plugin can't slow them down.
@@ -162,7 +165,12 @@ public enum PluginGuide {
     speak one JSON object per line. Tiri writes `{"id": 1, "method": "problems", "params": {...}}` to stdin,
     and you answer with `{"id": 1, "result": ...}` or `{"id": 1, "error": "what went wrong"}`. You can also
     send `{"method": "refresh"}` to refresh this plugin's sidebar and status items, and `{"method": "event",
-    "params": {"name": "...", "data": ...}}` to reach its open panels.
+    "params": {"name": "...", "data": ...}}` to reach its open panels. Panels get events at most every 16 ms, and
+    of several with the same name in that time, only the latest. A line can be up to 8 MB.
+
+    One that ends by itself 3 times in 5 minutes isn't started again, and calls to it fail at once, until it
+    changes or is turned off and on. One that says nothing at all on stdout for a call's whole timeout is
+    stopped, and that counts as an end too.
 
     A process with `"events": [...]` is told what happens, as `{"method": "event", "params": {"name", "data"}}`
     with no `id`, so don't answer: `frontFile` (`{"path"}`, null with no file in front), `openFiles` (`{"paths",

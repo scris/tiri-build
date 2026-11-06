@@ -88,6 +88,10 @@ final class PluginHost {
     /// The last thing a person did, for a panel asking to reach beyond itself.
     @ObservationIgnored private var lastPersonEvent: NSEvent?
     @ObservationIgnored private var personMonitor: Any?
+    /// Plugins whose folder was walked and found to be what was approved, by hash. Forgotten the moment
+    /// anything in the plugins folder changes, so only a folder nobody's touched since skips the walk.
+    @ObservationIgnored private var checkedHashes: [String: String] = [:]
+    @ObservationIgnored private var folderChanges = 0
 
     init(model: AppModel) {
         self.model = model
@@ -102,6 +106,7 @@ final class PluginHost {
 
     /// Off the main thread: launch doesn't wait for this, and neither does anything else.
     func load() {
+        listenForDamagedFiles()
         try? FileManager.default.createDirectory(at: PluginLibrary.folder, withIntermediateDirectories: true)
         folderToken = FileWatchHub.shared.watch(path: PluginLibrary.folder.path, recursive: true) { [weak self] in self?.scheduleRescan() }
         try? FileManager.default.createDirectory(at: ClaudeParts.folder, withIntermediateDirectories: true)
@@ -109,6 +114,8 @@ final class PluginHost {
     }
 
     private func scheduleRescan() {
+        checkedHashes = [:]
+        folderChanges += 1
         rescanWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.rescan() }
         rescanWork = work
@@ -379,15 +386,20 @@ final class PluginHost {
 
     // MARK: What's been approved
 
-    /// Whether what's on disk is still what you said yes to. Looked at right before anything runs, so
-    /// an edit never runs even in the moment before the folder watcher notices.
+    /// Whether what's on disk is still what you said yes to. Looked at right before anything runs. A walk
+    /// that found it unchanged is trusted until the folder watcher next hears of a change in any plugin,
+    /// a tenth of a second or so after it happens: walking node_modules can take seconds, each time.
     func stillApproved(_ plugin: InstalledPlugin) async -> Bool {
         guard enabledPlugin(named: plugin.name)?.hash == plugin.hash else { return false }
+        if checkedHashes[plugin.name] == plugin.hash { return true }
         let folder = plugin.folder
         let fingerprint = plugin.fingerprint
+        let changesBefore = folderChanges
         let same = await Task.detached(priority: .userInitiated) { PluginTree.fullFingerprint(folder) == fingerprint }.value
         guard enabledPlugin(named: plugin.name)?.hash == plugin.hash else { return false }
         if !same { rescan() }
+        // Only if nothing changed while it was being walked.
+        if same, folderChanges == changesBefore { checkedHashes[plugin.name] = plugin.hash }
         return same
     }
 
@@ -779,6 +791,11 @@ final class PluginHost {
         Task {
             let answer = await ask(provider, plugin: plugin)
             inFlight.remove(identity)
+            // Asked of a version that's since changed: the new one asks for itself.
+            guard enabledPlugin(named: name)?.hash == plugin.hash else {
+                if askedAgain.remove(identity) != nil { refreshSection(plugin: name, section: id) }
+                return
+            }
             var state = sidebarStates[identity] ?? SidebarState()
             state.isLoading = false
             state.hasLoaded = true
@@ -789,7 +806,6 @@ final class PluginHost {
             case .failure(let failure):
                 state.problem = failure.message
             }
-            guard enabledPlugin(named: name) != nil else { return }
             sidebarStates[identity] = state
             if askedAgain.remove(identity) != nil { refreshSection(plugin: name, section: id) }
         }
@@ -818,7 +834,10 @@ final class PluginHost {
         Task {
             let answer = await ask(provider, plugin: plugin)
             inFlight.remove(identity)
-            guard enabledPlugin(named: name) != nil else { return }
+            guard enabledPlugin(named: name)?.hash == plugin.hash else {
+                if askedAgain.remove(identity) != nil { refreshStatus(plugin: name, item: id) }
+                return
+            }
             if case .success(let value) = answer {
                 statusStates[identity] = PluginStatusContent(value) ?? PluginStatusContent(text: "")
             }
@@ -835,7 +854,9 @@ final class PluginHost {
         guard let exec = provider.exec else { return .failure(.init(message: String(localized: "It has no provider."))) }
         let done = await runner.exec(exec, plugin: plugin, context: context, place: provider.where ?? .workspace, timeout: provider.timeout ?? 30)
         guard done.code == 0 else { return .failure(.init(message: done.failure ?? String(localized: "It failed."))) }
-        guard let value = try? JSONDecoder().decode(JSONValue.self, from: Data(done.output.utf8)) else {
+        // Up to 8 MB of it, so not on the main thread.
+        let output = done.output
+        guard let value = await Task.detached(priority: .userInitiated, operation: { try? JSONDecoder().decode(JSONValue.self, from: Data(output.utf8)) }).value else {
             return .failure(.init(message: String(localized: "It didn't print JSON.")))
         }
         return .success(value)

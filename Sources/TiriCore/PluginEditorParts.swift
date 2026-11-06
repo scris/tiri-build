@@ -61,15 +61,49 @@ public enum PluginHighlightPattern {
 
     /// Where it matches in one line, as ranges in UTF-16, which is what the editor counts in.
     public static func matches(_ expression: NSRegularExpression, group: Int?, in line: String) -> [NSRange] {
+        timedMatches(expression, group: group, in: line).ranges
+    }
+
+    /// The most one pattern may take on one line, in milliseconds. A pattern that backtracks can take
+    /// minutes on a line of 90 characters, and the editor waits for it while it draws.
+    public static let budget = 2.0
+
+    /// `tooSlow` when it gave up at `budget`: what was found by then is in `ranges`.
+    public static func timedMatches(_ expression: NSRegularExpression, group: Int?, in line: String, budget: Double = budget) -> (ranges: [NSRange], tooSlow: Bool) {
         let text = line as NSString
-        guard text.length <= longestLine else { return [] }
+        guard text.length <= longestLine else { return ([], false) }
         var found: [NSRange] = []
-        for match in expression.matches(in: line, range: NSRange(location: 0, length: text.length)) {
-            let range = group.flatMap { $0 < match.numberOfRanges ? match.range(at: $0) : nil } ?? match.range
-            if range.location != NSNotFound, range.length > 0 { found.append(range) }
-            if found.count >= 200 { break }
+        var tooSlow = false
+        let start = DispatchTime.now().uptimeNanoseconds
+        // With reportProgress, the matcher stops to ask now and then, even in the middle of one match.
+        expression.enumerateMatches(in: line, options: [.reportProgress], range: NSRange(location: 0, length: text.length)) { match, _, stop in
+            if let match {
+                let range = group.flatMap { $0 < match.numberOfRanges ? match.range(at: $0) : nil } ?? match.range
+                if range.location != NSNotFound, range.length > 0 { found.append(range) }
+                if found.count >= 200 { stop.pointee = true }
+            }
+            if Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000 > budget {
+                tooSlow = true
+                stop.pointee = true
+            }
         }
-        return found
+        return (found, tooSlow)
+    }
+
+    /// Lines made to be slow for a pattern that backtracks, as a check can try before anyone opens a file.
+    static let probes = [
+        String(repeating: "word ", count: 12),
+        String(repeating: "a", count: 60) + "!",
+        String(repeating: "ab1_ ", count: 12) + "#",
+        String(repeating: " ", count: 60) + "x",
+        String(repeating: "12345 ", count: 10),
+        "// TODO: " + String(repeating: "x", count: 51),
+    ]
+
+    /// Whether it gets through every probe in time. Far more time than the editor gives it, so only a
+    /// pattern that would stall on ordinary lines fails.
+    public static func isFastEnough(_ expression: NSRegularExpression, budget: Double = 25) -> Bool {
+        !probes.contains { timedMatches(expression, group: nil, in: $0, budget: budget).tooSlow }
     }
 }
 

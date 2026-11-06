@@ -270,6 +270,9 @@ public enum PluginValidator {
             else if let expression = try? NSRegularExpression(pattern: pattern) {
                 if let group = highlight.group, group > expression.numberOfCaptureGroups { error("\(place) colors group \(group), and its pattern has \(expression.numberOfCaptureGroups)") }
                 if expression.firstMatch(in: "", range: NSRange(location: 0, length: 0)) != nil { error("\(place) matches nothing at all, which would color nothing") }
+                else if !PluginHighlightPattern.isFastEnough(expression) {
+                    error("\(place): \"\(highlight.pattern)\" takes too long on a line of 60 characters, so it would stall the editor. Avoid a repeat inside a repeat, like (\\w+\\s?)+")
+                }
             } else {
                 error("\(place): \"\(highlight.pattern)\" isn't a regular expression")
             }
@@ -632,12 +635,37 @@ public enum PluginLibrary {
         var issues: [PluginIssue]?
     }
 
+    private static let approvalsLock = NSRecursiveLock()
+
     public static func approvals() -> [String: Approval] {
-        guard let data = try? Data(contentsOf: approvalsFile) else { return [:] }
-        return (try? JSONDecoder().decode([String: Approval].self, from: data)) ?? [:]
+        approvalsLock.withLock {
+            let file = approvalsFile
+            guard FileManager.default.fileExists(atPath: file.path) else { return [:] }
+            let data = try? Data(contentsOf: file)
+            if let data, let all = try? JSONDecoder().decode([String: Approval].self, from: data) { return all }
+            // One record that won't read doesn't take every other plugin's with it.
+            var kept: [String: Approval] = [:]
+            if let data, let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                for (name, entry) in object {
+                    guard let bytes = try? JSONSerialization.data(withJSONObject: entry),
+                          let approval = try? JSONDecoder().decode(Approval.self, from: bytes) else { continue }
+                    kept[name] = approval
+                }
+            }
+            // Its bytes stay, beside it, and what could be read is written back.
+            guard !approvalsStuck else { return kept }
+            let movedTo = PluginDamagedFiles.moveAside(file)
+            if movedTo == nil { approvalsStuck = true } else if !kept.isEmpty { write(kept) }
+            PluginDamagedFiles.report(.init(kind: .approvals, keptAt: movedTo?.path))
+            return kept
+        }
     }
 
+    /// Set when a damaged file couldn't be moved aside: then nothing is written over it.
+    nonisolated(unsafe) private static var approvalsStuck = false
+
     private static func write(_ approvals: [String: Approval]) {
+        guard !approvalsStuck else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(approvals) else { return }
@@ -645,25 +673,28 @@ public enum PluginLibrary {
         try? data.write(to: approvalsFile, options: .atomic)
     }
 
+    /// Read, changed and written with nobody else in between.
+    private static func change(_ edit: (inout [String: Approval]) -> Void) {
+        approvalsLock.withLock {
+            var all = approvals()
+            edit(&all)
+            write(all)
+        }
+    }
+
     /// Only ever called after a person said yes in Tiri.
     public static func approve(_ plugin: InstalledPlugin) {
-        var all = approvals()
-        all[plugin.name] = Approval(hash: plugin.hash, version: plugin.manifest?.version ?? "", files: plugin.files, enabled: true,
-                                    dependencies: PluginTree.dependencyFingerprint(plugin.folder))
-        write(all)
+        let dependencies = PluginTree.dependencyFingerprint(plugin.folder)
+        change { $0[plugin.name] = Approval(hash: plugin.hash, version: plugin.manifest?.version ?? "", files: plugin.files, enabled: true, dependencies: dependencies) }
     }
 
     /// Turned off. The record stays, so turning it on again can say what changed since.
     public static func turnOff(_ name: String) {
-        var all = approvals()
-        all[name]?.enabled = false
-        write(all)
+        change { $0[name]?.enabled = false }
     }
 
     public static func forget(_ name: String) {
-        var all = approvals()
-        all[name] = nil
-        write(all)
+        change { $0[name] = nil }
     }
 
     /// Reads every plugin. Off the main thread. Hashing is skipped for folders that haven't changed,
@@ -812,17 +843,35 @@ public enum PluginSettingsStore {
     public static func values(_ plugin: String) -> [String: JSONValue] {
         lock.withLock {
             if let known = cached[plugin] { return known }
-            let read = (try? Data(contentsOf: file(plugin))).flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
+            let read = load(plugin)
             cached[plugin] = read
             return read
         }
     }
 
+    /// A file that's there and can't be read is moved aside first, so setting one value doesn't write
+    /// over all the others. One that can't be moved isn't written at all.
+    nonisolated(unsafe) private static var unwritable: Set<String> = []
+
+    private static func load(_ plugin: String) -> [String: JSONValue] {
+        let url = file(plugin)
+        switch PluginDamagedFiles.read(url, decode: { try? JSONDecoder().decode([String: JSONValue].self, from: $0) }) {
+        case .missing: return [:]
+        case .read(let values): return values
+        case .damaged:
+            let kept = PluginDamagedFiles.moveAside(url)
+            if kept == nil { unwritable.insert(plugin) }
+            PluginDamagedFiles.report(.init(kind: .settings(plugin: plugin), keptAt: kept?.path))
+            return [:]
+        }
+    }
+
     public static func set(_ plugin: String, key: String, to value: JSONValue?) {
         lock.withLock {
-            var current = cached[plugin] ?? (try? Data(contentsOf: file(plugin))).flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) } ?? [:]
+            var current = cached[plugin] ?? load(plugin)
             current[key] = value
             cached[plugin] = current
+            guard !unwritable.contains(plugin) else { return }
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             guard let data = try? encoder.encode(current) else { return }
@@ -834,6 +883,7 @@ public enum PluginSettingsStore {
     public static func remove(_ plugin: String) {
         lock.withLock {
             cached[plugin] = nil
+            unwritable.remove(plugin)
             try? FileManager.default.removeItem(at: file(plugin))
         }
     }

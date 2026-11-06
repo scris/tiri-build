@@ -15,6 +15,8 @@ struct EditorHighlightRule {
     let underline: Bool
     let strikethrough: Bool
     let onlyInComments: Bool
+    /// As the manifest has it, for its log.
+    var pattern = ""
 
     func applies(to path: String) -> Bool {
         files.map { patterns in patterns.contains { PluginPattern.matches($0, path: path) } } ?? true
@@ -66,7 +68,7 @@ extension PluginHost {
                 rules.append(EditorHighlightRule(plugin: plugin.name, expression: expression, group: highlight.group, files: highlight.files,
                                                  color: PluginColor.ns(highlight.color), background: PluginColor.ns(highlight.background),
                                                  underline: highlight.underline == true, strikethrough: highlight.strikethrough == true,
-                                                 onlyInComments: highlight.onlyInComments == true))
+                                                 onlyInComments: highlight.onlyInComments == true, pattern: highlight.pattern))
             }
         }
         // Nothing to tell anyone when there was nothing before and there's nothing now.
@@ -144,7 +146,11 @@ extension PluginHost {
         Task {
             let answer = await ask(provider, plugin: plugin)
             inFlight.remove(identity)
-            guard enabledPlugin(named: name) != nil else { return }
+            // Asked of a version that's since changed: the new one asks for itself.
+            guard enabledPlugin(named: name)?.hash == plugin.hash else {
+                if askedAgain.remove(identity) != nil { refreshFileMarks(plugin: name, marks: id) }
+                return
+            }
             switch answer {
             case .success(let value):
                 var marks = PluginFileMark.list(from: value, folder: workspace.folders.first)

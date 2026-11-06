@@ -1657,3 +1657,10 @@
 "This page stopped working." = "此頁面停止回應了。";
 "Can't show this file" = "無法顯示此檔案";
 "It tries again when the file changes." = "檔案有變更時會再試一次。";
+"%@ keeps stopping" = "%@ 反覆停止執行";
+"It stopped 3 times in 5 minutes, so it won't start again by itself." = "它在 5 分鐘內停止了 3 次，因此不會再自行啟動。";
+"Start Again" = "重新啟動";
+"Couldn't read %@'s settings" = "無法讀取 %@ 的設定";
+"They're back to their defaults. The old file is kept." = "已恢復為預設值。舊檔案已保留。";
+"Couldn't read which plugins you approved" = "無法讀取你核准過哪些外掛";
+"Those it couldn't read are off until you turn them on again. The old file is kept." = "無法讀取的外掛保持停用，直到你再次開啟。舊檔案已保留。";

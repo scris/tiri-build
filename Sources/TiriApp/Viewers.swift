@@ -1029,7 +1029,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func pluginHighlightsChanged() {
         let rules = model.plugins.highlightRules(for: path)
         guard !(rules.isEmpty && pluginColors.rules.isEmpty) else { return }
-        pluginColors.use(rules)
+        pluginColors.use(rules, file: path)
     }
 
     /// What plugins color on this line, for `tiri`.

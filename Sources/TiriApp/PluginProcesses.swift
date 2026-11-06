@@ -20,12 +20,18 @@ final class PluginProcesses {
         let key: Key
         let process: Process
         let input: FileHandle
-        var buffer = Data()
         var pending: [Int: CheckedContinuation<Result<JSONValue, Failure>, Never>] = [:]
         var nextID = 1
         var lastUsed = Date()
         var idleMinutes: Double
         let writes = DispatchQueue(label: "tiri.plugins.process-input")
+        /// The plugin as it was when this started.
+        var hash = ""
+        /// When it last ended a line on stdout, of any kind.
+        var lastHeard = Date.distantPast
+        /// Tiri stopped it, so its end isn't a crash.
+        var stopping = false
+        var reader: PluginOutputReader?
 
         init(key: Key, process: Process, input: FileHandle, idleMinutes: Double) {
             self.key = key
@@ -35,9 +41,11 @@ final class PluginProcesses {
         }
     }
 
-    private unowned let host: PluginHost
+    unowned let host: PluginHost
     private var running: [Key: Running] = [:]
     private var idleTimer: Timer?
+    /// Ends nobody asked for, for each place it runs.
+    var crashes: [Key: PluginCrashRecord] = [:]
 
     init(host: PluginHost) {
         self.host = host
@@ -54,6 +62,7 @@ final class PluginProcesses {
         case .failure(let failure): return .failure(failure)
         }
         holder.lastUsed = Date()
+        let sent = Date()
         let requestID = holder.nextID
         holder.nextID += 1
         let line = SettingsSchema.json(.object(["id": .int(requestID), "method": .string(method), "params": params])) + "\n"
@@ -73,11 +82,22 @@ final class PluginProcesses {
                     }
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
                 guard let waiting = holder.pending.removeValue(forKey: requestID) else { return }
                 waiting.resume(returning: .failure(Failure(message: "\(method) took longer than \(Int(timeout)) seconds.")))
+                // Not a word since it was asked: it's stuck, not slow, and the next one would wait as long.
+                holder.reader?.flush()
+                if holder.lastHeard < sent, !holder.stopping { self?.replaceStuck(holder, method: method, timeout: timeout) }
             }
         }
+    }
+
+    private func replaceStuck(_ holder: Running, method: String, timeout: Double) {
+        countEnd(of: holder.key, hash: holder.hash, saying: "said nothing for \(Int(timeout)) seconds after being asked \(method), so it was stopped.")
+        let waiting = holder.pending
+        holder.pending = [:]
+        for (_, continuation) in waiting { continuation.resume(returning: .failure(Failure(message: "It stopped answering, so it was stopped. tiri plugin logs \(holder.key.plugin) may say why."))) }
+        stop(holder)
     }
 
     /// The one running for this place, started if it isn't.
@@ -85,10 +105,16 @@ final class PluginProcesses {
         guard let declared = plugin.manifest?.processes?.first(where: { $0.id == id }) else {
             return .failure(Failure(message: "\(plugin.name) has no process \(id)."))
         }
-        guard await host.stillApproved(plugin) else { return .failure(Failure(message: "It changed, so it's off until you approve it again.")) }
         let place = declared.where ?? .workspace
         let destination = place == .workspace ? host.runner.destination(of: workspace) : nil
         let key = Key(plugin: plugin.name, process: id, destination: destination)
+        // One that's running was approved when it started, and stops when the plugin changes, so the
+        // folder isn't walked again for each call.
+        if let existing = running[key], existing.process.isRunning, existing.hash == plugin.hash, host.enabledPlugin(named: plugin.name)?.hash == plugin.hash {
+            return .success(existing)
+        }
+        if let refusal = refusal(key, plugin: plugin) { return .failure(refusal) }
+        guard await host.stillApproved(plugin) else { return .failure(Failure(message: "It changed, so it's off until you approve it again.")) }
         if let existing = running[key], existing.process.isRunning { return .success(existing) }
         guard let target = await host.runner.target(plugin: plugin, context: context, place: place, workspace: workspace) else {
             return .failure(Failure(message: "Couldn't reach the server this workspace is on."))
@@ -161,19 +187,20 @@ final class PluginProcesses {
         _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         let holder = Running(key: key, process: process, input: input.fileHandleForWriting, idleMinutes: min(declared.idleMinutes ?? 10, 1440))
         let name = key.plugin
-        output.fileHandleForReading.readabilityHandler = { [weak self, weak holder] handle in
+        holder.hash = plugin.hash
+        let reader = PluginOutputReader(logName: name) { [weak self, weak holder] batch in
+            guard let self, let holder else { return }
+            self.received(batch, from: holder)
+        }
+        holder.reader = reader
+        output.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             // Right here, whatever's become of the rest: at the end of a pipe this fires over and over.
             if data.isEmpty {
                 handle.readabilityHandler = nil
                 return
             }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, let holder else { return }
-                    self.received(data, from: holder)
-                }
-            }
+            reader.received(data)
         }
         errors.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -184,10 +211,13 @@ final class PluginProcesses {
             }
         }
         process.terminationHandler = { [weak self, weak holder] _ in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self, let holder else { return }
-                    self.ended(holder)
+            // After what it said before it went has been read, so its last answer still counts.
+            reader.queue.async {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self, let holder else { return }
+                        self.ended(holder)
+                    }
                 }
             }
         }
@@ -199,54 +229,44 @@ final class PluginProcesses {
 
     // MARK: Hearing back
 
-    private func received(_ data: Data, from holder: Running) {
-        holder.buffer.append(data)
-        while let newline = holder.buffer.firstIndex(of: 0x0A) {
-            let line = holder.buffer.subdata(in: holder.buffer.startIndex..<newline)
-            holder.buffer.removeSubrange(holder.buffer.startIndex...newline)
-            handle(line, from: holder)
-        }
-        // A program that never ends a line doesn't get to fill the app's memory.
-        if holder.buffer.count > 32 * 1024 * 1024 { stop(holder) }
-    }
-
-    private func handle(_ line: Data, from holder: Running) {
-        guard !line.isEmpty, let message = try? JSONDecoder().decode(JSONValue.self, from: line) else {
-            if !line.isEmpty { Self.log(holder.key.plugin, "not JSON on stdout: " + String(decoding: line.prefix(300), as: UTF8.self) + "\n") }
-            return
-        }
-        if let id = message["id"]?.intValue, let waiting = holder.pending.removeValue(forKey: id) {
+    /// Already split and decoded, off this thread.
+    private func received(_ batch: PluginOutputReader.Batch, from holder: Running) {
+        if let heard = batch.heard { holder.lastHeard = max(holder.lastHeard, heard) }
+        for message in batch.answers {
+            guard let id = message["id"]?.intValue, let waiting = holder.pending.removeValue(forKey: id) else { continue }
             holder.lastUsed = Date()
             if let failure = message["error"], failure != .null {
                 waiting.resume(returning: .failure(Failure(message: failure["message"]?.stringValue ?? failure.stringValue ?? "It failed.")))
             } else {
                 waiting.resume(returning: .success(message["result"] ?? .null))
             }
-            return
         }
-        switch message["method"]?.stringValue {
-        case "refresh":
-            host.processAskedToRefresh(holder.key.plugin)
-        case "event":
-            guard let name = message["params"]?["name"]?.stringValue else { return }
-            _ = host.post(plugin: holder.key.plugin, panel: nil, event: name, data: message["params"]?["data"] ?? .null, from: holder.key.destination)
-        default:
-            break
+        if batch.askedToRefresh { host.processAskedToRefresh(holder.key.plugin) }
+        for event in batch.events {
+            _ = host.post(plugin: holder.key.plugin, panel: nil, event: event.name, data: event.data, from: holder.key.destination)
+        }
+        if batch.lineTooLong, !holder.stopping {
+            countEnd(of: holder.key, hash: holder.hash, saying: "printed a line over 8 MB on stdout, so it was stopped.")
+            stop(holder)
         }
     }
 
     private func ended(_ holder: Running) {
+        holder.reader?.flush()
+        let unasked = !holder.stopping && running[holder.key] === holder
         if running[holder.key] === holder { running[holder.key] = nil }
         for (_, waiting) in holder.pending {
             waiting.resume(returning: .failure(Failure(message: "It stopped before it answered. tiri plugin logs \(holder.key.plugin) may say why.")))
         }
         holder.pending = [:]
+        if unasked { countEnd(of: holder.key, hash: holder.hash, saying: Self.ending(of: holder.process) + ".") }
     }
 
     // MARK: Stopping
 
     private func stop(_ holder: Running) {
-        running[holder.key] = nil
+        holder.stopping = true
+        if running[holder.key] === holder { running[holder.key] = nil }
         let input = holder.input
         holder.writes.async { try? input.close() }
         // One that ignores being asked goes anyway, and so does what it started, so nothing's left
@@ -256,12 +276,15 @@ final class PluginProcesses {
 
     func stop(plugin name: String) {
         for holder in running.values where holder.key.plugin == name { stop(holder) }
+        // Changed, or turned off: either way, a new start when it's next wanted.
+        forgetEnds(of: name)
     }
 
     func stopAll() {
         idleTimer?.invalidate()
         idleTimer = nil
         // Quitting, so there's no later to come back and insist.
+        for holder in running.values { holder.stopping = true }
         let ending = running.values.map(\.process) + PluginProgramTable.all()
         for process in ending { PluginSignal.send(SIGTERM, to: process.processIdentifier) }
         running = [:]
@@ -294,18 +317,8 @@ final class PluginProcesses {
         TiriPaths.supportDirectory.appendingPathComponent("plugin-logs/\(name).log")
     }
 
-    private nonisolated static let logLock = NSLock()
-
     /// What it wrote to stderr, for `tiri plugin logs`. Kept short: the newest half when it gets long.
     nonisolated static func log(_ name: String, _ text: String) {
-        guard !text.isEmpty else { return }
-        logLock.withLock {
-            let file = logFile(name)
-            try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-            var existing = (try? Data(contentsOf: file)) ?? Data()
-            existing.append(Data(text.utf8))
-            if existing.count > 1_000_000 { existing = existing.suffix(500_000) }
-            try? existing.write(to: file, options: .atomic)
-        }
+        PluginLogFiles.append(text, to: logFile(name))
     }
 }

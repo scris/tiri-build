@@ -1657,3 +1657,10 @@
 "This page stopped working." = "此页面停止响应了。";
 "Can't show this file" = "无法显示此文件";
 "It tries again when the file changes." = "文件有改动时会再试一次。";
+"%@ keeps stopping" = "%@ 反复停止运行";
+"It stopped 3 times in 5 minutes, so it won't start again by itself." = "它在 5 分钟内停止了 3 次，因此不会再自行启动。";
+"Start Again" = "重新启动";
+"Couldn't read %@'s settings" = "无法读取 %@ 的设置";
+"They're back to their defaults. The old file is kept." = "已恢复为默认值。旧文件已保留。";
+"Couldn't read which plugins you approved" = "无法读取你批准过哪些插件";
+"Those it couldn't read are off until you turn them on again. The old file is kept." = "无法读取的插件保持停用，直到你再次打开。旧文件已保留。";

@@ -12,6 +12,10 @@ final class EditorPluginColors: NSObject, NSLayoutManagerDelegate {
     /// What matched on each line, by where the line starts. Any edit forgets it all: only lines
     /// being drawn are looked at again, which after a keystroke is the one you're on.
     private var found: [Int: [(range: NSRange, rule: Int)]] = [:]
+    /// Rules that took too long on a line of this file, by plugin and pattern. They stay off for it,
+    /// whatever else changes, since the next line could be as slow.
+    private var tooSlow: Set<String> = []
+    private var file: String?
 
     init(textView: NSTextView, isComment: @escaping (Int) -> Bool, hasGrammar: @escaping () -> Bool) {
         self.textView = textView
@@ -19,9 +23,10 @@ final class EditorPluginColors: NSObject, NSLayoutManagerDelegate {
         self.hasGrammar = hasGrammar
     }
 
-    func use(_ rules: [EditorHighlightRule]) {
+    func use(_ rules: [EditorHighlightRule], file: String? = nil) {
         let had = !self.rules.isEmpty
         self.rules = rules
+        if let file { self.file = file }
         found = [:]
         guard let layout = textView?.layoutManager else { return }
         // With none, the layout manager doesn't ask, and drawing costs what it always did.
@@ -49,14 +54,33 @@ final class EditorPluginColors: NSObject, NSLayoutManagerDelegate {
         var marks: [(range: NSRange, rule: Int)] = []
         if line.length > 0, line.length <= PluginHighlightPattern.longestLine {
             let text = string.substring(with: line)
-            for (index, rule) in rules.enumerated() {
-                for range in PluginHighlightPattern.matches(rule.expression, group: rule.group, in: text) {
+            for (index, rule) in rules.enumerated() where !tooSlow.contains(Self.identity(rule)) {
+                var matched = PluginHighlightPattern.timedMatches(rule.expression, group: rule.group, in: text)
+                // Once more, in case the thread was only kept waiting: a slow pattern is slow every time.
+                if matched.tooSlow { matched = PluginHighlightPattern.timedMatches(rule.expression, group: rule.group, in: text) }
+                if matched.tooSlow {
+                    turnOff(rule)
+                    continue
+                }
+                for range in matched.ranges {
                     marks.append((NSRange(location: line.location + range.location, length: range.length), index))
                 }
             }
         }
         found[line.location] = marks
         return marks
+    }
+
+    private static func identity(_ rule: EditorHighlightRule) -> String { rule.plugin + "\u{0}" + rule.expression.pattern }
+
+    /// A pattern that runs past its time on one line could on every line, and drawing waits for it.
+    private func turnOff(_ rule: EditorHighlightRule) {
+        tooSlow.insert(Self.identity(rule))
+        // What it found on other lines goes too, so the file doesn't show half of it.
+        found = [:]
+        let name = file.map { ($0 as NSString).lastPathComponent } ?? "a file"
+        PluginProcesses.log(rule.plugin, "highlight \(rule.pattern) took over \(Int(PluginHighlightPattern.budget)) ms on a line of \(name), so it's off for that file. A repeat inside a repeat, like (\\w+\\s?)+, is usually why.\n")
+        textView?.needsDisplay = true
     }
 
     /// Asked as it's drawn, since what's a comment can arrive after the match was found.

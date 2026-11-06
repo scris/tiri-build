@@ -500,6 +500,74 @@ struct PluginTests {
         #expect(definition.value(TiriSettings()) == "py")
     }
 
+    /// A file that's there and won't read is kept, beside it, before anything is written in its place.
+    @Test func damagedSettingsAreKeptAsideNotWrittenOver() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("tiri-home-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        setenv("TIRI_CONFIG_HOME", home.path, 1)
+        defer { unsetenv("TIRI_CONFIG_HOME") }
+        let heard = Heard()
+        PluginDamagedFiles.listen { heard.add($0) }
+        let name = "damaged-\(UUID().uuidString.prefix(6).lowercased())"
+        let file = home.appendingPathComponent("plugin-settings/\(name).json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("{\"lang\": \"swift\", ".utf8).write(to: file)
+        #expect(PluginSettingsStore.values(name).isEmpty)
+        let kept = URL(fileURLWithPath: file.path + ".damaged")
+        #expect(try Data(contentsOf: kept) == Data("{\"lang\": \"swift\", ".utf8))
+        #expect(heard.notices == [.init(kind: .settings(plugin: name), keptAt: kept.path)])
+        PluginSettingsStore.set(name, key: "on", to: true)
+        #expect(try Data(contentsOf: kept) == Data("{\"lang\": \"swift\", ".utf8))
+        #expect(PluginSettingsStore.values(name)["on"] == true)
+        // Missing is nothing to say.
+        #expect(PluginSettingsStore.values(name + "-none").isEmpty)
+        #expect(heard.notices.count == 1)
+        PluginSettingsStore.remove(name)
+    }
+
+    @Test func oneDamagedApprovalDoesntDropTheOthers() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("tiri-home-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        setenv("TIRI_HOME", home.path, 1)
+        defer { unsetenv("TIRI_HOME") }
+        let heard = Heard()
+        PluginDamagedFiles.listen { heard.add($0) }
+        let file = TiriPaths.supportDirectory.appendingPathComponent("plugin-approvals.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let good = #"{"hash": "h", "version": "1", "files": {}, "enabled": true}"#
+        let text = #"{"good": \#(good), "bad": {"hash": 3}}"#
+        try Data(text.utf8).write(to: file)
+        #expect(PluginLibrary.approvals().keys.sorted() == ["good"])
+        #expect(try String(contentsOf: URL(fileURLWithPath: file.path + ".damaged"), encoding: .utf8) == text)
+        // What could be read is written back, so the next look finds it too.
+        #expect(PluginLibrary.approvals().keys.sorted() == ["good"])
+        #expect(heard.notices.map(\.kind) == [.approvals])
+
+        // Not JSON at all: nothing's on, and the bytes are still there.
+        try Data("{\"good\": ".utf8).write(to: file)
+        #expect(PluginLibrary.approvals().isEmpty)
+        let second = try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path).filter { $0.hasPrefix("plugin-approvals.json.damaged-") }
+        #expect(second.count == 1)
+        #expect(heard.notices.count == 2)
+    }
+
+    // MARK: Highlights that take too long
+
+    @Test func aPatternThatBacktracksGivesUpInTime() throws {
+        let slow = try NSRegularExpression(pattern: #"(\w+\s?)+:"#)
+        let started = Date()
+        let line = String(repeating: "word ", count: 18)
+        let result = PluginHighlightPattern.timedMatches(slow, group: nil, in: line)
+        #expect(result.tooSlow)
+        #expect(Date().timeIntervalSince(started) < 0.5)
+        #expect(!PluginHighlightPattern.isFastEnough(slow))
+        let fine = try NSRegularExpression(pattern: #"(?://|#)\s*(TODO|FIXME)\b"#)
+        #expect(PluginHighlightPattern.isFastEnough(fine))
+        #expect(!PluginHighlightPattern.timedMatches(fine, group: nil, in: "# TODO " + line).tooSlow)
+        #expect(try issues(#"{\#(base), "highlights": [{"pattern": "(\\w+\\s?)+:", "color": "red"}]}"#).contains { $0.contains("takes too long") })
+        #expect(try issues(#"{\#(base), "highlights": [{"pattern": "\\bTODO\\b", "color": "red"}]}"#).isEmpty)
+    }
+
     // MARK: Keys
 
     @Test func aPluginCantTakeAKeyThatsTaken() {
