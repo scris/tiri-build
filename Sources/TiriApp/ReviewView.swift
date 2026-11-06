@@ -178,10 +178,10 @@ extension AppModel {
     }
 
     /// An agent moved some lines: the list says where they are now.
-    func refreshReviewLines() {
-        let comments = active.review.filter { $0.excerpt != nil }
+    func refreshReviewLines(in id: WorkspaceID? = nil) {
+        let workspace = id ?? activeID
+        let comments = (workspaces.first { $0.id == workspace }?.review ?? []).filter { $0.excerpt != nil }
         guard !comments.isEmpty else { return }
-        let workspace = activeID
         Task.detached(priority: .utility) { [weak self] in
             var moved: [String: ClosedRange<Int>] = [:]
             for comment in comments {
@@ -349,9 +349,12 @@ struct ReviewCommentEditor: View {
 
 struct ReviewHeaderActions: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
-        Text("\(model.active.review.count)")
+        Text("\(here.active.review.count)")
             .foregroundStyle(.tertiary)
             .font(.caption)
         Button {
@@ -375,11 +378,14 @@ struct ReviewHeaderActions: View {
 
 struct ReviewList: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 1) {
-                ForEach(model.active.review) { comment in
+                ForEach(here.active.review) { comment in
                     ReviewRow(comment: comment)
                 }
             }

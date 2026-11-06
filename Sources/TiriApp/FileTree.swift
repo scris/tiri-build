@@ -949,8 +949,29 @@ enum FileIcons {
 struct FileTreeRepresentable: NSViewRepresentable {
     let controller: FileTreeController
 
-    func makeNSView(context: Context) -> NSScrollView { controller.scrollView }
-    func updateNSView(_ nsView: NSScrollView, context: Context) {}
+    /// Each workspace has its own tree, and a window can change workspace, so this holds whichever is its own now.
+    final class Holder: NSView {
+        override func layout() {
+            super.layout()
+            subviews.first?.frame = bounds
+        }
+    }
+
+    func makeNSView(context: Context) -> Holder {
+        let holder = Holder()
+        install(in: holder)
+        return holder
+    }
+
+    func updateNSView(_ holder: Holder, context: Context) { install(in: holder) }
+
+    private func install(in holder: Holder) {
+        guard controller.scrollView.superview !== holder else { return }
+        holder.subviews.forEach { $0.removeFromSuperview() }
+        controller.scrollView.removeFromSuperview()
+        controller.scrollView.frame = holder.bounds
+        holder.addSubview(controller.scrollView)
+    }
 }
 
 extension AppModel {

@@ -116,31 +116,18 @@ final class AppModel {
     @ObservationIgnored private var itemSizesHeld = 0
     var peekHasKeyboard = false
     @ObservationIgnored lazy var notebookKernels = NotebookKernels(model: self)
-    /// False while a privacy check for the active workspace's paths is outstanding.
-    var accessReady = false
     var systemAppearanceRevision = 0
     /// Bumped when something outside SwiftUI's view (a controller) changed what headers show.
     var controllerRevision = 0
 
     @ObservationIgnored var keyResolver = KeyResolver(bindings: Keymap.build(user: []))
-    @ObservationIgnored var window: NSWindow?
     @ObservationIgnored let layoutRegistry = LayoutRegistry()
-    @ObservationIgnored let fileTree = FileTreeController()
     @ObservationIgnored let settingsStore = SettingsStore()
     @ObservationIgnored let fileIndex = FileIndexStore()
     @ObservationIgnored let terminalFolderIndex = FileIndexStore()
     @ObservationIgnored lazy var editorBridge = EditorBridge(model: self)
     @ObservationIgnored var lastAgentTerminal: ItemID?
     var turns: [AgentTurn] = []
-    var changesScope: ChangesScope = .sinceCommit
-    var turnChanges: [ChangedFile] = []
-    @ObservationIgnored var turnChangesInFlight = false
-    /// For the scopes that aren't a turn: what each repository is compared with, and the commit list.
-    var branchBases: [BranchBase] = []
-    var recentCommits: [CommitSummary] = []
-    var otherWork: [WorkLine] = []
-    @ObservationIgnored var otherWorkInFlight = false
-    @ObservationIgnored var otherWorkAt: Double = 0
     @ObservationIgnored var conversationsLoaded: [ConversationSummary]?
     @ObservationIgnored var conversationsLoading = false
     @ObservationIgnored var conversationIndex: ConversationIndex?
@@ -162,19 +149,12 @@ final class AppModel {
     var conversationsSummarized: (done: Int, total: Int)?
     /// A look that's under way, and where, so that asking again joins it rather than starting another.
     @ObservationIgnored var conversationLook: (place: String?, task: Task<[ConversationSummary], Never>)?
-    @ObservationIgnored var otherWorkWorkspace: WorkspaceID?
     @ObservationIgnored private var watchTicks = 0
-    var scopeIsLoading = false
     @ObservationIgnored let snapshots = TurnSnapshots()
     @ObservationIgnored let turnStore = TurnStore()
     var navigationStops: [NavigationStop] = []
     @ObservationIgnored var symbolHover: (view: NSTextView?, range: NSRange)?
     var languageRevision = 0
-    /// Whether this workspace has repositories, as of the last look. `repositories` empties for a
-    /// moment on every switch, and the bar shouldn't go and come back, resizing every terminal.
-    var barHasRepositories = false
-    /// A folder here is a repository, but this Mac has no git to read it with until Apple's tools are installed.
-    var needsGit = false
     @ObservationIgnored lazy var languageServers = LanguageServerHub(model: self)
     @ObservationIgnored lazy var plugins = PluginHost(model: self)
     @ObservationIgnored lazy var yourTiri = YourTiriModel(model: self)
@@ -188,14 +168,8 @@ final class AppModel {
     @ObservationIgnored var hoverWork: DispatchWorkItem?
     @ObservationIgnored var reviewPopover: NSPopover?
     @ObservationIgnored var reviewPopoverCloser: NSObjectProtocol?
-    var changes: [ChangedFile] = [] {
-        didSet { fileTree.changesUpdated(changes) }
-    }
-    /// Each repository the active workspace's folders are in, for the status bar.
-    var repositories: [RepositoryStatus] = []
     /// Fetches and pushes under way, by repository.
     var repositoryTransfers: [String: RepositoryTransfer] = [:]
-    @ObservationIgnored private var repositoryTokens: [String: FileWatchHub.Token] = [:]
     @ObservationIgnored var userPath: String? {
         didSet {
             DeveloperTools.shellPath = userPath
@@ -206,12 +180,20 @@ final class AppModel {
     var detachedItems: Set<ItemID> = []
     @ObservationIgnored private var detachedWindows: [ItemID: NSWindow] = [:]
     @ObservationIgnored private var detachedDelegates: [ItemID: DetachedWindowDelegate] = [:]
+    /// Which workspace each window shows. `WindowPlan.main` is the first window; see WorkspaceWindows.swift.
+    var windowWorkspaces: [String: WorkspaceID] = [:]
+    /// The window in front, whose workspace is `activeID`.
+    var currentWindow = WindowPlan.main
+    /// What's been worked out about each workspace in a window.
+    var lives: [WorkspaceID: WorkspaceLive] = [:]
+    @ObservationIgnored var windowOrder: [String] = []
+    @ObservationIgnored var workspaceWindows: [String: NSWindow] = [:]
+    @ObservationIgnored var windowObservers: [String: [NSObjectProtocol]] = [:]
+    @ObservationIgnored var openWindowAction: OpenWindowAction?
+    @ObservationIgnored var windowsToRestore: [SavedWindow] = []
+    @ObservationIgnored var pendingFrames: [String: [Double]] = [:]
+    @ObservationIgnored var sidebarVisibilities: [String: NavigationSplitViewVisibility] = [:]
     @ObservationIgnored var lastSearchQuery = ""
-    @ObservationIgnored private var changesTokens: [FileWatchHub.Token] = []
-    @ObservationIgnored private var changesWorkspace: WorkspaceID?
-    @ObservationIgnored private var changesWork: DispatchWorkItem?
-    @ObservationIgnored private var changesInFlight = false
-    @ObservationIgnored private var changesAgain = false
     var recordingShortcutFor: String?
     var hooksRevision = 0
     let settingsUI = SettingsNavigation()
@@ -243,9 +225,11 @@ final class AppModel {
     // MARK: Lifecycle
 
     private init() {
+        var savedWindows: [SavedWindow] = []
         if let snapshot = store.load(), !snapshot.workspaces.isEmpty {
             workspaces = snapshot.workspaces
             activeID = snapshot.activeID.flatMap { id in workspaces.contains { $0.id == id } ? id : nil } ?? workspaces[0].id
+            savedWindows = snapshot.windows
             // Everything that was running comes back as a fresh process.
             for workspace in workspaces {
                 for item in workspace.items {
@@ -258,6 +242,7 @@ final class AppModel {
             workspaces = [first]
             activeID = first.id
         }
+        prepareWindows(saved: savedWindows)
         // A settings.json tab from before Settings had a screen becomes the screen.
         let settingsFiles = [settingsStore.settingsURL.path, settingsStore.keybindingsURL.path]
         for index in workspaces.indices {
@@ -306,7 +291,6 @@ final class AppModel {
         FileWatchHub.shared.excludedNames = Set(settings.filesExclude)
         FileWatchHub.shared.onChanges = { [weak self] paths in self?.filesChanged(paths) }
         syncWatchRoots()
-        fileTree.model = self
         remote.startUp()
         enterActiveWorkspace()
         refreshDeletedFiles()
@@ -315,8 +299,13 @@ final class AppModel {
     }
 
     /// Everything that reads the active workspace's files waits here until macOS has said yes.
-    private func enterActiveWorkspace() {
-        let workspace = active
+    private func enterActiveWorkspace() { enterWorkspace(activeID) }
+
+    /// The same for any workspace a window shows. `focus` is false when a window came forward by itself, which
+    /// keeps whatever it had the keyboard on.
+    func enterWorkspace(_ id: WorkspaceID, focus: Bool = true) {
+        guard let workspace = workspaces.first(where: { $0.id == id }) else { return }
+        let live = live(id)
         var paths = workspace.folders
         for item in workspace.items {
             switch item.content {
@@ -328,35 +317,39 @@ final class AppModel {
         }
         let unchecked = Array(Set(paths).subtracting(checkedPaths))
         if unchecked.isEmpty {
-            accessReady = true
-            activeWorkspaceReady()
+            live.accessReady = true
+            workspaceReady(id, focus: focus)
             return
         }
-        accessReady = false
-        fileTree.clear()
+        live.accessReady = false
+        live.fileTree.clear()
+        live.treeFolders = nil
         Task { [weak self] in
             let denied = await FolderAccess.deniedPaths(unchecked)
-            guard let self, self.activeID == workspace.id else { return }
+            // Only while a window still shows it.
+            guard let self, self.lives[id] === live else { return }
             self.checkedPaths.formUnion(unchecked)
-            self.accessReady = true
+            live.accessReady = true
             if let first = denied.first {
                 let name = (first as NSString).abbreviatingWithTildeInPath
                 self.banner = AppBanner(message: "macOS is blocking Tiri from reading \(name). Allow it under Privacy & Security > Files and Folders.",
                                         isError: true, opensPrivacySettings: true)
             }
-            self.activeWorkspaceReady()
+            self.workspaceReady(id, focus: focus)
         }
     }
 
-    private func activeWorkspaceReady() {
-        if let destination = active.remote { remote.connect(destination) }
+    private func workspaceReady(_ id: WorkspaceID, focus: Bool) {
+        guard let workspace = workspaces.first(where: { $0.id == id }) else { return }
+        let inFront = id == activeID
+        if let destination = workspace.remote { remote.connect(destination) }
         remote.syncOpenFiles()
-        fileTree.bind(active)
-        refreshFileIndex()
-        watchForChanges()
-        plugins.workspaceChanged()
-        startActiveWorkspaceTerminals()
-        requestFocus()
+        live(id).bindTree(workspace)
+        if inFront { refreshFileIndex() }
+        watchForChanges(id)
+        if inFront { plugins.workspaceChanged() }
+        startWorkspaceTerminals(id)
+        if inFront, focus { requestFocus() }
     }
 
     func openPrivacySettings() {
@@ -393,11 +386,16 @@ final class AppModel {
     /// Stage Manager brings any window back onto the screen, however far away it's put, and there it
     /// could be seen and pressed by whoever's using this Mac. So a test copy hides itself as an app,
     /// and stays hidden, and no click reaches its window even if something shows it for a moment.
+    private static var keepingOutOfSight = false
+
     private func keepOutOfSight(_ window: NSWindow) {
         // scripts/dev-app.sh focus, for when nobody's using this Mac and a real click is the point.
         if ProcessInfo.processInfo.environment["TIRI_DEV_VISIBLE"] == "1" { return }
         window.ignoresMouseEvents = true
         NSApp.hide(nil)
+        // One watch for the app, however many windows it has.
+        guard !Self.keepingOutOfSight else { return }
+        Self.keepingOutOfSight = true
         Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             MainActor.assumeIsolated {
                 if !NSApp.isHidden { NSApp.hide(nil) }
@@ -405,10 +403,12 @@ final class AppModel {
         }
     }
 
-    func windowDidAppear(_ window: NSWindow) {
-        self.window = window
+    func windowDidAppear(_ window: NSWindow, id: String = WindowPlan.main) {
+        // A window that was closed stays closed.
+        guard id == WindowPlan.main || windowWorkspaces[id] != nil else { return }
+        registerWindow(window, id: id)
         // A test copy, out of sight, where it can't get in anyone's way and can still be captured.
-        if ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1" {
+        if ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1", !window.collectionBehavior.contains(.stationary) {
             window.collectionBehavior.insert(.stationary)
             keepOutOfSight(window)
         }
@@ -511,7 +511,7 @@ final class AppModel {
 
     func saveNow() {
         do {
-            try store.save(.init(workspaces: workspaces, activeID: activeID))
+            try store.save(.init(workspaces: workspaces, activeID: activeID, windows: windowPlacements))
         } catch {
             showBanner("Couldn't save the workspace: \(error.localizedDescription)", isError: true)
         }
@@ -679,8 +679,9 @@ final class AppModel {
 
     /// Terminals in the active workspace start with it. The visible one starts as soon as it has
     /// a size; the rest follow just after launch so they don't count against the launch budget.
-    func startActiveWorkspaceTerminals() {
-        let workspaceID = activeID
+    func startActiveWorkspaceTerminals() { startWorkspaceTerminals(activeID) }
+
+    func startWorkspaceTerminals(_ workspaceID: WorkspaceID) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             guard let self, let workspace = self.workspaces.first(where: { $0.id == workspaceID }) else { return }
             for item in workspace.items {
@@ -741,7 +742,7 @@ final class AppModel {
         }
         // Clicking a pane makes its group the focused one.
         for (id, weak) in groupHosts {
-            guard let view = weak.view, view.window != nil else { continue }
+            guard let view = weak.view, view.window != nil, view.window === event.window else { continue }
             if view.bounds.contains(view.convert(event.locationInWindow, from: nil)), active.focusedGroup != id {
                 focusGroup(id)
                 break
@@ -1280,7 +1281,10 @@ final class AppModel {
                 self.scheduleAgentRows()
                 // An agent's worktree can be outside everything being watched. Less often over SSH.
                 self.watchTicks += 1
-                if self.watchTicks % (self.active.remote == nil ? 8 : 30) == 0 || self.otherWorkWorkspace != self.activeID { self.refreshOtherWork() }
+                for (id, live) in self.lives {
+                    let onServer = self.workspaces.first { $0.id == id }?.remote != nil
+                    if self.watchTicks % (onServer ? 30 : 8) == 0 || !live.otherWorkLooked { self.refreshOtherWork(id) }
+                }
             }
         }
     }
@@ -1333,8 +1337,9 @@ final class AppModel {
 
     func focusFromNotification(workspace: WorkspaceID, item: ItemID) {
         Self.bringAppForward()
-        window?.makeKeyAndOrderFront(nil)
+        // First, so it's the window that has it that comes forward.
         focusItem(item)
+        window?.makeKeyAndOrderFront(nil)
     }
 
     @discardableResult
@@ -1641,6 +1646,12 @@ final class AppModel {
 
     func switchWorkspace(_ id: WorkspaceID) {
         guard id != activeID, workspaces.contains(where: { $0.id == id }) else { return }
+        // Its terminals can only be in one place: the window that has it comes forward instead.
+        if let other = window(showing: id), other != currentWindow {
+            focusWindow(other)
+            return
+        }
+        let leaving = activeID
         let started = ProcessClock.now()
         crossfade()
         // Through to what's redrawn, which happens after this returns.
@@ -1657,6 +1668,9 @@ final class AppModel {
         }
         find = nil
         activeID = id
+        windowWorkspaces[currentWindow] = id
+        pruneLives()
+        dropIfUnused(leaving)
         collectGarbage()
         syncWatchRoots()
         enterActiveWorkspace()
@@ -1767,14 +1781,19 @@ final class AppModel {
             if case .file(let spec) = item.content, spec.path.hasSuffix(".ipynb") { notebookKernels.stopIfUnused(path: spec.path) }
         }
         workspaces.remove(at: index)
+        rehomeWindows(from: id)
         if wasActive {
             peekHasKeyboard = false
             layoutRegistry.peekFrame = nil
             find = nil
-            activeID = workspaces[min(index, workspaces.count - 1)].id
+            let others = Set(windowWorkspaces.filter { $0.key != currentWindow }.values)
+            activeID = WindowPlan.unshown(workspaces.map(\.id), shown: others, preferring: workspaces[min(index, workspaces.count - 1)].id)
+                ?? createWorkspace(name: Workspace.placeholderName, folders: [], activating: false, initialTerminal: false).id
+            windowWorkspaces[currentWindow] = activeID
             syncWatchRoots()
             enterActiveWorkspace()
         }
+        pruneLives()
         collectGarbage()
         scheduleSave()
         if let destination = removedRemote { remote.forget(destination) }
@@ -1799,20 +1818,20 @@ final class AppModel {
         // Worked out first: looking through `workspaces` during the update below would crash.
         let name = uniqueName((path as NSString).lastPathComponent)
         update(workspace: target) { $0.adoptFolder(path, named: name) }
-        if target == activeID { foldersChanged() }
+        if target == activeID { foldersChanged() } else if lives[target] != nil { foldersChanged(in: target) }
     }
 
     func removeFolder(_ path: String, in workspaceID: WorkspaceID? = nil) {
         let target = workspaceID ?? activeID
         update(workspace: target) { $0.removeFolder(path) }
-        if target == activeID { foldersChanged() }
+        if target == activeID { foldersChanged() } else if lives[target] != nil { foldersChanged(in: target) }
     }
 
-    private func foldersChanged() {
+    private func foldersChanged(in id: WorkspaceID? = nil) {
         editorBridge.writeLock()
         remote.syncAllRoots()
         syncWatchRoots()
-        enterActiveWorkspace()
+        enterWorkspace(id ?? activeID, focus: id == nil)
     }
 
     func addFolderInteractive() {
@@ -1906,26 +1925,32 @@ final class AppModel {
         createWorkspace(name: (path as NSString).lastPathComponent, folders: [path])
     }
 
-    private func syncWatchRoots() {
-        FileWatchHub.shared.setWorkspaceRoots(active.folders)
+    /// The folders of every workspace in a window, the one in front first.
+    func syncWatchRoots() {
+        var roots = active.folders
+        for workspace in workspaces where workspace.id != activeID && lives[workspace.id] != nil {
+            roots += workspace.folders.filter { !roots.contains($0) }
+        }
+        FileWatchHub.shared.setWorkspaceRoots(roots)
     }
 
     /// Open files that aren't there any more. Their tabs stay, showing what they last said, and say so.
-    private(set) var deletedFiles: Set<String> = []
-
     func refreshDeletedFiles() {
-        guard active.remote == nil else {
-            if !deletedFiles.isEmpty { deletedFiles = [] }
-            return
+        for (id, live) in lives {
+            guard let workspace = workspaces.first(where: { $0.id == id }) else { continue }
+            guard workspace.remote == nil else {
+                if !live.deletedFiles.isEmpty { live.deletedFiles = [] }
+                continue
+            }
+            let gone = Set(workspace.items.compactMap(\.filePath).filter { !FileManager.default.fileExists(atPath: $0) })
+            if gone != live.deletedFiles { live.deletedFiles = gone }
         }
-        let gone = Set(active.items.compactMap(\.filePath).filter { !FileManager.default.fileExists(atPath: $0) })
-        if gone != deletedFiles { deletedFiles = gone }
     }
 
     private func filesChanged(_ paths: [String]) {
         refreshDeletedFiles()
         languageServers.filesChanged(paths)
-        fileTree.filesChanged(paths)
+        for live in lives.values { live.fileTree.filesChanged(paths) }
         fileIndex.invalidate()
     }
 
@@ -2296,27 +2321,25 @@ final class AppModel {
 
     /// Anything changing under a folder can change the list, including a commit, so it's
     /// looked at again shortly after. One look at a time, and one more if more happened meanwhile.
-    private func watchForChanges() {
-        // Another workspace's changes shouldn't show here, even for a moment.
-        if changesWorkspace != activeID {
-            changesWorkspace = activeID
-            changes = []
-            turnChanges = []
-            recentCommits = []
-            changesScope = .sinceCommit
-            repositories = []
-            repositoryTokens = [:]
+    /// Each workspace in a window has its own: another workspace's changes can't show here, even for a moment.
+    private func watchForChanges(_ id: WorkspaceID) {
+        guard let workspace = workspaces.first(where: { $0.id == id }) else { return }
+        let live = live(id)
+        if live.watchedFolders != workspace.folders {
+            live.watchedFolders = workspace.folders
+            live.changesTokens = workspace.folders.map { folder in
+                FileWatchHub.shared.watch(path: folder, recursive: true) { [weak self] in self?.scheduleChangesRefresh(id) }
+            }
         }
-        changesTokens = active.folders.map { folder in
-            FileWatchHub.shared.watch(path: folder, recursive: true) { [weak self] in self?.scheduleChangesRefresh() }
-        }
-        refreshChanges()
+        refreshChanges(id)
     }
 
-    func scheduleChangesRefresh() {
-        changesWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.refreshChanges() }
-        changesWork = work
+    func scheduleChangesRefresh(_ id: WorkspaceID? = nil) {
+        let id = id ?? activeID
+        guard let live = lives[id] else { return }
+        live.changesWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.refreshChanges(id) }
+        live.changesWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
@@ -2332,43 +2355,50 @@ final class AppModel {
     }
     @ObservationIgnored private var askedShellForPath = false
 
-    func refreshChanges() {
-        guard !changesInFlight else {
-            changesAgain = true
+    /// The workspace in front, or another in a window.
+    func refreshChanges(_ id: WorkspaceID? = nil) {
+        let workspaceID = id ?? activeID
+        guard let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
+        let live = live(workspaceID)
+        guard !live.changesInFlight else {
+            live.changesAgain = true
             return
         }
         // Nothing can be asked until it's back, and not knowing isn't the same as no changes.
-        if let destination = active.remote, !remote.state(of: destination).isReady { return }
-        changesInFlight = true
-        let folders = active.folders
-        let workspace = activeID
+        if let destination = workspace.remote, !remote.state(of: destination).isReady { return }
+        live.changesInFlight = true
+        let folders = workspace.folders
         Task.detached(priority: .userInitiated) { [weak self] in
             let found = Git.changesAcross(folders)
             let repositories = Git.repositoriesAcross(folders)
             let needsGit = DeveloperTools.git == nil && folders.contains(where: Git.looksLikeRepository)
             await MainActor.run {
                 guard let self else { return }
-                self.changesInFlight = false
-                if self.activeID == workspace { self.needsGit = needsGit }
+                live.changesInFlight = false
+                // No window shows it any more.
+                guard self.lives[workspaceID] === live else { return }
+                live.needsGit = needsGit
                 if needsGit, self.userPath == nil { self.learnUserPath() }
-                self.refreshReviewLines()
-                self.refreshScopedChanges()
-                self.refreshOtherWork()
-                if self.activeID == workspace { self.barHasRepositories = !repositories.isEmpty }
-                if self.activeID == workspace, self.changes != found { self.changes = found }
-                if self.activeID == workspace, self.repositories != repositories {
-                    let headsMoved = self.repositories.map(\.head) != repositories.map(\.head)
-                    self.repositories = repositories
-                    self.watchGitDirectories(of: repositories, folders: folders)
-                    if headsMoved { self.refreshChangeMarks() }
+                self.refreshReviewLines(in: workspaceID)
+                self.refreshScopedChanges(workspaceID)
+                self.refreshOtherWork(workspaceID)
+                live.barHasRepositories = !repositories.isEmpty
+                if live.changes != found { live.changes = found }
+                if live.repositories != repositories {
+                    let headsMoved = live.repositories.map(\.head) != repositories.map(\.head)
+                    live.repositories = repositories
+                    self.watchGitDirectories(of: repositories, folders: folders, in: live)
+                    if headsMoved { self.refreshChangeMarks(in: workspaceID) }
                 }
                 // Whatever's on screen compares against the same new state.
-                for item in self.active.items + (self.active.peek.map { [$0] } ?? []) {
-                    if case .diff = item.content { (self.existingController(for: item.id) as? DiffController)?.load() }
+                if let shown = self.workspaces.first(where: { $0.id == workspaceID }) {
+                    for item in shown.items + (shown.peek.map { [$0] } ?? []) {
+                        if case .diff = item.content { (self.existingController(for: item.id) as? DiffController)?.load() }
+                    }
                 }
-                if self.changesAgain || self.activeID != workspace {
-                    self.changesAgain = false
-                    self.refreshChanges()
+                if live.changesAgain {
+                    live.changesAgain = false
+                    self.refreshChanges(workspaceID)
                 }
             }
         }
@@ -2378,14 +2408,15 @@ final class AppModel {
 
     /// A commit or a push from a terminal moves the counts. When git's folder is outside the
     /// workspace, as for a subfolder of a repository or a worktree, nothing else would hear it.
-    private func watchGitDirectories(of repositories: [RepositoryStatus], folders: [String]) {
+    private func watchGitDirectories(of repositories: [RepositoryStatus], folders: [String], in live: WorkspaceLive) {
         var tokens: [String: FileWatchHub.Token] = [:]
+        let id = live.id
         for directory in repositories.flatMap(\.gitDirectories)
         where !folders.contains(where: { directory == $0 || directory.hasPrefix($0 + "/") }) {
-            tokens[directory] = repositoryTokens[directory]
-                ?? FileWatchHub.shared.watch(path: directory, recursive: true) { [weak self] in self?.scheduleChangesRefresh() }
+            tokens[directory] = live.repositoryTokens[directory]
+                ?? FileWatchHub.shared.watch(path: directory, recursive: true) { [weak self] in self?.scheduleChangesRefresh(id) }
         }
-        repositoryTokens = tokens
+        live.repositoryTokens = tokens
     }
 
     /// The repository of what you're looking at, for the palette. The status bar names its own.
@@ -2467,7 +2498,9 @@ final class AppModel {
                 guard let self else { return }
                 self.userPath = path ?? self.userPath
                 self.repositoryTransfers[root] = nil
-                if let updated, let index = self.repositories.firstIndex(where: { $0.root == root }) { self.repositories[index] = updated }
+                for live in self.lives.values {
+                    if let updated, let index = live.repositories.firstIndex(where: { $0.root == root }) { live.repositories[index] = updated }
+                }
                 switch result {
                 case .success:
                     succeeded(updated)
@@ -2889,11 +2922,15 @@ final class AppModel {
         for controller in controllers.values { controller.applySettings() }
         if previous.filesExclude != settings.filesExclude {
             FileWatchHub.shared.excludedNames = Set(settings.filesExclude)
-            fileTree.bind(active)
+            rebindTrees()
             fileIndex.invalidate()
         } else if previous.explorerCompactFolders != settings.explorerCompactFolders {
-            fileTree.bind(active)
+            rebindTrees()
         }
+    }
+
+    private func rebindTrees() {
+        for workspace in workspaces { lives[workspace.id]?.bindTree(workspace, force: true) }
     }
 
     func rebuildKeybindings() {

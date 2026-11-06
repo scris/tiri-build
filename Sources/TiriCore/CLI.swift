@@ -494,6 +494,24 @@ public enum CLIParser {
                 throw UsageError(workspaceUsage)
             }
 
+        case "window":
+            var options = Options(Array(args.dropFirst()))
+            switch args.first {
+            case "list":
+                try options.finish()
+                return request("window.list")
+            case "new":
+                let target = options.positional()
+                try options.finish()
+                return request("window.new", target.map { ["workspace": .string($0)] } ?? [:])
+            case "focus", "close":
+                guard let target = options.positional() else { throw UsageError("usage: tiri window \(args[0]) <window-or-workspace>") }
+                try options.finish()
+                return request("window.\(args[0])", ["window": .string(target)])
+            default:
+                throw UsageError(windowUsage)
+            }
+
         case "focus", "close":
             var options = Options(args)
             guard let id = options.positional() else { throw UsageError("usage: tiri \(command) <item-id>") }
@@ -810,6 +828,8 @@ public enum CLIParser {
         AgentCatalog.all.filter { $0.parseHook != nil }.map(\.id).joined(separator: "|")
     }
 
+    private static let windowUsage = "usage: tiri window list | new [<workspace>] | focus <window-or-workspace> | close <window-or-workspace>"
+
     private static let workspaceUsage = "usage: tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR> | remove-folder <DIR> | import <file.code-workspace> | rename <new-name> [<workspace>] | delete <name>"
 
     public static let usage = """
@@ -825,6 +845,8 @@ public enum CLIParser {
       tiri remote disconnect <host> | ports | forward <port>
       tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR>
                      remove-folder <DIR> | import <file.code-workspace> | rename <new-name> | delete <name>
+      tiri window list | new [<workspace>] | focus <window-or-workspace> | close <window-or-workspace>
+                                   (each window shows a workspace of its own; one in front is what the rest act on)
       tiri items
       tiri focus <item-id> | close <item-id>
       tiri notify <working|needs-input|done> [--message TEXT]
@@ -1093,6 +1115,8 @@ public enum AgentGuide {
     tiri workspace switch api
     tiri workspace add-folder ~/docs
     tiri workspace import team.code-workspace
+    tiri window new api                   # api in a window of its own, beside this one
+    tiri window list                      # each window, its workspace, and which is in front
     ```
 
     ## Show what changed

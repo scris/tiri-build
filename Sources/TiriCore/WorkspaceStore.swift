@@ -13,6 +13,8 @@ public struct WorkspaceStore: Sendable {
         public var version: Int
         public var activeID: WorkspaceID?
         public var workspaces: [Entry]
+        /// Each window and its workspace. Missing before there could be more than one.
+        public var windows: [SavedWindow]?
     }
 
     struct LayoutFile: Codable {
@@ -29,9 +31,11 @@ public struct WorkspaceStore: Sendable {
     public struct Snapshot: Equatable, Sendable {
         public var workspaces: [Workspace]
         public var activeID: WorkspaceID?
-        public init(workspaces: [Workspace], activeID: WorkspaceID?) {
+        public var windows: [SavedWindow]
+        public init(workspaces: [Workspace], activeID: WorkspaceID?, windows: [SavedWindow] = []) {
             self.workspaces = workspaces
             self.activeID = activeID
+            self.windows = windows
         }
     }
 
@@ -89,7 +93,7 @@ public struct WorkspaceStore: Sendable {
             }
             workspaces.append(workspace)
         }
-        return Snapshot(workspaces: workspaces, activeID: index.activeID)
+        return Snapshot(workspaces: workspaces, activeID: index.activeID, windows: index.windows ?? [])
     }
 
     public func save(_ snapshot: Snapshot) throws {
@@ -97,7 +101,8 @@ public struct WorkspaceStore: Sendable {
         let index = Index(
             version: 1,
             activeID: snapshot.activeID,
-            workspaces: snapshot.workspaces.map { .init(id: $0.id, name: $0.name, folders: $0.folders, remote: $0.remote) }
+            workspaces: snapshot.workspaces.map { .init(id: $0.id, name: $0.name, folders: $0.folders, remote: $0.remote) },
+            windows: snapshot.windows.isEmpty ? nil : snapshot.windows
         )
         let encoder = Self.encoder()
         try encoder.encode(index).write(to: indexURL, options: .atomic)

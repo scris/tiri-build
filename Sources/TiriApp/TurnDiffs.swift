@@ -50,7 +50,7 @@ extension AppModel {
                 }
                 self.turns = self.turns.trimmed()
                 self.saveTurns()
-                self.refreshChanges()
+                self.refreshChanges(workspace.id)
             }
         }
     }
@@ -78,25 +78,33 @@ extension AppModel {
                 }
                 self.turns = self.turns.trimmed()
                 self.saveTurns()
-                self.refreshChanges()
+                self.refreshChanges(workspace.id)
             }
         }
     }
 
     /// The turn the sidebar is showing, if it's showing one.
-    var scopedTurn: AgentTurn? {
-        turns.resolving(changesScope, in: activeID)
+    var scopedTurn: AgentTurn? { scopedTurn(in: activeID) }
+
+    func scopedTurn(in id: WorkspaceID) -> AgentTurn? {
+        turns.resolving(lives[id]?.changesScope ?? .sinceCommit, in: id)
     }
 
-    var visibleChanges: [ChangedFile] {
-        changesScope == .sinceCommit ? changes : turnChanges
+    var visibleChanges: [ChangedFile] { visibleChanges(in: activeID) }
+
+    func visibleChanges(in id: WorkspaceID) -> [ChangedFile] {
+        guard let live = lives[id] else { return [] }
+        return live.changesScope == .sinceCommit ? live.changes : live.turnChanges
     }
 
     /// How many rows the Changes section is listing, whatever they are.
-    var visibleChangesCount: Int {
-        if case .recentCommits = changesScope { return recentCommits.count }
-        if case .otherWork = changesScope { return otherWork.count }
-        return visibleChanges.count
+    var visibleChangesCount: Int { visibleChangesCount(in: activeID) }
+
+    func visibleChangesCount(in id: WorkspaceID) -> Int {
+        guard let live = lives[id] else { return 0 }
+        if case .recentCommits = live.changesScope { return live.recentCommits.count }
+        if case .otherWork = live.changesScope { return live.otherWork.count }
+        return visibleChanges(in: id).count
     }
 
     /// What a diff opened from the list should show.
@@ -113,11 +121,14 @@ extension AppModel {
         }
     }
 
-    var emptyChangesText: String {
-        switch changesScope {
+    var emptyChangesText: String { emptyChangesText(in: activeID) }
+
+    func emptyChangesText(in id: WorkspaceID) -> String {
+        let bases = lives[id]?.branchBases ?? []
+        return switch lives[id]?.changesScope ?? .sinceCommit {
         case .sinceCommit: "No changes since the last commit."
         case .latestTurn, .turn: "This turn didn't change any files."
-        case .branch: branchBases.count == 1 ? branchBases[0].emptyDescription : "Nothing changed."
+        case .branch: bases.count == 1 ? bases[0].emptyDescription : "Nothing changed."
         case .recentCommits: "No commits yet."
         case .commit: "This commit didn't change any files here."
         case .otherWork: "No other branches or worktrees."
@@ -135,28 +146,30 @@ extension AppModel {
 
     /// Looked at along with everything else that compares against the files. A commit doesn't
     /// change, so once is enough. The list of commits can, and a branch's files can too.
-    func refreshScopedChanges() {
-        let scope = changesScope
+    func refreshScopedChanges(_ id: WorkspaceID? = nil) {
+        let workspaceID = id ?? activeID
+        guard let live = lives[workspaceID], let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
+        let scope = live.changesScope
         if scope == .sinceCommit {
-            scopeIsLoading = false
-            if !turnChanges.isEmpty { turnChanges = [] }
+            live.scopeIsLoading = false
+            if !live.turnChanges.isEmpty { live.turnChanges = [] }
             return
         }
-        if case .commit = scope, !scopeIsLoading { return }
-        let turn = scopedTurn
+        if case .commit = scope, !live.scopeIsLoading { return }
+        let turn = scopedTurn(in: workspaceID)
         switch scope {
         case .latestTurn, .turn:
             guard turn == nil else { break }
-            scopeIsLoading = false
-            if !turnChanges.isEmpty { turnChanges = [] }
+            live.scopeIsLoading = false
+            if !live.turnChanges.isEmpty { live.turnChanges = [] }
             return
         default:
             break
         }
-        guard !turnChangesInFlight else { return }
-        turnChangesInFlight = true
+        guard !live.turnChangesInFlight else { return }
+        live.turnChangesInFlight = true
         let snapshots = self.snapshots
-        let folders = active.folders
+        let folders = workspace.folders
         Task.detached(priority: .userInitiated) { [weak self] in
             var files: [ChangedFile] = []
             var bases: [BranchBase] = []
@@ -172,16 +185,17 @@ extension AppModel {
             }
             await MainActor.run {
                 guard let self else { return }
-                self.turnChangesInFlight = false
+                live.turnChangesInFlight = false
+                guard self.lives[workspaceID] === live else { return }
                 // Someone chose something else while this was looking.
-                guard self.changesScope == scope else {
-                    self.refreshScopedChanges()
+                guard live.changesScope == scope else {
+                    self.refreshScopedChanges(workspaceID)
                     return
                 }
-                self.scopeIsLoading = false
-                if self.turnChanges != files { self.turnChanges = files }
-                if self.branchBases != bases { self.branchBases = bases }
-                if self.recentCommits != commits, case .recentCommits = scope { self.recentCommits = commits }
+                live.scopeIsLoading = false
+                if live.turnChanges != files { live.turnChanges = files }
+                if live.branchBases != bases { live.branchBases = bases }
+                if live.recentCommits != commits, case .recentCommits = scope { live.recentCommits = commits }
             }
         }
     }
@@ -211,9 +225,11 @@ extension AppModel {
     /// The repository a file is in and its path there, if it's one this workspace knows about.
     /// Those are known already, so a file outside them costs nothing to look at.
     func repositoryPlace(of path: String) -> (root: String, relative: String)? {
-        guard !repositories.isEmpty else { return nil }
+        // A file in a window behind is in that window's workspace's repositories.
+        let known = repositories + lives.filter { $0.key != activeID }.values.flatMap(\.repositories)
+        guard !known.isEmpty else { return nil }
         let real = Git.real(path)
-        for repository in repositories {
+        for repository in known {
             let root = Git.real(repository.root)
             if real.hasPrefix(root + "/") { return (repository.root, String(real.dropFirst(root.count + 1))) }
         }
@@ -221,8 +237,9 @@ extension AppModel {
     }
 
     /// A commit, or a repository coming into view, changes what the files are compared with.
-    func refreshChangeMarks() {
-        for item in active.items + (active.peek.map { [$0] } ?? []) {
+    func refreshChangeMarks(in id: WorkspaceID? = nil) {
+        guard let workspace = workspaces.first(where: { $0.id == id ?? activeID }) else { return }
+        for item in workspace.items + (workspace.peek.map { [$0] } ?? []) {
             textViewer(for: item.id)?.refreshChangeMarks()
         }
     }
@@ -235,10 +252,12 @@ extension AppModel {
     }
 
     /// Turns from this workspace worth offering, newest first, a few for each terminal.
-    var offeredTurns: [AgentTurn] {
+    var offeredTurns: [AgentTurn] { offeredTurns(in: activeID) }
+
+    func offeredTurns(in id: WorkspaceID) -> [AgentTurn] {
         var seen: [ItemID: Int] = [:]
         return turns.reversed().filter { turn in
-            guard turn.workspace == activeID, !turn.changedNothing else { return false }
+            guard turn.workspace == id, !turn.changedNothing else { return false }
             seen[turn.item, default: 0] += 1
             return seen[turn.item]! <= 5
         }
@@ -261,9 +280,12 @@ extension AppModel {
 /// Choose what Changes shows: everything since the last commit, this branch, a commit or one agent's turn.
 struct ChangesScopeMenu: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     private var label: String {
-        switch model.changesScope {
+        switch here.changesScope {
         case .sinceCommit: "Since commit"
         case .latestTurn: "Latest turn"
         case .turn: "One turn"
@@ -280,9 +302,9 @@ struct ChangesScopeMenu: View {
             scopeButton("Since Last Commit", .sinceCommit)
             scopeButton("This Branch", .branch)
             scopeButton("Recent Commits", .recentCommits)
-            scopeButton(model.otherWork.isEmpty ? "Other Work" : "Other Work (\(model.otherWork.count))", .otherWork)
-            let offered = model.offeredTurns
-            if !offered.isEmpty || model.changesScope == .latestTurn {
+            scopeButton(here.otherWork.isEmpty ? "Other Work" : "Other Work (\(here.otherWork.count))", .otherWork)
+            let offered = here.offeredTurns
+            if !offered.isEmpty || here.changesScope == .latestTurn {
                 scopeButton("Latest Turn", .latestTurn)
             }
             if !offered.isEmpty {
@@ -302,7 +324,7 @@ struct ChangesScopeMenu: View {
     }
 
     private func scopeButton(_ title: String, _ scope: ChangesScope) -> some View {
-        Toggle(title, isOn: Binding(get: { model.changesScope == scope }, set: { _ in model.setChangesScope(scope) }))
+        Toggle(title, isOn: Binding(get: { here.changesScope == scope }, set: { _ in model.setChangesScope(scope) }))
     }
 }
 
@@ -390,35 +412,30 @@ struct TurnCaption: View {
 extension AppModel {
     /// Agents make branches and worktrees for themselves. Nobody should have to go looking, so this
     /// is looked at along with everything else, and it's only worked out in full when something moved.
-    func refreshOtherWork() {
+    func refreshOtherWork(_ id: WorkspaceID? = nil) {
+        let workspaceID = id ?? activeID
+        guard let live = lives[workspaceID], let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
         // Agents save often, and each look asks git several things per branch.
-        var showing = changesScope == .otherWork
-        if case .work = changesScope { showing = true }
+        var showing = live.changesScope == .otherWork
+        if case .work = live.changesScope { showing = true }
         let now = ProcessClock.now()
-        let moved = otherWorkWorkspace != activeID
-        if moved {
-            otherWorkWorkspace = activeID
-            if !otherWork.isEmpty { otherWork = [] }
-        }
-        guard !otherWorkInFlight, moved || showing || now - otherWorkAt > 8000 else { return }
-        otherWorkAt = now
-        otherWorkInFlight = true
-        let folders = active.folders
-        let workspace = activeID
+        let first = !live.otherWorkLooked
+        live.otherWorkLooked = true
+        guard !live.otherWorkInFlight, first || showing || now - live.otherWorkAt > 8000 else { return }
+        live.otherWorkAt = now
+        live.otherWorkInFlight = true
+        let folders = workspace.folders
         Task.detached(priority: .utility) { [weak self] in
             let lines = Git.otherWork(in: folders)
             await MainActor.run {
                 guard let self else { return }
-                self.otherWorkInFlight = false
-                guard self.activeID == workspace else {
-                    self.refreshOtherWork()
-                    return
-                }
-                if self.otherWork != lines { self.otherWork = lines }
+                live.otherWorkInFlight = false
+                guard self.lives[workspaceID] === live else { return }
+                if live.otherWork != lines { live.otherWork = lines }
                 // What a worktree outside the workspace's folders changed reaches nothing else.
-                if case .work(let shown) = self.changesScope, let current = lines.first(where: { $0.id == shown.id }), current != shown {
-                    self.changesScope = .work(current)
-                    self.refreshScopedChanges()
+                if case .work(let shown) = live.changesScope, let current = lines.first(where: { $0.id == shown.id }), current != shown {
+                    live.changesScope = .work(current)
+                    self.refreshScopedChanges(workspaceID)
                 }
             }
         }
@@ -458,15 +475,18 @@ extension AppModel {
 /// A word under Changes when there's work elsewhere. It finds you, rather than the other way round.
 struct OtherWorkHint: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
-        let unfinished = model.otherWork.filter(\.isUnfinished).count
+        let unfinished = here.otherWork.filter(\.isUnfinished).count
         Button {
             model.setChangesScope(.otherWork)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.triangle.branch").font(.system(size: 9))
-                Text(unfinished == 0 ? "\(model.otherWork.count) merged, ready to clean up"
+                Text(unfinished == 0 ? "\(here.otherWork.count) merged, ready to clean up"
                      : unfinished == 1 ? "1 more branch not merged" : "\(unfinished) more branches not merged")
                 Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
             }

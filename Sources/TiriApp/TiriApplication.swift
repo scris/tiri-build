@@ -16,6 +16,16 @@ struct TiriApplication: App {
         .defaultSize(width: 1320, height: 860)
         .windowToolbarStyle(.unified(showsTitle: true))
         .commands { TiriMenus(model: model) }
+        // Each further window, with a workspace of its own. Tiri says what opens and what comes back.
+        WindowGroup("Tiri", id: AppModel.workspaceWindowScene, for: String.self) { $windowID in
+            WorkspaceWindowRoot(windowID: windowID)
+                .environment(model)
+                .frame(minWidth: 640, minHeight: 400)
+        }
+        .defaultSize(width: 1320, height: 860)
+        .windowToolbarStyle(.unified(showsTitle: true))
+        .handlesExternalEvents(matching: [])
+        .restorationBehavior(.disabled)
     }
 }
 
@@ -128,6 +138,7 @@ struct TiriMenus: Commands {
                 Button("Manage Agents…") { model.openAgentSettings() }
             }
             Divider()
+            item("newWindow")
             item("newWorkspace")
             item("addFolder")
             item("importWorkspace")

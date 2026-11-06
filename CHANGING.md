@@ -35,6 +35,7 @@ These are the names people use when they ask for a change, and the file to start
 | Review comments | `Sources/TiriApp/ReviewView.swift` |
 | Settings | `Sources/TiriApp/SettingsView.swift`, and `Sources/TiriCore/SettingsSchema.swift` for the rows |
 | The start screen, the window's layout | `Sources/TiriApp/RootView.swift` |
+| More than one window, each with its own workspace | `Sources/TiriApp/WorkspaceWindows.swift` |
 
 ## Off limits
 
