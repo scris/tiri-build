@@ -494,7 +494,7 @@ This leaves three things in `build/release`, next to the stapled `Tiri.app`:
 
 - `Tiri-<version>.dmg`, holding the app and a link to Applications. This is the download.
 - `Tiri-<version>.zip`, which updates fetch. It's the same app, so the disk image is the only thing sent to Apple, and both get its ticket stapled on.
-- `update.json`, the feed entry for that zip: its version, its address and its SHA-256. Set `TIRI_DOWNLOAD_BASE` to the folder the zip will be uploaded to.
+- `update.json`, the feed entry for that zip: its version, its address and its SHA-256. It goes at `https://tiri.build/update.json`, which is the feed the release looks at, and the zip goes in `https://tiri.build/download`. `TIRI_UPDATE_FEED` and `TIRI_DOWNLOAD_BASE` choose others.
 
 It checks every program in the bundle before sending anything to Apple, doesn't touch a running Tiri and publishes nothing. `TIRI_RELEASE_IDENTITY` and `TIRI_NOTARY_PROFILE` choose another certificate or set of credentials.
 

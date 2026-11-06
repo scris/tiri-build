@@ -11,6 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # TIRI_RELEASE_NOTES=<file> says what's new and what code moved. It's signed into the app, for repairs to read.
+# TIRI_BUNDLE_ID=<id> makes a test release that macOS treats as another app, such as dev.tiri.test.update.
 IDENTITY="${TIRI_RELEASE_IDENTITY:-Developer ID Application: Tianrun Qiu (CXA8L7KWZG)}"
 PROFILE="${TIRI_NOTARY_PROFILE:-tiri-notary}"
 OUT="build/release"
@@ -18,8 +19,9 @@ APP="$OUT/Tiri.app"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' Resources/Info.plist)"
 ZIP="$OUT/Tiri-$VERSION.zip"
 DMG="$OUT/Tiri-$VERSION.dmg"
-# Where the zip is going to be put, for update.json. Nothing is uploaded.
-BASE="${TIRI_DOWNLOAD_BASE:-https://downloads.example.invalid/tiri}"
+# The feed the app will look at, and where the zip is going to be put, for update.json. Nothing is uploaded.
+FEED="${TIRI_UPDATE_FEED:-https://tiri.build/update.json}"
+BASE="${TIRI_DOWNLOAD_BASE:-https://tiri.build/download}"
 
 # Before minutes of building: is everything here?
 security find-identity -v -p codesigning | grep -qF "$IDENTITY" || { echo "No signing identity \"$IDENTITY\" in the keychain." >&2; exit 1; }
@@ -37,7 +39,7 @@ scripts/replay-corpus.sh
 scripts/check-free-tools.sh
 
 rm -rf "$OUT"
-TIRI_BUILD_DIR="$OUT" TIRI_SIGN_IDENTITY="$IDENTITY" TIRI_SIGN_TIMESTAMP=1 ./build.sh release
+TIRI_BUILD_DIR="$OUT" TIRI_SIGN_IDENTITY="$IDENTITY" TIRI_SIGN_TIMESTAMP=1 TIRI_UPDATE_FEED="$FEED" ./build.sh release
 
 # What notarization would refuse, found here rather than after an upload.
 codesign --verify --deep --strict --verbose=1 "$APP"
