@@ -159,7 +159,7 @@ struct TiriMenus: Commands {
             item("splitRight")
             item("splitDown")
             Divider()
-            item("toggleMarkdownSource")
+            // Source or rendered is the file's own business, a button above it, not the window's.
             item("openInExternalEditor")
             Divider()
         }
