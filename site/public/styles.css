@@ -406,6 +406,11 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 .get img { width: 128px; height: 128px; margin-bottom: 30px; filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.5)); }
 .get h2 { max-width: none; }
 .get p { color: var(--dim); font-size: 18px; margin: 18px 0 0; max-width: 46ch; }
+.get-download { margin-top: 30px; background: var(--pink); color: #fff; border-radius: 12px; padding: 14px 28px; font: 600 18px/1.2 var(--body); text-decoration: none; }
+.get-download:hover { filter: brightness(1.08); }
+.get-download:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.get .get-small { font-size: 15px; }
+.get .get-small a { color: var(--text); }
 .foot { max-width: 1320px; margin: 0 auto; padding: 26px var(--gutter) 40px; border-top: 1px solid #2c2c2e; display: flex; gap: 26px; color: var(--faint); font-size: 13.5px; }
 
 /* ---------- smaller screens ---------- */

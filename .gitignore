@@ -66,3 +66,8 @@ build/
 screenshots/
 scripts/grammars/node_modules/
 .DS_Store
+
+# Release files copied in by scripts/publish-release.sh
+site/public/download/
+site/public/update.json
+site/public/_redirects

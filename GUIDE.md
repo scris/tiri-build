@@ -494,6 +494,8 @@ scripts/release.sh
 
 This leaves a stapled `build/release/Tiri.app` with a zip beside it. It checks every program in the bundle before sending anything to Apple, doesn't touch a running Tiri and publishes nothing. `TIRI_RELEASE_IDENTITY` and `TIRI_NOTARY_PROFILE` choose another certificate or set of credentials.
 
+`scripts/publish-release.sh` then puts that release on tiri.build: the DMG for people, and the zip and `update.json` that every copy's updates read. It checks the DMG is notarized first, and asks before it deploys.
+
 `scripts/release.sh` refuses to release in two cases: if the changes in `Tests/personal-changes` no longer apply (`scripts/replay-corpus.sh`), or if Tiri stops building with the Command Line Tools alone (`scripts/check-free-tools.sh`). The second usually means something depends on an Apple macro whose plugin only ships with Xcode. The Swift-aware merge for Your Tiri is Mergiraf with a Swift profile, built by `scripts/build-merge-tool.sh`. It's optional and goes at `your-tiri/tools/mergiraf`.
 
 ### Testing
