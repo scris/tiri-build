@@ -1386,6 +1386,12 @@ enum ControlHandler {
             object["indexedFiles"] = .int(model.fileIndex.files.count)
             object["firstResponder"] = .string(model.window?.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
             if let editor = model.frontEditor { object["completion"] = editor.completion.state }
+            // What each terminal has parsed and drawn, for scripts/bench-terminal.sh.
+            object["terminals"] = .array(model.openTerminals.map { id, terminal in
+                let counts = terminal.terminalView.diagnostics
+                return .object(["item": .string(id), "bytes": .int(counts.bytesFed), "batches": .int(counts.batches),
+                                "frames": .int(counts.frames), "renders": .int(counts.renders), "mainHops": .int(counts.mainHops)])
+            })
             return .object(object)
 
         case "tree":

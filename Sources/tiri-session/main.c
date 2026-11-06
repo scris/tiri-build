@@ -177,11 +177,47 @@ static void ring_append(const unsigned char *data, size_t count) {
     }
 }
 
+static void put_header(unsigned char *header, char type, uint32_t count) {
+    header[0] = (unsigned char)type;
+    header[1] = (unsigned char)(count >> 24);
+    header[2] = (unsigned char)(count >> 16);
+    header[3] = (unsigned char)(count >> 8);
+    header[4] = (unsigned char)count;
+}
+
 static int send_frame(int fd, char type, const void *data, uint32_t count) {
-    unsigned char header[5] = {(unsigned char)type, (unsigned char)(count >> 24), (unsigned char)(count >> 16),
-                               (unsigned char)(count >> 8), (unsigned char)count};
+    unsigned char header[5];
+    put_header(header, type, count);
     if (write_all(fd, header, sizeof header) < 0) return -1;
     return count ? write_all(fd, data, count) : 0;
+}
+
+// A program's output, read into the space after a frame header, so header and bytes go out in one
+// write. A program printing a line at a time otherwise costs two writes and two wakeups per line.
+static unsigned char output_frame[5 + READ_BYTES];
+
+/// Reads what the program has written. After a small read, also whatever else is already waiting,
+/// up to a frame: a program printing a line at a time otherwise becomes a frame, and a batch for the
+/// view to parse, per line. A large read goes at once, so the view can be parsing it while this reads
+/// the next. Never waits for more: a terminal's buffer is small, and a program blocks while it's full.
+#define GATHER_BELOW 4096
+static ssize_t read_output(int master) {
+    ssize_t got = read(master, output_frame + 5, READ_BYTES);
+    if (got <= 0 || got >= GATHER_BELOW) return got;
+    size_t total = (size_t)got;
+    while (total < READ_BYTES) {
+        struct pollfd more = {master, POLLIN, 0};
+        if (poll(&more, 1, 0) <= 0 || !(more.revents & POLLIN)) break;
+        ssize_t extra = read(master, output_frame + 5 + total, READ_BYTES - total);
+        if (extra <= 0) break;
+        total += (size_t)extra;
+    }
+    return (ssize_t)total;
+}
+
+static int send_output(int fd, size_t count) {
+    put_header(output_frame, 'D', (uint32_t)count);
+    return write_all(fd, output_frame, 5 + count);
 }
 
 // Before each prompt zsh prints a % and a line's width of spaces, so a prompt can't overwrite a
@@ -441,6 +477,9 @@ static void run_server(const launch_options *options, int listener) {
                 input_count = 0;
                 struct timeval timeout = {2, 0};
                 setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
+                // A local socket holds 8 KB by default, so this would wait on the view after every frame.
+                int room = 4 * READ_BYTES;
+                setsockopt(client, SOL_SOCKET, SO_SNDBUF, &room, sizeof room);
                 if (send_replay(client) < 0) {
                     close(client);
                     client = -1;
@@ -459,11 +498,11 @@ static void run_server(const launch_options *options, int listener) {
         }
 
         if (ready > 0 && (fds[1].revents & (POLLIN | POLLHUP))) {
-            ssize_t got = read(master, buffer, sizeof buffer);
+            ssize_t got = read_output(master);
             if (got > 0) {
-                ring_append(buffer, (size_t)got);
-                track_output(buffer, (size_t)got);
-                if (client >= 0 && send_frame(client, 'D', buffer, (uint32_t)got) < 0) {
+                ring_append(output_frame + 5, (size_t)got);
+                track_output(output_frame + 5, (size_t)got);
+                if (client >= 0 && send_output(client, (size_t)got) < 0) {
                     close(client);
                     client = -1;
                 }
@@ -622,6 +661,8 @@ static int send_input(int fd, char type, const void *data, size_t count) {
 
 static int relay(int server) {
     signal(SIGPIPE, SIG_IGN);
+    int room = 4 * READ_BYTES;  // See the server's side, in run_server.
+    setsockopt(server, SOL_SOCKET, SO_RCVBUF, &room, sizeof room);
     struct sigaction action;
     memset(&action, 0, sizeof action);
     action.sa_handler = on_resize;
@@ -672,6 +713,8 @@ static int relay(int server) {
             if (got <= 0) return 1;
             incoming_count += (size_t)got;
             size_t offset = 0;
+            // Output frames that arrived together go to the view in one write, so it parses one batch.
+            size_t pending = 0;
             while (incoming_count - offset >= 5) {
                 unsigned char type = incoming[offset];
                 uint32_t length = ((uint32_t)incoming[offset + 1] << 24) | ((uint32_t)incoming[offset + 2] << 16)
@@ -679,8 +722,17 @@ static int relay(int server) {
                 if (incoming_count - offset < 5 + (size_t)length) break;
                 const unsigned char *payload = incoming + offset + 5;
                 if (type == 'D') {
-                    if (write_all(STDOUT_FILENO, payload, length) < 0) return 0;
-                } else if (type == 'R') {
+                    // Compacted in place: what's written always sits before what's still to read.
+                    memmove(incoming + pending, payload, length);
+                    pending += length;
+                    offset += 5 + (size_t)length;
+                    continue;
+                }
+                if (pending) {
+                    if (write_all(STDOUT_FILENO, incoming, pending) < 0) return 0;
+                    pending = 0;
+                }
+                if (type == 'R') {
                     accept_input_after = length && payload[0] ? now_seconds() + 0.15 : 0;
                     if (!size_sent_after_replay) {
                         size_sent_after_replay = 1;
@@ -691,6 +743,7 @@ static int relay(int server) {
                 }
                 offset += 5 + (size_t)length;
             }
+            if (pending && write_all(STDOUT_FILENO, incoming, pending) < 0) return 0;
             memmove(incoming, incoming + offset, incoming_count - offset);
             incoming_count -= offset;
         }

@@ -77,6 +77,8 @@ An independent review of correctness found 15 defects and one of trust found 8, 
 | Your Tiri: a release feed | There's no public download yet. The feed reading is written and `tiri update prepare` is what's tested, from a file. `TiriUpdateFeed` in Info.plist turns on the look every 6 hours, only on AC power and when nobody's using the Mac | Publish a feed |
 | VoiceOver speaking | Tiri's accessibility tree was walked through the AX API in a test copy: start screen, sidebar, tabs, terminal, editor, Peek, every Settings pane, the palette and toasts, and every control there has a name. The terminal's lines and cursor were read back as VoiceOver asks for them, and what's announced was checked in a log. VoiceOver itself was never turned on, so nothing was heard. Pages and rendered markdown are WebKit's and weren't walked, and the Changes list was seen only in code, as the test folder had no repository | Turn on VoiceOver (⌘F5), move through the window with VO-arrows, open a tab with VO-Space, read a terminal line by line, arrow through the palette |
 | Reduce Transparency, Increase Contrast, Reduce Motion | Tiri's own glass, bars, translucent terminal, overlays, selection marks and faint text follow them, and change live. Shown in a test copy with `TIRI_DEV_A11Y` and `tiri dev-a11y`, which pretend them without touching this Mac. The window's sidebar and toolbar are the system's, which only the real switches change, and the real switches were never turned on | Turn each on in System Settings → Accessibility → Display with Tiri open |
+| A terminal drawing heavy output, and Ghostty beside it | Test copies are hidden, and a hidden terminal parses but never draws. Ghostty isn't installed, and both need a window on the screen. See Performance | When nobody is using this Mac: `TIRI_DEV_MAY_TAKE_FOCUS=yes scripts/bench-terminal.sh --visible`, then with `--ghostty <Ghostty.app>` |
+| The session helper's faster output on a server | The same code runs there, rebuilt, but only this Mac's helper was measured, and the server suite wasn't run | `scripts/e2e-remote.sh`, then a long `seq` in a server workspace |
 
 ## What works
 
@@ -165,8 +167,31 @@ A language server isn't counted below, because it's optional and only runs once 
 | Open HEIC | (not in budget, was 8 MB) | 134 ms, decoded off the main thread |
 | 50,000 files | stays responsive | Switching in takes 42 ms, the tree loads lazily, quick open searches off the main thread |
 | Memory: 1 workspace, 2 terminals, 3 previews | < 250 MB | 68 MB app + about 80 MB WebKit helpers |
+| Terminal: 64 MB of plain text, `cat` | (none set) | 0.86 s, 74 MB/s, parsed but not drawn. See below |
+| Terminal: `seq 1 5000000`, a line per write | (none set) | 8.7 s, was 14.8 s. The Mac's own limit for that many writes into a terminal is about 8.8 s |
+| Terminal: status checks, 10 terminals open | well under a frame | 1.3 ms of the main thread a second, was 17 ms |
+| Terminal: memory of a full scrollback | (none set) | About 1.2 KB a line: 22 MB at the default 10,000 lines, 241 MB at the 200,000 maximum, per terminal |
 
 Open times run from the request until the content is showing, except for Office and PDF, where they stop when the viewer is attached and Quick Look's own rendering continues after that.
+
+### Terminal on heavy output (2026-11-05)
+
+`scripts/bench-terminal.sh` runs these in a release test copy and can be run again. Each workload is written into a new terminal, through the session helper as in everyday use. Time runs from the writer starting until its last line is on the terminal's screen, read back through `tiri read`. Another session was building on this Mac throughout (load average 11 to 27, 12 GB of swap in use), so wall times swung up to tenfold on both versions. Times are the best of 3 or 4 runs, taken in turn with the version before, and CPU is the median over those runs, of the app, the relay and the session server together.
+
+| Workload | Before | After | CPU, before → after |
+|---|---|---|---|
+| Plain text, 64 MB | 0.83 s | 0.86 s | 2.3 → 1.8 s |
+| Every word colored, 64 MB | 1.04 s | 1.18 s (median 1.39 → 1.20) | 3.9 → 2.8 s |
+| CJK, emoji and combining marks, 32 MB | 1.58 s | 1.37 s | 2.1 → 2.1 s |
+| Lines of 1,000 to 8,000 characters, 64 MB | 0.97 s | 0.94 s | 3.2 → 2.0 s |
+| `seq 1 5000000`, 37 MB | 14.8 s | 8.7 s | 37.4 → 9.5 s |
+| An agent's long run: 40,000 redraws of a status area, with messages and diffs scrolling above, 42 MB | 0.72 s | 0.59 s | 2.6 → 2.2 s |
+
+- Where the time goes: in color and Unicode, SwiftTerm's parser, one thread at full speed, a third of it looking up colors in a dictionary (`CellArena.intern`). That's inside SwiftTerm. A line at a time, it's the system: `script`, reading as fast as it can, needs 12.9 s for the same `seq`, and an eager reader 8.8 s.
+- What was fixed: the session helper sent every line `seq` printed as its own frame, in two writes, and the relay passed each on alone, so the app parsed over 600,000 batches averaging 46 bytes. It now takes what's already waiting after a small read, sends a frame in one write, the relay joins frames that arrive together, and the socket between them holds 256 KB instead of 8 KB, so a large read goes on at once and the stages overlap. Gathering big reads too made plain text 50% slower, which is why that's only after a small read. And each terminal's status check, once a second, read its session's pid file and hashed its folder's name about seven times over.
+- The main thread while output pours in: `ping` takes 0.3 to 1 ms at the median, and typing into another terminal shows up in 1.4 to 3 ms. The worst cases, 20 to 45 ms, were the same with nothing running, from the load on this Mac.
+- Not measured: drawing. A test copy is hidden, and a hidden terminal never draws (SwiftTerm's frame counter stays at 0), so this is everything up to drawing. With a window on screen, every frame is drawn on the main thread by Core Graphics, after copying the screen under the lock the parser holds. `TIRI_DEV_MAY_TAKE_FOCUS=yes scripts/bench-terminal.sh --visible` measures it, when nobody is using this Mac.
+- Ghostty isn't installed here and puts a window on the screen, so there's no head-to-head yet: `TIRI_DEV_MAY_TAKE_FOCUS=yes scripts/bench-terminal.sh --ghostty <Ghostty.app>` runs the same workloads in it. Ghostty publishes no figures of its own: its README says only that it and Alacritty "are usually within a few percentage points of each other on various benchmarks, but are both something like 100x faster than Terminal.app and iTerm".
 
 ## Known bugs
 
@@ -211,7 +236,8 @@ Open times run from the request until the content is showing, except for Office 
 
 ## Next tasks
 
-1. Highlighting while typing in a notebook cell, and a way to reopen a file in another encoding.
-2. A second window with its own workspace.
-3. An MCP wrapper around the control API, now that the CLI is stable.
-4. What the LeetCode and Todo Tree ports found missing from plugins, most wanted first: coloring text in the editor, which is the biggest loss in Todo Tree, then right-click menus on sidebar rows, asking for a line of text or a choice without opening a terminal, knowing which files are open and when the front one changes, a file-change event, colors on sidebar rows, marks on files in the explorer, and saving the file in front before a command runs. Later, installing from a link, a store, probably a plain JSON index, signed `.tiriplugin` files, and an OS sandbox for their programs, which hasn't been tried. Snippets and AI ghost text are decided against, and so is any Git control beyond fetch, pull and push: the rest is for agents.
+1. Measure a terminal drawing heavy output with its window on screen, then try SwiftTerm's Metal renderer (`setUseMetal`), which draws off the main thread where Core Graphics draws on it. Check it keeps translucent backgrounds, find marks and link underlines. And SwiftTerm's color lookup (`CellArena.intern`) is a third of its time on colored output: worth a patch upstream.
+2. Highlighting while typing in a notebook cell, and a way to reopen a file in another encoding.
+3. A second window with its own workspace.
+4. An MCP wrapper around the control API, now that the CLI is stable.
+5. What the LeetCode and Todo Tree ports found missing from plugins, most wanted first: coloring text in the editor, which is the biggest loss in Todo Tree, then right-click menus on sidebar rows, asking for a line of text or a choice without opening a terminal, knowing which files are open and when the front one changes, a file-change event, colors on sidebar rows, marks on files in the explorer, and saving the file in front before a command runs. Later, installing from a link, a store, probably a plain JSON index, signed `.tiriplugin` files, and an OS sandbox for their programs, which hasn't been tried. Snippets and AI ghost text are decided against, and so is any Git control beyond fetch, pull and push: the rest is for agents.
