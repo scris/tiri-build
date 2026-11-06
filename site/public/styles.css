@@ -570,3 +570,6 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 .doc b { color: var(--text); font-weight: 600; }
 .doc .doc-small { margin-top: 56px; font-size: 15px; }
 .doc .doc-small a { color: var(--text); }
+.doc ul { margin: 14px 0 0; padding-left: 20px; color: var(--dim); }
+.doc li { margin: 8px 0 0; }
+.doc .release-date { margin-top: 4px; font-size: 15px; }

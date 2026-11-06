@@ -222,6 +222,7 @@ struct TiriMenus: Commands {
             Button("Welcome to Tiri") { Welcome.show(model: model) }
             Button("Tiri Agent Guide") { model.showAgentGuide() }
             Button("Tiri Website") { NSWorkspace.shared.open(AboutPanel.websiteURL) }
+            Button("Release Notes") { NSWorkspace.shared.open(AboutPanel.releaseNotesURL) }
             Divider()
             Button("Report a Problem…") { model.reportProblem() }
         }

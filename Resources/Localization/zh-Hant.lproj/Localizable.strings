@@ -231,6 +231,7 @@
 "Plugins" = "外掛";
 "Tiri Agent Guide" = "Tiri 代理指南";
 "Tiri Website" = "Tiri 網站";
+"Release Notes" = "發佈說明";
 
 /* Launch.swift */
 "Your copy of Tiri wasn't there, so this is Plain Tiri. Your changes are kept." = "找不到你的 Tiri 副本，所以現在是原版 Tiri。你的修改都還在。";
