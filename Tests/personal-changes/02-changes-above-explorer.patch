@@ -1,21 +1,24 @@
 diff --git a/Sources/TiriApp/Sidebar.swift b/Sources/TiriApp/Sidebar.swift
-index 64c7cb6..def5b07 100644
+index d1538d0..71499fc 100644
 --- a/Sources/TiriApp/Sidebar.swift
 +++ b/Sources/TiriApp/Sidebar.swift
-@@ -29,30 +29,6 @@ struct SidebarView: View {
+@@ -32,33 +32,6 @@ struct SidebarView: View {
          let itemsFill = !explorerOpen && !changesFill && itemsOpen
          VStack(spacing: 0) {
              WorkspaceSwitcher()
--            sectionHeader("Explorer", isOpen: $explorerOpen) {
+-            sectionHeader(String(localized: "Explorer"), isOpen: $explorerOpen) {
 -                // With no folder there's nowhere to put one.
 -                if !model.active.folders.isEmpty {
 -                    Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
 -                        .help("New File")
+-                        .accessibilityLabel("New File")
 -                    Button { model.fileTree.beginCreating(.folder, in: nil) } label: { Image(systemName: "folder.badge.plus") }
 -                        .help("New Folder")
+-                        .accessibilityLabel("New Folder")
 -                }
 -                Button { model.addFolderInteractive() } label: { Image(systemName: "plus") }
 -                    .help("Add Folder to Workspace")
+-                    .accessibilityLabel("Add Folder to Workspace")
 -            }
 -            if model.active.folders.isEmpty {
 -                if explorerOpen {
@@ -32,21 +35,24 @@ index 64c7cb6..def5b07 100644
 -            }
              if hasChangesSection {
                  Divider()
-                 sectionHeader("Changes", isOpen: $changesOpen) {
-@@ -83,6 +59,30 @@ struct SidebarView: View {
+                 sectionHeader(String(localized: "Changes"), isOpen: $changesOpen) {
+@@ -95,6 +68,33 @@ struct SidebarView: View {
                      }
                  }
              }
-+            sectionHeader("Explorer", isOpen: $explorerOpen) {
++            sectionHeader(String(localized: "Explorer"), isOpen: $explorerOpen) {
 +                // With no folder there's nowhere to put one.
 +                if !model.active.folders.isEmpty {
 +                    Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
 +                        .help("New File")
++                        .accessibilityLabel("New File")
 +                    Button { model.fileTree.beginCreating(.folder, in: nil) } label: { Image(systemName: "folder.badge.plus") }
 +                        .help("New Folder")
++                        .accessibilityLabel("New Folder")
 +                }
 +                Button { model.addFolderInteractive() } label: { Image(systemName: "plus") }
 +                    .help("Add Folder to Workspace")
++                    .accessibilityLabel("Add Folder to Workspace")
 +            }
 +            if model.active.folders.isEmpty {
 +                if explorerOpen {
@@ -63,4 +69,4 @@ index 64c7cb6..def5b07 100644
 +            }
              if !model.active.review.isEmpty {
                  Divider()
-                 sectionHeader("Review", isOpen: $reviewOpen) {
+                 sectionHeader(String(localized: "Review"), isOpen: $reviewOpen) {
