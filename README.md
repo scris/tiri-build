@@ -80,7 +80,10 @@ Pick an agent and choose a folder. Say yes when Tiri offers to install hooks.
 
 ## More
 
+- [tiri.build](https://tiri.build) shows Tiri at work.
 - [GUIDE.md](GUIDE.md) covers every feature, plus signing and notarized builds.
 - `tiri --skill` prints a guide written for agents.
 - [CHANGING.md](CHANGING.md) maps the source.
 - [PROGRESS.md](PROGRESS.md) records what has been tested.
+
+Made by [Tianrun Qiu](https://r-q.name). Tiri is licensed under the [Mozilla Public License 2.0](LICENSE).

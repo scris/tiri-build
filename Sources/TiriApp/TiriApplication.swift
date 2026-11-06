@@ -108,6 +108,10 @@ struct TiriMenus: Commands {
     }
 
     var body: some Commands {
+        // App menu: About with credits (who made it, the website, the source).
+        CommandGroup(replacing: .appInfo) {
+            Button("About \(AboutPanel.appName)") { AboutPanel.show() }
+        }
         CommandGroup(replacing: .appSettings) {
             item("openSettings")
             if model.yourTiri.entriesAreOn { item("changeTiri") }
@@ -172,6 +176,7 @@ struct TiriMenus: Commands {
         }
         CommandGroup(replacing: .help) {
             Button("Tiri Agent Guide") { model.showAgentGuide() }
+            Button("Tiri Website") { NSWorkspace.shared.open(AboutPanel.websiteURL) }
         }
     }
 }

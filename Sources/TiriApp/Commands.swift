@@ -142,6 +142,7 @@ extension AppModel {
             AppCommand(id: "webDarkOff", title: "Force Dark Off", category: "Web") { model in
                 model.setForceDark(false, item: model.active.focused.active)
             },
+            AppCommand(id: "about", title: "About Tiri", category: "Help") { _ in AboutPanel.show() },
             AppCommand(id: "openSettings", title: "Open Settings…", category: "Settings") { $0.openSettings() },
             AppCommand(id: "openKeybindings", title: "Open Keyboard Shortcuts", category: "Settings") { $0.openKeyboardShortcuts() },
             AppCommand(id: "themeSystem", title: "Theme: Follow System", category: "Settings") { $0.setTheme(.system) },
