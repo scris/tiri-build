@@ -132,7 +132,7 @@ Agents make branches and worktrees for themselves, and Tiri finds them. A line u
 
 ### Changes
 
-When a workspace folder is in a Git repository, the sidebar's **Changes** section lists every file changed since the last commit, updating live as agents work. Click a file to see its diff as a tab, or double-click to keep the tab. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.
+When a workspace folder is in a Git repository, the sidebar's **Changes** section lists every file changed since the last commit, updating live as agents work. Tiri uses whatever Git you have: Apple's, Homebrew's, MacPorts', Nix's, GitHub Desktop's, or the one on your shell's PATH. With none at all, Changes offers **Install** for Apple's free Command Line Tools. Tiri never brings up Apple's installer unless you press it. Click a file to see its diff as a tab, or double-click to keep the tab. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.
 
 The menu in the section's header narrows or widens what you see:
 
@@ -452,6 +452,10 @@ tiri theme dark
 ```
 
 `tiri --help` lists every command, and `tiri --skill` prints a guide written for agents. Terminals inside Tiri have `TIRI_SOCKET`, `TIRI_WORKSPACE` and `TIRI_ITEM_ID` set.
+
+### Reporting a problem
+
+**Help → Report a Problem…** opens a new issue on GitHub, filled in with Tiri's version, macOS and Mac, the agents you use, how many of your own changes are on, and where Tiri last crashed in the past week, if it did. Only the crash's error and its top frames go in, not the file's identifiers or paths. Nothing is sent until you send it on GitHub, where you can edit all of it. After a crash, the next launch offers **Report** once. Agents can use `tiri report`, which prints the same issue, and `--open` shows it to you.
 
 `tiri` works in every terminal inside Tiri. To use it in other terminals, go to **Settings → General** and press **Install**. That adds a link at `~/.local/bin/tiri` that keeps working when the app updates. If your shell doesn't look there, Tiri gives you the line to add.
 

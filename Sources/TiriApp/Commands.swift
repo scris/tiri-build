@@ -151,6 +151,7 @@ extension AppModel {
             AppCommand(id: "manageLanguageServers", title: "Language Servers…", category: "Settings") { $0.openLanguageServerSettings() },
             AppCommand(id: "newPlugin", title: "New Plugin…", category: "Settings") { $0.promptForNewPlugin() },
             AppCommand(id: "changeTiri", title: "Change Tiri…", category: "Settings") { $0.yourTiri.beginChange(surface: nil) },
+            AppCommand(id: "reportProblem", title: "Report a Problem…", category: "Help") { $0.reportProblem() },
             AppCommand(id: "showYourTiri", title: "Your Tiri", category: "Settings") { $0.openSettings(pane: .yourTiri) },
             AppCommand(id: "managePlugins", title: "Plugins…", category: "Settings") { $0.openPluginSettings() },
             AppCommand(id: "importPlugin", title: "Import Plugin…", category: "Settings") {
@@ -940,6 +941,13 @@ enum ControlHandler {
             case .search(let words): model.openSettings(search: words)
             }
             return .object([:])
+
+        case "report":
+            let facts = model.problemFacts(crash: ProblemReport.latestCrash(bundleID: AppModel.reportBundleID, since: Date().addingTimeInterval(-7 * 86400)))
+            let body = ProblemReport.body(facts)
+            let url = ProblemReport.issueURL(title: request.args["title"]?.stringValue ?? "", body: body)
+            if request.args["open"]?.boolValue == true { NSWorkspace.shared.open(url) }
+            return .object(["body": .string(body), "url": .string(url.absoluteString)])
 
         case "change.facts":
             model.yourTiri.recordFacts()
