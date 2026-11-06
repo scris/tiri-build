@@ -202,9 +202,13 @@ final class EventRouter {
     }
 
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
+        // A click in a window behind brings it, and its workspace, in front before anything acts on it.
+        if let model, let window = event.window, window !== model.window, let id = model.workspaceWindows.first(where: { $0.value === window })?.key {
+            model.windowBecameCurrent(id)
+        }
         guard let model, event.window === model.window else { return event }
         if event.type == .otherMouseDown {
-            if event.buttonNumber == 2, let item = model.layoutRegistry.tab(at: model.globalPoint(event)) {
+            if event.buttonNumber == 2, let item = model.layoutRegistry.tab(at: model.globalPoint(event)), model.active.item(item) != nil {
                 model.requestClose(item)
                 return nil
             }

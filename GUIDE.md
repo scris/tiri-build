@@ -384,7 +384,9 @@ For agents, `tiri --skill` has the commands, and [CHANGING.md](CHANGING.md) has 
 
 ### Layout
 
-Terminals, files and pages are all tabs. Drag tabs to reorder them, move them between groups or drop them on the edge of a pane to split it. Right-click a tab and choose **Move to New Window** to put it on another display. The tab stays behind and says where it went, and closing the window brings the item back. Extra windows show one item each, and all workspaces stay in the main window.
+Terminals, files and pages are all tabs. Drag tabs to reorder them, move them between groups or drop them on the edge of a pane to split it. Right-click a tab and choose **Move to New Window** to put it on another display. The tab stays behind and says where it went, and closing the window brings the item back.
+
+**File → New Window** (⇧⌘N), or **Open in New Window** on a workspace in the sidebar, gives a workspace a window of its own, with its own sidebar, Changes and terminals. Whatever you do acts on the window in front. A workspace is in one window at a time, so choosing one that's open elsewhere brings its window forward, marked in the switcher with a small window. Closing a window leaves its workspace running in the switcher, and windows come back after a relaunch. Agents use `tiri window new [<workspace>]`, `tiri window list`, `focus` and `close`.
 
 The sidebar's sections (Explorer, Changes, Agents, Review, Open Items) each fold when you click their names. Tiri remembers which are folded, and the open sections take the room.
 
@@ -408,6 +410,7 @@ Shortcuts follow Cursor. You can change any of them in Settings, or by asking yo
 | Next / previous tab | ⌃Tab / ⌃⇧Tab, ⌘⇧] / ⌘⇧[ |
 | Focus group 1…9 | ⌘1…⌘9 |
 | Switch workspace 1…9 | ⌃1…⌃9 |
+| New window | ⇧⌘N |
 | Next terminal needing attention | ⌘⇧U |
 | Past conversations | ⇧⌘H |
 | Quote in agent / add files | ⌘L / ⇧⌘L |

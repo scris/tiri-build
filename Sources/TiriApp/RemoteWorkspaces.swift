@@ -199,7 +199,7 @@ final class RemoteManager {
             if let connection = connections[destination] { waiting.forEach { $0(.success(connection)) } }
             revision += 1
             model.refreshChangesIfOn(destination)
-            model.fileTree.reload()
+            for live in model.lives.values { live.fileTree.reload() }
             fetchFailures = [:]
             // Anything left waiting to be fetched can go now.
             for controller in model.allControllers where controller is RemoteFileController {
@@ -631,7 +631,7 @@ final class RemoteManager {
                 if case .failure(let problem) = result {
                     self.model.showToast(title: failure, detail: problem.description, symbol: "exclamationmark.triangle", tint: .orange)
                 }
-                self.model.fileTree.reload()
+                for live in self.model.lives.values { live.fileTree.reload() }
             }
         }
     }
@@ -1099,7 +1099,7 @@ extension AppModel {
     }
 
     func remoteRepositoryMoved(_ destination: String) {
-        if active.remote == destination { refreshChanges() }
+        for workspace in workspaces where workspace.remote == destination && lives[workspace.id] != nil { refreshChanges(workspace.id) }
     }
 
     func refreshChangesIfOn(_ destination: String) {

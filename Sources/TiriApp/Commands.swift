@@ -115,6 +115,7 @@ extension AppModel {
                 if let repository = model.frontRepository { model.confirmPush(repository) }
             },
             AppCommand(id: "newWorkspace", title: "New Workspace…", category: "Workspaces") { $0.newWorkspaceInteractive() },
+            AppCommand(id: "newWindow", title: "New Window", category: "Workspaces") { $0.openNewWindow() },
             AppCommand(id: "addFolder", title: "Add Folder to Workspace…", category: "Workspaces") { $0.addFolderInteractive() },
             AppCommand(id: "connectToServer", title: "Connect to Server…", category: "Workspaces") { $0.connectToServerInteractive() },
             AppCommand(id: "importWorkspace", title: "Import .code-workspace…", category: "Workspaces") { $0.importWorkspaceInteractive() },
@@ -788,6 +789,26 @@ enum ControlHandler {
                 ])
             }
             return .array(list)
+
+        case "window.list":
+            return model.describeWindows()
+
+        case "window.new":
+            let workspace = try request.args["workspace"]?.stringValue.map { try findWorkspace($0, model: model) }
+            guard let id = model.openNewWindow(showing: workspace?.id) else { throw ControlFailure("Tiri's window isn't up yet.") }
+            return .object(["id": .string(id), "workspace": .string(model.windowWorkspaces[id].flatMap { id in model.workspaces.first { $0.id == id }?.name } ?? "")])
+
+        case "window.focus":
+            let name = try string(request, "window")
+            guard let id = model.findWindow(name) else { throw ControlFailure("No window shows \"\(name)\". Run tiri window list.") }
+            model.focusWindow(id)
+            return .object(["id": .string(id)])
+
+        case "window.close":
+            let name = try string(request, "window")
+            guard let id = model.findWindow(name) else { throw ControlFailure("No window shows \"\(name)\". Run tiri window list.") }
+            model.closeWindow(id)
+            return .object(["closed": .string(id)])
 
         case "workspace.switch":
             let workspace = try findWorkspace(try string(request, "name"), model: model)

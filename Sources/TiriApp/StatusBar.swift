@@ -16,10 +16,13 @@ enum RepositoryTransfer {
 /// The bar along the bottom of the window, when it has something to say.
 struct StatusBar: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
         let _ = model.languageRevision
-        if model.statusBarHasContent {
+        if here.statusBarHasContent {
             bar
         }
     }
@@ -30,9 +33,9 @@ struct StatusBar: View {
             HStack(spacing: 0) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 18) {
-                        if let host = model.active.remote { RemoteStatusItem(destination: host) }
-                        ForEach(model.repositories) { repository in
-                            RepositoryStatusItem(repository: repository, showsName: model.repositories.count > 1)
+                        if let host = here.active.remote { RemoteStatusItem(destination: host) }
+                        ForEach(here.repositories) { repository in
+                            RepositoryStatusItem(repository: repository, showsName: here.repositories.count > 1)
                         }
                     }
                     .padding(.horizontal, 16)
@@ -42,8 +45,11 @@ struct StatusBar: View {
                 HStack(spacing: 14) {
                     YourTiriStatusItem()
                     PluginStatusItems()
-                    UnknownLanguageStatusItem()
-                    LanguageStatusItem()
+                    // About the file in front, so only in its window.
+                    if here.isCurrent {
+                        UnknownLanguageStatusItem()
+                        LanguageStatusItem()
+                    }
                 }
                 .fixedSize()
                 .padding(.trailing, 16)

@@ -4,7 +4,10 @@ import TiriCore
 
 /// Workspace switcher, then the multi-root tree, then the open items.
 struct SidebarView: View {
-    @Environment(AppModel.self) private var model
+    @Environment(AppModel.self) private var app
+    @Environment(\.windowScope) private var scope
+    /// The model as this window sees it, with its own workspace in front.
+    private var model: WindowModel { WindowModel(app: app, scope: scope) }
     @State private var itemsHeight: CGFloat = 180
     @State private var dragStart: CGFloat?
 
@@ -273,9 +276,14 @@ struct WorkspaceRow: View {
     let workspace: Workspace
     let index: Int
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
     @State private var hovering = false
 
-    private var isActive: Bool { workspace.id == model.activeID }
+    private var isActive: Bool { workspace.id == here.activeID }
+    /// Showing in a window of its own, so choosing it brings that window forward.
+    private var inAnotherWindow: Bool { !isActive && model.window(showing: workspace.id) != nil }
 
     /// A connection that's down shows here too, since its terminals may be behind this workspace.
     private var connectionTint: Color? {
@@ -304,6 +312,12 @@ struct WorkspaceRow: View {
             if counts.done > 0 {
                 AttentionBadge(count: counts.done, color: .green)
             }
+            if inAnotherWindow {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .help("Open in another window")
+            }
             if hovering, index < 9 {
                 Text("⌃\(index + 1)")
                     .font(.system(size: 10))
@@ -320,6 +334,13 @@ struct WorkspaceRow: View {
         .onHover { hovering = $0 }
         .onTapGesture { model.switchWorkspace(workspace.id) }
         .contextMenu {
+            if inAnotherWindow {
+                Button("Show Its Window") { model.openNewWindow(showing: workspace.id) }
+            } else {
+                Button("Open in New Window") { model.openNewWindow(showing: workspace.id) }
+                    .disabled(isActive)
+            }
+            Divider()
             Button("Rename…") { model.promptRenameWorkspace(workspace.id) }
             Divider()
             Button("Delete…", role: .destructive) { model.confirmDeleteWorkspace(workspace.id) }
@@ -344,11 +365,14 @@ struct AttentionBadge: View {
 
 struct OpenItemsList: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 1) {
-                ForEach(model.active.items) { item in
+                ForEach(here.active.items) { item in
                     OpenItemRow(item: item)
                 }
             }
@@ -361,9 +385,12 @@ struct OpenItemsList: View {
 struct OpenItemRow: View {
     let item: Item
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
     @State private var hovering = false
 
-    private var isActive: Bool { model.active.focused.active == item.id }
+    private var isActive: Bool { here.active.focused.active == item.id }
     private var runtime: TerminalRuntime? { model.runtimes[item.id] }
 
     private var statusText: String? {
@@ -387,7 +414,7 @@ struct OpenItemRow: View {
                 Text(model.title(for: item))
                     .font(.system(size: 12.5))
                     .italic(item.isPreview)
-                    .strikethrough(item.filePath.map(model.deletedFiles.contains) ?? false)
+                    .strikethrough(item.filePath.map(here.deletedFiles.contains) ?? false)
                     .lineLimit(1)
                 if let message = runtime?.message, runtime?.status == .needsInput || runtime?.status == .done {
                     Text(message)
