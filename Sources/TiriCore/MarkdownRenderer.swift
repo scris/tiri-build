@@ -176,7 +176,11 @@ public enum MarkdownRenderer {
     /// Narrows a selection in the rendered page from the blocks it touched to the source lines it
     /// really covers, as far as the text can be found there. Lines count from zero.
     public static func sourceLines(blockStart: Int, blockEnd: Int, selected: String, source: String) -> (first: Int, last: Int) {
-        let lines = source.components(separatedBy: "\n")
+        sourceLines(blockStart: blockStart, blockEnd: blockEnd, selected: selected, lines: source.components(separatedBy: "\n"))
+    }
+
+    /// The same, from the source already split into lines, so a long document isn't split again for each selection.
+    public static func sourceLines(blockStart: Int, blockEnd: Int, selected: String, lines: [String]) -> (first: Int, last: Int) {
         guard blockStart >= 0, blockEnd >= blockStart, blockStart < lines.count else { return (blockStart, blockEnd) }
         let end = min(blockEnd, lines.count - 1)
         func plain(_ text: String) -> String {
@@ -199,19 +203,38 @@ public enum MarkdownRenderer {
     /// The anchor of the section containing a source line, so `report.md:40` can land in the
     /// right place in the rendered view. nil when the line comes before any heading.
     public static func anchor(forLine line: Int, in source: String) -> String? {
+        anchor(forLine: line, in: headings(in: source))
+    }
+
+    /// A top-level heading's anchor and the line it starts on, as `anchor(forLine:)` counts lines.
+    public struct HeadingAnchor: Equatable, Sendable {
+        public var line: Int
+        public var slug: String
+    }
+
+    /// Every top-level heading, in order. Parsing is the slow part, so this can be done once and kept.
+    public static func headings(in source: String) -> [HeadingAnchor] {
         let (frontMatter, body) = splitFrontMatter(source)
         let offset = frontMatter.map { $0.components(separatedBy: "\n").count + 2 } ?? 0
         let math = MathText.extract(body)
         let document = Document(parsing: math.markdown)
         var seen: [String: Int] = [:]
-        var best: String?
+        var found: [HeadingAnchor] = []
         for child in document.children {
             guard let heading = child as? Heading, let range = heading.range else { continue }
             var slug = slugify(MathText.sourceText(heading.plainText, spans: math.spans))
             let count = seen[slug, default: 0]
             seen[slug] = count + 1
             if count > 0 { slug += "-\(count)" }
-            if range.lowerBound.line + offset <= line { best = slug } else { break }
+            found.append(HeadingAnchor(line: range.lowerBound.line + offset, slug: slug))
+        }
+        return found
+    }
+
+    public static func anchor(forLine line: Int, in headings: [HeadingAnchor]) -> String? {
+        var best: String?
+        for heading in headings {
+            if heading.line <= line { best = heading.slug } else { break }
         }
         return best
     }

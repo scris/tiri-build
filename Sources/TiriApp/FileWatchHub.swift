@@ -21,7 +21,7 @@ final class FileWatchHub {
         /// target when it changes, never the link.
         var target: String?
         var recursive: Bool
-        var handler: () -> Void
+        var handler: ([String]) -> Void
 
         var paths: [String] { target.map { [path, $0] } ?? [path] }
     }
@@ -65,6 +65,12 @@ final class FileWatchHub {
 
     /// Be told when a file (or, if recursive, anything under a folder) changes.
     func watch(path: String, recursive: Bool = false, handler: @escaping () -> Void) -> Token {
+        watch(path: path, recursive: recursive, changes: { _ in handler() })
+    }
+
+    /// The same, told which paths changed: the file, things under the folder, or a folder above it
+    /// when everything in it has to be looked at again. In real paths.
+    func watch(path: String, recursive: Bool = false, changes handler: @escaping ([String]) -> Void) -> Token {
         let token = Token()
         // A file may not exist yet, so resolve its folder, and spell its name as the disk does, as events will.
         let folder = Self.real((path as NSString).deletingLastPathComponent)
@@ -180,7 +186,12 @@ final class FileWatchHub {
                         || (subscription.recursive && folder.hasPrefix(watched + "/"))
                 }
             }
-            if hit { subscription.handler() }
+            guard hit else { continue }
+            // What changed at or under what's watched, or a folder above it, plus folders to be read again.
+            let touching = (paths.union(rescans)).filter { path in
+                subscription.paths.contains { $0 == path || $0.hasPrefix(path + "/") || path.hasPrefix($0 + "/") || path == "/" }
+            }
+            subscription.handler(Array(touching))
         }
         let rescanned = rescans.filter { path in
             !path.split(separator: "/").contains { excludedNames.contains(String($0)) }

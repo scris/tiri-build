@@ -40,24 +40,73 @@ final class LocalFileSchemeHandler: NSObject, WKURLSchemeHandler {
         return components.url!
     }
 
+    /// Tasks still wanted. WebKit can stop one while its file is being read.
+    private var active: Set<ObjectIdentifier> = []
+
     func webView(_ webView: WKWebView, start urlSchemeTask: any WKURLSchemeTask) {
         guard let url = urlSchemeTask.request.url else {
             urlSchemeTask.didFailWithError(URLError(.badURL))
             return
         }
         let path = url.path(percentEncoded: false)
-        guard let data = FileManager.default.contents(atPath: path) else {
-            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
-            return
+        let range = urlSchemeTask.request.value(forHTTPHeaderField: "Range")
+        let identity = ObjectIdentifier(urlSchemeTask)
+        active.insert(identity)
+        // Off the main thread, however big it is, and a piece at a time, so a video that's stopped stops being read.
+        Task {
+            guard let opened = await Task.detached(priority: .userInitiated, operation: { LocalFileServing.open(path, range: range) }).value else {
+                guard active.remove(identity) != nil else { return }
+                urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+                return
+            }
+            defer { try? opened.handle.close() }
+            guard active.contains(identity) else { return }
+            let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+            var headers = ["Content-Type": type, "Accept-Ranges": "bytes"]
+            var status = 200
+            var wanted = 0..<opened.length
+            switch opened.request {
+            case .whole:
+                break
+            case .partial(let range):
+                status = 206
+                wanted = range
+                headers["Content-Range"] = "bytes \(range.lowerBound)-\(range.upperBound - 1)/\(opened.length)"
+            case .unsatisfiable:
+                status = 416
+                wanted = 0..<0
+                headers["Content-Range"] = "bytes */\(opened.length)"
+            }
+            headers["Content-Length"] = String(wanted.count)
+            guard let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers) else {
+                active.remove(identity)
+                urlSchemeTask.didFailWithError(URLError(.badServerResponse))
+                return
+            }
+            urlSchemeTask.didReceive(response)
+            var offset = wanted.lowerBound
+            while offset < wanted.upperBound {
+                let count = min(LocalFileServing.pieceSize, wanted.upperBound - offset)
+                let start = offset
+                let piece = await Task.detached(priority: .userInitiated, operation: { LocalFileServing.read(opened, at: start, count: count) }).value
+                guard active.contains(identity) else { return }
+                guard let piece, !piece.isEmpty else {
+                    // Cut short while it was being read.
+                    active.remove(identity)
+                    urlSchemeTask.didFailWithError(URLError(.networkConnectionLost))
+                    return
+                }
+                urlSchemeTask.didReceive(piece)
+                offset += piece.count
+            }
+            active.remove(identity)
+            urlSchemeTask.didFinish()
         }
-        let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
-        let response = URLResponse(url: url, mimeType: type, expectedContentLength: data.count, textEncodingName: nil)
-        urlSchemeTask.didReceive(response)
-        urlSchemeTask.didReceive(data)
-        urlSchemeTask.didFinish()
     }
 
-    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {}
+    func webView(_ webView: WKWebView, stop urlSchemeTask: any WKURLSchemeTask) {
+        active.remove(ObjectIdentifier(urlSchemeTask))
+    }
 }
 
 // MARK: - Factory
@@ -173,6 +222,10 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
     private var renderAfterEditing = false
     private var editAfterRender: Int?
     private var outputGenerations: [Int: Int] = [:]
+    /// What the page showing was rendered from, so selecting and going to a line don't read and parse the file again.
+    private var renderedSource: RenderedMarkdownSource?
+    private var goToRequest = 0
+    private var crashes = CrashRecovery()
 
     var view: NSView { container }
 
@@ -228,9 +281,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
     }
 
     private func renderedLines(_ selection: WebSelection) -> (first: Int, last: Int)? {
-        guard format == .markdown, selection.line >= 0, selection.lineEnd >= selection.line else { return nil }
-        let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-        return MarkdownRenderer.sourceLines(blockStart: selection.line, blockEnd: selection.lineEnd, selected: selection.text, source: text)
+        guard format == .markdown, selection.line >= 0, selection.lineEnd >= selection.line, let lines = renderedSource?.lines else { return nil }
+        return MarkdownRenderer.sourceLines(blockStart: selection.line, blockEnd: selection.lineEnd, selected: selection.text, lines: lines)
     }
 
     func select(text: String, to end: String?) -> Bool {
@@ -298,9 +350,12 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
             let rendered = MarkdownRenderer.render(markdown: source, baseHref: base.absoluteString, title: title,
                                                    extras: Self.extras(diagrams: diagrams))
             // Rendered stays rendered: `report.md:40` lands on the section holding line 40.
-            let anchor = line.flatMap { MarkdownRenderer.anchor(forLine: $0, in: source) }
+            let headings = line.map { _ in MarkdownRenderer.headings(in: source) }
+            let anchor = line.flatMap { line in headings.flatMap { MarkdownRenderer.anchor(forLine: line, in: $0) } }
+            let shown = RenderedMarkdownSource(text: source, headings: headings)
             await MainActor.run {
                 guard let self, self.renderGeneration == generation else { return }
+                self.renderedSource = shown
                 self.load(rendered, base: base, anchor: anchor, keepScroll: keepScroll)
             }
         }
@@ -392,6 +447,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
                 }
             }
         } else {
+            webView.lastScrollY = nil
             webView.loadHTMLString(rendered.html, baseURL: base)
         }
     }
@@ -504,6 +560,26 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
         }
     }
 
+    /// Its web process crashed or was ended, which leaves a blank page. Once, it's drawn again where it
+    /// was, from the place last heard: a page that's gone can't say.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard hasRenderedPage, !inSource else { return }
+        let place = pendingScrollY ?? self.webView.lastScrollY
+        // A cell being typed in went with the page.
+        editingCell = nil
+        editingBase = nil
+        renderAfterEditing = false
+        quoteButton.isHidden = true
+        if crashes.shouldReload(at: ProcessClock.now()) {
+            render(keepScroll: false)
+            pendingScrollY = place
+        } else {
+            renderGeneration += 1
+            pageHasPendingDiagrams = false
+            self.webView.loadHTMLString(CrashPage.html(path: path), baseURL: nil)
+        }
+    }
+
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else {
@@ -576,8 +652,24 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
         }
         // A notebook's lines are its JSON's, and don't exist in the rendered page.
         guard format == .markdown else { return }
-        let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
-        if let anchor = MarkdownRenderer.anchor(forLine: line, in: text) { scrollTo(anchor: anchor) }
+        if let headings = renderedSource?.headings {
+            if let anchor = MarkdownRenderer.anchor(forLine: line, in: headings) { scrollTo(anchor: anchor) }
+            return
+        }
+        // Parsing a long document takes a while, so not on the main thread, and once for each render.
+        goToRequest += 1
+        let request = goToRequest
+        let shown = renderedSource
+        let path = path
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let headings = MarkdownRenderer.headings(in: shown?.text ?? (try? String(contentsOfFile: path, encoding: .utf8)) ?? "")
+            await MainActor.run {
+                guard let self, self.goToRequest == request else { return }
+                if let shown, self.renderedSource?.id == shown.id { self.renderedSource?.headings = headings }
+                guard let anchor = MarkdownRenderer.anchor(forLine: line, in: headings) else { return }
+                if self.hasRenderedPage { self.scrollTo(anchor: anchor) } else { self.pendingAnchor = anchor }
+            }
+        }
     }
 
     func teardown() {
@@ -2058,11 +2150,12 @@ final class ImageScrollView: NSScrollView {
     override var acceptsFirstResponder: Bool { true }
 }
 
-final class SVGController: NSObject, ItemController {
+final class SVGController: NSObject, ItemController, WKNavigationDelegate {
     let itemID: ItemID
     let path: String
     private let webView: WKWebView
     private var token: FileWatchHub.Token?
+    private var crashes = CrashRecovery()
     private var darkOnClear = false
     private var showingPlate = false
     private var generation = 0
@@ -2080,8 +2173,18 @@ final class SVGController: NSObject, ItemController {
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.setValue(false, forKey: "drawsBackground")
         super.init()
+        webView.navigationDelegate = self
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.reload() }
         reload()
+    }
+
+    /// Its web process crashed or was ended. Once, it's shown again.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if crashes.shouldReload(at: ProcessClock.now()) {
+            load()
+        } else {
+            webView.loadHTMLString(CrashPage.html(path: path), baseURL: nil)
+        }
     }
 
     /// Renders it once natively to see what it draws, away from the main thread.

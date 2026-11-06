@@ -25,6 +25,12 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
     /// Set for a plugin's page: what it may reach, and the only way it reaches it.
     @ObservationIgnored let panel: PluginPanelContext?
     @ObservationIgnored private var lastThemeWasDark: Bool?
+    @ObservationIgnored private var crashes = CrashRecovery()
+    /// A local page's last reload, and whether another is waiting for its turn.
+    @ObservationIgnored var localReloadAt = 0.0
+    @ObservationIgnored var localReloadWaiting = false
+    /// The files a local page's document refers to, for knowing which changes it can show.
+    @ObservationIgnored var localLoaded: (page: String, files: Set<String>) = ("", [])
 
     var addressText: String
     var title: String = ""
@@ -79,6 +85,8 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         self.addressText = url.isFileURL ? url.path : url.absoluteString
         let configuration = WKWebViewConfiguration()
         configuration.preferences.isElementFullscreenEnabled = true
+        // A page opens another only from someone's click or key, and even then it's checked below.
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         panel?.configure(configuration)
         webView = TiriWebView.makeConfigured(configuration)
         webView.isInspectable = true
@@ -87,7 +95,9 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         webView.navigationDelegate = self
         webView.uiDelegate = self
         panel?.attach(self)
+        model.plugins.watchForPerson()
         installTools()
+        if panel == nil { listenForLocalFiles() }
         container.show(webView)
         webView.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         webView.onSelectionChange = { [weak self] selection, top in
@@ -172,9 +182,9 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         }
         // A page's folder, not just the file: a changed stylesheet should reload it too.
         let directory = url.deletingLastPathComponent().path
-        token = FileWatchHub.shared.watch(path: directory, recursive: true) { [weak self] in
-            self?.webView.reload()
-        }
+        token = FileWatchHub.shared.watch(path: directory, recursive: true, changes: { [weak self] paths in
+            self?.localFilesChanged(paths, page: url)
+        })
     }
 
     // MARK: Forced dark
@@ -291,6 +301,15 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         showError(error)
     }
 
+    /// Its web process crashed or was ended, which leaves a blank page. Once, it's loaded again.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if crashes.shouldReload(at: ProcessClock.now()) {
+            load(requested)
+        } else {
+            showError(NSError(domain: "Tiri", code: 1, userInfo: [NSLocalizedDescriptionKey: String(localized: "This page stopped working.")]))
+        }
+    }
+
     private func showError(_ error: any Error) {
         let nsError = error as NSError
         // A navigation replaced by another one isn't a failure.
@@ -321,12 +340,14 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         // target=_blank opens as a peer item rather than a stray window. Pages can ask for this
         // from a script without any click, so it's web links only, one at a time, in this
         // page's own workspace, and only the page in front gets to take the keyboard.
-        guard let url = navigationAction.request.url, url.scheme == "http" || url.scheme == "https" else { return nil }
+        guard let url = navigationAction.request.url, url.scheme == "http" || url.scheme == "https",
+              model.plugins.personJustActed(in: webView) else { return nil }
         let now = ProcessClock.now()
         guard now - lastPopupAt > 1000 else { return nil }
         lastPopupAt = now
         let workspace = model.workspace(containing: itemID)?.id
-        let openHere = { [weak self] in _ = self?.model.openWeb(url: url.absoluteString, split: nil, in: workspace) }
+        let takeFocus = isFocusedItem
+        let openHere = { [weak self] in _ = self?.model.openWeb(url: url.absoluteString, split: nil, in: workspace, takeFocus: takeFocus) }
         if !model.sendsToBrowser(url, openHere: openHere) { openHere() }
         return nil
     }

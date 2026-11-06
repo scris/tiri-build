@@ -1164,11 +1164,11 @@ final class AppModel {
     }
 
     @discardableResult
-    func openWeb(url: String, split: SplitDirection?, in workspaceID: WorkspaceID? = nil) -> ItemID {
+    func openWeb(url: String, split: SplitDirection?, in workspaceID: WorkspaceID? = nil, takeFocus: Bool = true) -> ItemID {
         let target = workspaceID ?? activeID
         let item = Item(content: .web(WebSpec(url: url)))
         update(workspace: target) { $0.addItem(item, split: split) }
-        if target == activeID { requestFocus() }
+        if target == activeID, takeFocus { requestFocus() }
         return item.id
     }
 

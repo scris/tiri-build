@@ -840,7 +840,7 @@ enum WebSelectionScript {
         const selection = window.getSelection();
         const text = selectedText(selection);
         if (!text.trim()) {
-          window.webkit.messageHandlers.tiriSelection.postMessage({ empty: true });
+          window.webkit.messageHandlers.tiriSelection.postMessage({ empty: true, scrollY: window.scrollY });
           return;
         }
         const found = ends(selection);
@@ -863,7 +863,7 @@ enum WebSelectionScript {
         const first = block(found.startContainer);
         const last = block(found.endContainer);
         window.webkit.messageHandlers.tiriSelection.postMessage({
-          text: text.slice(0, 20000), top: box.top, bottom: box.bottom, height: window.innerHeight,
+          text: text.slice(0, 20000), top: box.top, bottom: box.bottom, height: window.innerHeight, scrollY: window.scrollY,
           line: first ? Number(first.dataset.line) : -1,
           lineEnd: last ? Number(last.dataset.lineEnd) : -1
         });
@@ -913,6 +913,8 @@ final class TiriWebView: WKWebView, WKScriptMessageHandler {
     var selection: WebSelection?
     var onSelectionChange: ((WebSelection?, _ top: CGFloat?) -> Void)?
     var onQuote: (() -> Void)?
+    /// Where the page was last scrolled to, for putting it back if its process dies.
+    var lastScrollY: Double?
 
     static func makeConfigured(_ configuration: WKWebViewConfiguration) -> TiriWebView {
         let controller = configuration.userContentController
@@ -928,6 +930,7 @@ final class TiriWebView: WKWebView, WKScriptMessageHandler {
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any] else { return }
+        if let scrollY = body["scrollY"] as? NSNumber { lastScrollY = scrollY.doubleValue }
         guard let text = body["text"] as? String, !text.isEmpty else {
             selection = nil
             onSelectionChange?(nil, nil)

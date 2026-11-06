@@ -1654,3 +1654,6 @@
 "unsaved" = "未保存";
 "Change on Disk" = "磁盘上的更改";
 "%@ isn't UTF-8 text, so Tiri left it alone." = "%@ 不是 UTF-8 文本，所以 Tiri 没有改动它。";
+"This page stopped working." = "此页面停止响应了。";
+"Can't show this file" = "无法显示此文件";
+"It tries again when the file changes." = "文件有改动时会再试一次。";
