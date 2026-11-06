@@ -4,6 +4,20 @@ public enum ThemeMode: String, Codable, Sendable, CaseIterable {
     case system, light, dark
 }
 
+/// The color Tiri marks things with: the Mac's accent color, or always the pink of its icon.
+public enum ColorTheme: String, Codable, Sendable, CaseIterable {
+    case system, pink
+
+    /// The Mac's own accent and text highlight it stands for, as `AppleAccentColor` and
+    /// `AppleHighlightColor` store them. None follows the Mac.
+    public var accent: (number: Int, highlight: String)? {
+        switch self {
+        case .system: nil
+        case .pink: (6, "1.000000 0.749020 0.823529 Pink")
+        }
+    }
+}
+
 /// What cmd-clicking a file in a terminal does.
 public enum LinkOpenTarget: String, Codable, Sendable {
     case peek, tab, external
@@ -45,6 +59,7 @@ public enum WordWrap: String, Codable, Sendable, CaseIterable {
 /// so a newer settings file can't break an older app.
 public struct TiriSettings: Equatable, Sendable {
     public var theme: ThemeMode = .system
+    public var colorTheme: ColorTheme = .system
     public var terminalFontFamily = "SF Mono"
     public var terminalFontSize = 13.0
     public var terminalTranslucent = false
@@ -92,6 +107,8 @@ public struct TiriSettings: Equatable, Sendable {
       // Tiri settings. Saved changes apply immediately.
       // "system", "light" or "dark"
       "theme": "system",
+      // "system" uses your Mac's accent color, "pink" always uses Tiri's.
+      "colorTheme": "system",
 
       "terminal.fontFamily": "SF Mono",
       "terminal.fontSize": 13,
@@ -214,6 +231,13 @@ public struct TiriSettings: Equatable, Sendable {
                 throw ParseError.wrongType(key: "theme", expected: "\"system\", \"light\" or \"dark\"")
             }
             settings.theme = theme
+        }
+        try string("colorTheme") { _ in }
+        if let raw = object["colorTheme"] as? String {
+            guard let colorTheme = ColorTheme(rawValue: raw) else {
+                throw ParseError.wrongType(key: "colorTheme", expected: "\"system\" or \"pink\"")
+            }
+            settings.colorTheme = colorTheme
         }
         try string("terminal.fontFamily") { settings.terminalFontFamily = $0 }
         try number("terminal.fontSize") { settings.terminalFontSize = min(max($0, 6), 72) }

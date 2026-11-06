@@ -103,10 +103,15 @@ public enum SettingsSchema {
     private static func strings(_ values: [String]) -> JSONValue { .array(values.map(JSONValue.string)) }
 
     public static let all: [SettingDefinition] = [
-        .init(key: "theme", pane: .general, group: "Appearance", title: "Theme",
+        .init(key: "theme", pane: .general, group: "Appearance", title: "Light or dark",
               explanation: "Follow your Mac, or always use light or dark.",
               kind: .choice([.init("system", "System"), .init("light", "Light"), .init("dark", "Dark")]),
               value: { .string($0.theme.rawValue) }),
+        .init(key: "colorTheme", pane: .general, group: "Appearance", title: "Color",
+              explanation: "Your Mac's accent color, or always Tiri's pink.",
+              note: "It colors selections, switches, tabs and highlights.",
+              kind: .choice([.init("system", "Your Mac"), .init("pink", "Tiri Pink")]),
+              value: { .string($0.colorTheme.rawValue) }),
         .init(key: "window.zoomLevel", pane: .general, group: "Appearance", title: "Zoom",
               explanation: "Makes text in terminals and files bigger or smaller, on top of their font sizes.",
               note: "Web pages and rendered markdown scale to match. ⌘+ and ⌘- change it, and ⌘0 puts it back.",

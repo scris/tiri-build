@@ -48,6 +48,7 @@ An independent review of correctness found 15 defects and one of trust found 8, 
 | What | Why | How to check |
 |---|---|---|
 | The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
+| Color: the swatches pressed with a mouse, and "Your Mac" on a Mac whose accent isn't pink | Test copies take no clicks, and this Mac's accent is pink. Switching was driven through `tiri settings set colorTheme`, live both ways and across a relaunch, with `TIRI_DEV_MAC_ACCENT=blue` standing in for a blue Mac | Press each swatch; on another Mac, change Accent color in System Settings while on "Your Mac" |
 | A notarized build on another Mac | Notarization is checked here with `spctl` and `stapler`. A real download on a Mac that's never seen Tiri isn't | Unzip one elsewhere and double-click it |
 | Sessions over days, and across a reboot | Quit and relaunch are tested on a real Claude session. A long run isn't | Use it |
 | Clicking a native notification | What a click does is tested: the right workspace and terminal come up. The click itself comes from the system, and notifications need permission | Allow notifications, then click one when an agent finishes while you're in another app |

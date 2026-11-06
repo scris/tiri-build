@@ -2883,6 +2883,32 @@ final class AppModel {
         case .light: NSApp?.appearance = NSAppearance(named: .aqua)
         case .dark: NSApp?.appearance = NSAppearance(named: .darkAqua)
         }
+        applyColorTheme()
+    }
+
+    /// AppKit looks for the accent in the app's own defaults before the Mac's, so one written
+    /// there colors everything, native switches and selections included, and survives a relaunch
+    /// without reading settings first. It's only reread on the notice System Settings sends when
+    /// the accent changes, which every app hears and answers by redrawing, so it's sent only on a change.
+    private func applyColorTheme() {
+        guard let domain = Bundle.main.bundleIdentifier else { return }
+        let wanted = settings.colorTheme.accent ?? Self.testCopyMacAccent
+        let stored = UserDefaults.standard.persistentDomain(forName: domain) ?? [:]
+        guard stored["AppleAccentColor"] as? Int != wanted?.number || stored["AppleHighlightColor"] as? String != wanted?.highlight else { return }
+        if let wanted {
+            UserDefaults.standard.set(wanted.number, forKey: "AppleAccentColor")
+            UserDefaults.standard.set(wanted.highlight, forKey: "AppleHighlightColor")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "AppleAccentColor")
+            UserDefaults.standard.removeObject(forKey: "AppleHighlightColor")
+        }
+        DistributedNotificationCenter.default().postNotificationName(.init("AppleAquaColorVariantChanged"), object: nil, userInfo: nil, deliverImmediately: true)
+    }
+
+    /// A test copy can stand in for a Mac whose accent isn't pink, without changing this one's.
+    private static var testCopyMacAccent: (number: Int, highlight: String)? {
+        guard isTestCopy, ProcessInfo.processInfo.environment["TIRI_DEV_MAC_ACCENT"] == "blue" else { return nil }
+        return (4, "0.698039 0.843137 1.000000 Blue")
     }
 
     func setTheme(_ mode: ThemeMode) {
@@ -2912,6 +2938,13 @@ final class AppModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.systemAppearanceRevision += 1
+                for controller in self.controllers.values { controller.applySettings() }
+            }
+        }
+        // A new accent, from the Mac or the color setting: terminals hold theirs as fixed colors.
+        NotificationCenter.default.addObserver(forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
                 for controller in self.controllers.values { controller.applySettings() }
             }
         }

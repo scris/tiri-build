@@ -510,10 +510,21 @@ import Testing
         #expect(settings.filesExclude == ["dist", "*.log"])
     }
 
+    @Test func colorTheme() throws {
+        #expect(TiriSettings().colorTheme == .system)
+        #expect(ColorTheme.system.accent == nil)
+        #expect(ColorTheme.pink.accent?.number == 6)
+        #expect(try TiriSettings.parse(#"{ "colorTheme": "pink" }"#).colorTheme == .pink)
+        #expect(try TiriSettings.parse(SettingsFile.setting("colorTheme", to: "pink", in: TiriSettings.defaultFileContents)).colorTheme == .pink)
+        #expect(try SettingsSchema.value(from: "pink", for: "colorTheme") == .string("pink"))
+        #expect(throws: SettingsSchema.InvalidValue.self) { try SettingsSchema.value(from: "teal", for: "colorTheme") }
+    }
+
     @Test(arguments: [
         #"{ "theme": "dark""#,
         #"{ "theme": "chartreuse" }"#,
         #"{ "theme": 3 }"#,
+        #"{ "colorTheme": "teal" }"#,
         #"{ "terminal.fontSize": "big" }"#,
         #"{ "explorer.autoReveal": 1 }"#,
         #"[1,2]"#,
