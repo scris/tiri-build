@@ -62,7 +62,7 @@ extension AppModel {
         let library = ThemeLibrary()
         let copying = theme.isBuiltIn
         if copying {
-            theme.name = library.freeName(for: theme.name.replacingOccurrences(of: "Tiri ", with: "My "))
+            theme.name = library.freeName(for: "My " + theme.name.replacingOccurrences(of: "Tiri ", with: ""))
             theme.source = "Tiri"
         }
         for change in changes {
@@ -86,7 +86,7 @@ extension AppModel {
     func deleteTheme(_ name: String) -> String? {
         guard let theme = userThemes.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
             return Theme.builtIns.contains { $0.name.caseInsensitiveCompare(name) == .orderedSame }
-                ? "\(name) is one of Tiri's own, and stays." : "There's no theme called \(name)."
+                ? "\(name) is built in, and stays." : "There's no theme called \(name)."
         }
         do {
             try ThemeLibrary().delete(named: theme.name)
@@ -118,7 +118,7 @@ extension AppModel {
             lines.append("")
             lines.append("accent \(activeTheme.accent?.rawValue ?? "mac")")
             for key in Theme.colorKeys { lines.append("\(key) \(activeTheme[key] ?? "")") }
-            if activeTheme.isBuiltIn { lines.append("\nIt's one of Tiri's own: `tiri theme set` makes a copy and changes that.") }
+            if activeTheme.isBuiltIn { lines.append("\nIt's built in: `tiri theme set` makes a copy and changes that.") }
             return text(lines.joined(separator: "\n"))
         case "theme.list":
             if args["available"]?.boolValue == true {
@@ -132,7 +132,7 @@ extension AppModel {
             }
             let lines = allThemes.map { theme in
                 let used = slots(using: theme.name).map { $0.title.lowercased() }
-                return "\(theme.name)\t\(theme.isDark ? "dark" : "light")\t\(theme.isBuiltIn ? "Tiri's" : (theme.source ?? "yours"))"
+                return "\(theme.name)\t\(theme.isDark ? "dark" : "light")\t\(theme.isBuiltIn ? "built in" : (theme.source ?? "yours"))"
                     + (used.isEmpty ? "" : "\tfor \(used.joined(separator: ", "))")
             }
             return text(lines.joined(separator: "\n"))
@@ -181,7 +181,7 @@ extension AppModel {
                 throw ControlHandler.ControlFailure(problem)
             }
             return text(before == activeTheme.name ? "Changed \(activeTheme.name)."
-                                                    : "\(before) is Tiri's own, so this is a copy: \(activeTheme.name), the \(activeThemeSlot.title.lowercased()) theme now.")
+                                                    : "\(before) is built in, so this is a copy: \(activeTheme.name), the \(activeThemeSlot.title.lowercased()) theme now.")
         case "theme.delete":
             guard let name = args["name"]?.stringValue else { throw ControlHandler.ControlFailure("Which theme?") }
             if let problem = deleteTheme(name) { throw ControlHandler.ControlFailure(problem) }

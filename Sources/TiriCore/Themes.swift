@@ -243,8 +243,8 @@ public enum ThemeSlot: String, CaseIterable, Sendable {
 }
 
 extension Theme {
-    public static let tiriDark = tiri(dark: true, name: "Tiri Dark", accent: nil)
-    public static let tiriLight = tiri(dark: false, name: "Tiri Light", accent: nil)
+    public static let tiriDark = tiri(dark: true, name: "System Dark", accent: nil)
+    public static let tiriLight = tiri(dark: false, name: "System Light", accent: nil)
     public static let tiriPinkDark = tiri(dark: true, name: "Tiri Pink Dark", accent: .pink)
     public static let tiriPinkLight = tiri(dark: false, name: "Tiri Pink Light", accent: .pink)
 
@@ -283,7 +283,7 @@ extension Theme {
     }
 
     public static let tiriHighContrastDark = Theme(
-        name: "Tiri High Contrast Dark",
+        name: "High Contrast Dark",
         terminal: .init(background: "#000000", foreground: "#ffffff", cursor: "#ffffff", selection: "#ffffff59",
                         ansi: ["#000000", "#ff6e6e", "#5fff87", "#ffff5f", "#6eb4ff", "#ff87ff", "#5fffff", "#e4e4e4",
                                "#a8a8a8", "#ff9090", "#90ffb0", "#ffff90", "#90ccff", "#ffb0ff", "#90ffff", "#ffffff"]),
@@ -293,7 +293,7 @@ extension Theme {
         source: "Tiri")
 
     public static let tiriHighContrastLight = Theme(
-        name: "Tiri High Contrast Light",
+        name: "High Contrast Light",
         terminal: .init(background: "#ffffff", foreground: "#000000", cursor: "#000000", selection: "#0050e04d",
                         ansi: ["#000000", "#b00000", "#006b00", "#6b5000", "#0040c0", "#8000a0", "#006070", "#4a4a4a",
                                "#303030", "#d00000", "#008000", "#7a5c00", "#0050e0", "#9a00c0", "#007080", "#000000"]),

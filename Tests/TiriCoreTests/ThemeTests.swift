@@ -154,7 +154,7 @@ struct ThemeTests {
         #expect(library.theme(named: "night owl")?.name == "Night Owl")
         #expect(library.theme(named: "Tiri Pink Dark")?.accent == .pink)
         #expect(library.freeName(for: "Night Owl") == "Night Owl 2")
-        #expect(library.freeName(for: "Tiri Dark") == "Tiri Dark 2")
+        #expect(library.freeName(for: "System Dark") == "System Dark 2")
         try library.delete(named: "Night Owl")
         #expect(library.all().isEmpty)
     }

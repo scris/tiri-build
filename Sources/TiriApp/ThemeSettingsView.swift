@@ -107,7 +107,7 @@ struct ThemeSlotCard: View {
 
     @ViewBuilder private func themeChoices(selected: String) -> some View {
         let own = model.userThemes
-        Section("Tiri's") {
+        Section("Built In") {
             ForEach(Theme.builtIns, id: \.name) { choice($0, selected: selected) }
         }
         if !own.isEmpty {

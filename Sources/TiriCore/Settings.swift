@@ -116,10 +116,10 @@ public struct TiriSettings: Equatable, Sendable {
       // "system", "light" or "dark"
       "theme": "system",
       // Colors for terminals, the editor and highlights, by look. `tiri theme` lists them and brings more in.
-      "theme.dark": "Tiri Dark",
-      "theme.light": "Tiri Light",
-      "theme.highContrastDark": "Tiri High Contrast Dark",
-      "theme.highContrastLight": "Tiri High Contrast Light",
+      "theme.dark": "System Dark",
+      "theme.light": "System Light",
+      "theme.highContrastDark": "High Contrast Dark",
+      "theme.highContrastLight": "High Contrast Light",
 
       "terminal.fontFamily": "SF Mono",
       "terminal.fontSize": 13,

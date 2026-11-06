@@ -227,7 +227,7 @@ PDF, Office, iWork, RTF, font and web archive previews have no dark mode, so Tir
 
 ### Themes
 
-A theme colors terminals, the editor and highlights (selections, switches, tabs). Like VS Code, you pick one for dark and one for light in **Settings → General**, and two more under **High Contrast** for when Increase Contrast is on. Tiri has its own: **Tiri Dark** and **Tiri Light** use your Mac's accent, **Tiri Pink Dark** and **Tiri Pink Light** always use Tiri's pink.
+A theme colors terminals, the editor and highlights (selections, switches, tabs). Like VS Code, you pick one for dark and one for light in **Settings → General**, and two more under **High Contrast** for when Increase Contrast is on. Tiri has its own: **System Dark** and **System Light** highlight in your Mac's accent color, **Tiri Pink Dark** and **Tiri Pink Light** always in Tiri's pink.
 
 **Bring a Theme…** lists the themes Cursor, VS Code and Ghostty already have on your Mac, so most are one click, or takes a Ghostty theme, an iTerm2 `.itermcolors` file or a VS Code theme `.json`. A terminal theme gives the editor its colors from its palette, and an editor theme without terminal colors gets Tiri's. **Colors** shows every color of the theme showing now to change. Changing one of Tiri's makes your own copy. Or ask your agent: it uses `tiri theme`.
 

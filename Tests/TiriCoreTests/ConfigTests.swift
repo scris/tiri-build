@@ -513,8 +513,8 @@ import Testing
 
     @Test func themeSlots() throws {
         let defaults = TiriSettings()
-        #expect(defaults.themeName(for: .dark) == "Tiri Dark")
-        #expect(defaults.themeName(for: .highContrastLight) == "Tiri High Contrast Light")
+        #expect(defaults.themeName(for: .dark) == "System Dark")
+        #expect(defaults.themeName(for: .highContrastLight) == "High Contrast Light")
         // Before themes, pink was its own setting: it becomes Tiri's pink themes.
         let old = try TiriSettings.parse(#"{ "colorTheme": "pink" }"#)
         #expect(old.darkTheme == "Tiri Pink Dark" && old.lightTheme == "Tiri Pink Light")
