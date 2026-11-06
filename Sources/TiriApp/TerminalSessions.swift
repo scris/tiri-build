@@ -6,11 +6,12 @@ import TiriCore
 enum TerminalSessions {
     /// Socket paths are short by law, so this hashes which Tiri it belongs to.
     /// A test instance's sessions never mix with yours.
-    static var directory: String {
+    /// Worked out once: every terminal asks for it several times a second.
+    static let directory: String = {
         let identity = TiriPaths.supportDirectory.path
         let digest = SHA256.hash(data: Data(identity.utf8)).prefix(6).map { String(format: "%02x", $0) }.joined()
         return "/tmp/tiri-\(getuid())-\(digest)"
-    }
+    }()
 
     static func socketPath(for item: ItemID) -> String { directory + "/" + item + ".sock" }
 

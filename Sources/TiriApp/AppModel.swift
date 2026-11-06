@@ -510,6 +510,11 @@ final class AppModel {
 
     // MARK: Controllers
 
+    /// The terminals that have been opened, in no particular order.
+    var openTerminals: [(id: ItemID, controller: TerminalController)] {
+        controllers.compactMap { id, controller in (controller as? TerminalController).map { (id, $0) } }
+    }
+
     func controller(for id: ItemID) -> ItemController? {
         if let existing = controllers[id] { return existing }
         guard let item = anyItem(id) else { return nil }

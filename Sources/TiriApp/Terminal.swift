@@ -897,6 +897,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     private func spawn() {
         spawnedAt = ProcessClock.now()
+        knownSessionShell = nil
         if remoteDestination != nil {
             spawnOnServer()
             return
@@ -1141,15 +1142,25 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     private var shellPID: pid_t {
         if isRemote { return remoteShell }
-        if let session = TerminalSessions.shellPID(for: itemID) { return session }
+        if let session = sessionShellPID { return session }
         return started && !exited ? terminalView.process.shellPid : 0
     }
+
+    /// The program the session server runs, from its pid file. The status tick asks for it several
+    /// times a second in every terminal, and reading the file each time was most of the tick's cost.
+    /// Read again once that process is gone, and forgotten whenever the terminal starts again.
+    private var sessionShellPID: pid_t? {
+        if let known = knownSessionShell, kill(known, 0) == 0 { return known }
+        knownSessionShell = TerminalSessions.shellPID(for: itemID)
+        return knownSessionShell
+    }
+    private var knownSessionShell: pid_t?
 
     private var foregroundPID: pid_t? {
         guard started, !exited else { return nil }
         if isRemote { return remoteForeground > 0 ? remoteForeground : nil }
         // In a session, the view's own terminal only ever has the relay in it.
-        if let session = TerminalSessions.shellPID(for: itemID) {
+        if let session = sessionShellPID {
             return TerminalSessions.foregroundGroup(of: session)
         }
         let fd = terminalView.process.childfd
@@ -1222,12 +1233,14 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             trackedCwd = directory
             model.terminalCwdChanged(item: itemID, cwd: directory)
         }
-        let typed = foregroundCommandLine.isEmpty ? nil : AgentReference.agent(commandLine: foregroundCommandLine, command: nil)?.rawValue
+        // Two system calls each time, so asked once a tick.
+        let commandLine = foregroundCommandLine
+        let typed = commandLine.isEmpty ? nil : AgentReference.agent(commandLine: commandLine, command: nil)?.rawValue
         if typed != lastTypedAgent {
             lastTypedAgent = typed
             model.terminalTypedAgentChanged(item: itemID, agent: typed)
         }
-        if !hookActive, let agent = runningAgent {
+        if !hookActive, let agent = runningAgent(commandLine: commandLine) {
             if let remoteDestination {
                 model.remote.offerHooksIfNeeded(agent, on: remoteDestination)
             } else {
@@ -1311,6 +1324,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         sessionUp = false
+        knownSessionShell = nil
         if handleEndOverSSH(exitCode: exitCode) { return }
         exited = true
         // A resume that stops at once either has no conversation to find, or met something that may
@@ -1478,10 +1492,12 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     var isRunning: Bool { started && !exited }
 
-    var runningAgent: AgentReference.Agent? {
+    var runningAgent: AgentReference.Agent? { runningAgent(commandLine: foregroundCommandLine) }
+
+    private func runningAgent(commandLine: [String]) -> AgentReference.Agent? {
         var command: String?
         if case .terminal(let spec)? = model.anyItem(itemID)?.content { command = spec.command }
-        return AgentReference.agent(commandLine: foregroundCommandLine, command: command)
+        return AgentReference.agent(commandLine: commandLine, command: command)
     }
 
     /// Whether a process is this terminal's shell or something running under it.
