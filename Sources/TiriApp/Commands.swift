@@ -115,6 +115,7 @@ extension AppModel {
                 if let repository = model.frontRepository { model.confirmPush(repository) }
             },
             AppCommand(id: "newWorkspace", title: "New Workspace…", category: "Workspaces") { $0.newWorkspaceInteractive() },
+            AppCommand(id: "newWindow", title: "New Window", category: "Workspaces") { $0.openNewWindow() },
             AppCommand(id: "addFolder", title: "Add Folder to Workspace…", category: "Workspaces") { $0.addFolderInteractive() },
             AppCommand(id: "connectToServer", title: "Connect to Server…", category: "Workspaces") { $0.connectToServerInteractive() },
             AppCommand(id: "importWorkspace", title: "Import .code-workspace…", category: "Workspaces") { $0.importWorkspaceInteractive() },
@@ -151,6 +152,10 @@ extension AppModel {
             AppCommand(id: "manageLanguageServers", title: "Language Servers…", category: "Settings") { $0.openLanguageServerSettings() },
             AppCommand(id: "newPlugin", title: "New Plugin…", category: "Settings") { $0.promptForNewPlugin() },
             AppCommand(id: "changeTiri", title: "Change Tiri…", category: "Settings") { $0.yourTiri.beginChange(surface: nil) },
+            AppCommand(id: "reportProblem", title: "Report a Problem…", category: "Help") { $0.reportProblem() },
+            AppCommand(id: "reopenWithEncoding", title: "Reopen with Encoding…", category: "Editing") { $0.chooseEncoding() },
+            AppCommand(id: "saveAsUTF8", title: "Save as UTF-8", category: "Editing") { $0.saveFrontAsUTF8() },
+            AppCommand(id: "checkForUpdates", title: "Check for Updates…", category: "Help") { $0.yourTiri.checkForUpdatesNow() },
             AppCommand(id: "showYourTiri", title: "Your Tiri", category: "Settings") { $0.openSettings(pane: .yourTiri) },
             AppCommand(id: "managePlugins", title: "Plugins…", category: "Settings") { $0.openPluginSettings() },
             AppCommand(id: "importPlugin", title: "Import Plugin…", category: "Settings") {
@@ -785,6 +790,26 @@ enum ControlHandler {
             }
             return .array(list)
 
+        case "window.list":
+            return model.describeWindows()
+
+        case "window.new":
+            let workspace = try request.args["workspace"]?.stringValue.map { try findWorkspace($0, model: model) }
+            guard let id = model.openNewWindow(showing: workspace?.id) else { throw ControlFailure("Tiri's window isn't up yet.") }
+            return .object(["id": .string(id), "workspace": .string(model.windowWorkspaces[id].flatMap { id in model.workspaces.first { $0.id == id }?.name } ?? "")])
+
+        case "window.focus":
+            let name = try string(request, "window")
+            guard let id = model.findWindow(name) else { throw ControlFailure("No window shows \"\(name)\". Run tiri window list.") }
+            model.focusWindow(id)
+            return .object(["id": .string(id)])
+
+        case "window.close":
+            let name = try string(request, "window")
+            guard let id = model.findWindow(name) else { throw ControlFailure("No window shows \"\(name)\". Run tiri window list.") }
+            model.closeWindow(id)
+            return .object(["closed": .string(id)])
+
         case "workspace.switch":
             let workspace = try findWorkspace(try string(request, "name"), model: model)
             model.switchWorkspace(workspace.id)
@@ -941,6 +966,13 @@ enum ControlHandler {
             }
             return .object([:])
 
+        case "report":
+            let facts = model.problemFacts(crash: ProblemReport.latestCrash(bundleID: AppModel.reportBundleID, since: Date().addingTimeInterval(-7 * 86400)))
+            let body = ProblemReport.body(facts)
+            let url = ProblemReport.issueURL(title: request.args["title"]?.stringValue ?? "", body: body)
+            if request.args["open"]?.boolValue == true { NSWorkspace.shared.open(url) }
+            return .object(["body": .string(body), "url": .string(url.absoluteString)])
+
         case "change.facts":
             model.yourTiri.recordFacts()
             return .object([:])
@@ -976,6 +1008,10 @@ enum ControlHandler {
                 yours.finishMarking(CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3]))
             case "unfold": UserDefaults.standard.set(true, forKey: "YourTiri.open.\(value ?? "")")
             case "where": break
+            case "notice", "press-notice":
+                guard let item = value ?? yours.draft?.item, let terminal = model.existingController(for: item) as? TerminalController else { throw ControlFailure("No change is being made.") }
+                if request.args["action"]?.stringValue == "press-notice" { terminal.pressNotice() }
+                return .object(["notice": .string(terminal.noticeText ?? ""), "item": .string(item)])
             default: throw ControlFailure("Unknown action.")
             }
             yours.refresh()
@@ -1363,6 +1399,26 @@ enum ControlHandler {
             let id = try requireItem(request, model: model)
             guard let terminal = model.controller(for: id) as? TerminalController else { throw ControlFailure("\(id) isn't a terminal") }
             return .object(["text": .string(terminal.readText(lines: request.args["lines"]?.intValue))])
+
+        case "dev-blocked-link":
+            // SwiftTerm's own alert, as it builds it, as if a ⌘-click on this terminal had just set it off.
+            guard AppModel.isTestCopy else { throw ControlFailure("Only in a test copy.") }
+            let id = try requireItem(request, model: model)
+            guard let terminal = model.controller(for: id) as? TerminalController, let window = terminal.terminalView.window else { throw ControlFailure("\(id) isn't a terminal on screen") }
+            BlockedLinks.clicked = (terminal.terminalView, Date(), false)
+            let alert = NSAlert()
+            alert.messageText = "Link blocked"
+            alert.informativeText = request.args["reason"]?.stringValue ?? "The target is not an absolute URL with a scheme."
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 480, height: 96))
+            let text = NSTextView(frame: scroll.contentView.bounds)
+            text.string = request.args["target"]?.stringValue ?? ""
+            scroll.documentView = text
+            alert.accessoryView = scroll
+            alert.addButton(withTitle: "OK")
+            alert.beginSheetModal(for: window) { _ in }
+            let shown = window.attachedSheet != nil
+            if shown, let sheet = window.attachedSheet { window.endSheet(sheet) }
+            return .object(["alertShown": .bool(shown)])
 
         case "dev-compose":
             guard Bundle.main.bundleIdentifier?.contains(".test.") == true else { throw ControlFailure("Only in a test copy.") }

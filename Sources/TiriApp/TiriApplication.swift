@@ -16,6 +16,16 @@ struct TiriApplication: App {
         .defaultSize(width: 1320, height: 860)
         .windowToolbarStyle(.unified(showsTitle: true))
         .commands { TiriMenus(model: model) }
+        // Each further window, with a workspace of its own. Tiri says what opens and what comes back.
+        WindowGroup("Tiri", id: AppModel.workspaceWindowScene, for: String.self) { $windowID in
+            WorkspaceWindowRoot(windowID: windowID)
+                .environment(model)
+                .frame(minWidth: 640, minHeight: 400)
+        }
+        .defaultSize(width: 1320, height: 860)
+        .windowToolbarStyle(.unified(showsTitle: true))
+        .handlesExternalEvents(matching: [])
+        .restorationBehavior(.disabled)
     }
 }
 
@@ -30,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         AppModel.shared.finishLaunching()
+        AppModel.shared.offerCrashReport()
         CopyHealth.startWatching()
         // After a crash or a force quit, SwiftUI can start without opening its window. Terminals have
         // reattached by then, but nothing shows until the Dock icon is clicked, so do that for it.
@@ -111,6 +122,7 @@ struct TiriMenus: Commands {
         // App menu: About with credits (who made it, the website, the source).
         CommandGroup(replacing: .appInfo) {
             Button("About \(AboutPanel.appName)") { AboutPanel.show() }
+            item("checkForUpdates")
         }
         CommandGroup(replacing: .appSettings) {
             item("openSettings")
@@ -126,6 +138,7 @@ struct TiriMenus: Commands {
                 Button("Manage Agents…") { model.openAgentSettings() }
             }
             Divider()
+            item("newWindow")
             item("newWorkspace")
             item("addFolder")
             item("importWorkspace")
@@ -177,6 +190,8 @@ struct TiriMenus: Commands {
         CommandGroup(replacing: .help) {
             Button("Tiri Agent Guide") { model.showAgentGuide() }
             Button("Tiri Website") { NSWorkspace.shared.open(AboutPanel.websiteURL) }
+            Divider()
+            Button("Report a Problem…") { model.reportProblem() }
         }
     }
 }

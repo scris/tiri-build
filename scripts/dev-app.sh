@@ -10,6 +10,8 @@
 # TIRI_DEV_MAC_ACCENT=blue makes it act as if this Mac's accent were blue, to see "Your Mac" against Tiri Pink.
 # TIRI_DEV_A11Y=transparency,contrast,motion makes it act as if Reduce Transparency, Increase Contrast or Reduce
 # Motion were on, without touching this Mac's settings. `cli <name> dev-a11y <list|none>` changes it live.
+# TIRI_UPDATE_FEED=http://127.0.0.1:<port>/update.json gives it a release feed on this Mac.
+# TIRI_DEV_NO_DEVELOPER_TOOLS=1 makes it act as if this Mac had no Command Line Tools, as a fresh Mac doesn't; =all, as if it had no git anywhere.
 #   scripts/dev-app.sh env <name>        prints `export ...` lines; `eval` them to use its CLI
 #   scripts/dev-app.sh cli <name> ...    runs its `tiri`
 # Never run ./build.sh to test while someone's Tiri is open: it deletes the running app.
@@ -58,7 +60,9 @@ launch_in_background() {
     ${TIRI_DEV_OPTION:+--env TIRI_DEV_OPTION=1} \
     ${TIRI_DEV_MAC_ACCENT:+--env TIRI_DEV_MAC_ACCENT="$TIRI_DEV_MAC_ACCENT"} \
     ${TIRI_DEV_A11Y:+--env TIRI_DEV_A11Y="$TIRI_DEV_A11Y"} \
+    ${TIRI_DEV_NO_DEVELOPER_TOOLS:+--env TIRI_DEV_NO_DEVELOPER_TOOLS="$TIRI_DEV_NO_DEVELOPER_TOOLS"} \
     ${TIRI_SSH_CONFIG:+--env TIRI_SSH_CONFIG="$TIRI_SSH_CONFIG"} \
+    ${TIRI_UPDATE_FEED:+--env TIRI_UPDATE_FEED="$TIRI_UPDATE_FEED"} \
     ${TIRI_CONVERSATIONS_HOME:+--env TIRI_CONVERSATIONS_HOME="$TIRI_CONVERSATIONS_HOME"} \
     ${CODEX_HOME:+--env CODEX_HOME="$CODEX_HOME"} ${GROK_HOME:+--env GROK_HOME="$GROK_HOME"}
   for _ in $(seq 1 50); do

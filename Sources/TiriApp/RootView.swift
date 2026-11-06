@@ -3,33 +3,54 @@ import SwiftUI
 import TiriCore
 
 struct RootView: View {
+    var windowID = WindowPlan.main
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
+
+    /// Which workspace this window shows, for everything inside it.
+    private var scope: WindowScope {
+        WindowScope(window: windowID, workspace: model.windowWorkspaces[windowID] ?? model.activeID)
+    }
+
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
-        @Bindable var model = model
+        if model.windowWorkspaces[windowID] != nil {
+            window
+        } else {
+            // A window that's been closed, which SwiftUI may keep, shows nothing, so it can't take a terminal
+            // from where it's shown. The main window, opened again, is given a workspace here.
+            Color.clear.background(WindowAccessor { [windowID] window in model.windowDidAppear(window, id: windowID) })
+        }
+    }
+
+    private var window: some View {
         VStack(spacing: 0) {
-            NavigationSplitView(columnVisibility: $model.sidebarVisibility) {
+            NavigationSplitView(columnVisibility: model.sidebarVisibility(ofWindow: windowID)) {
                 SidebarView()
                     .navigationSplitViewColumnWidth(min: 200, ideal: 270, max: 460)
             } detail: {
                 DetailView()
                     .toolbar { MainToolbar() }
             }
-            .navigationTitle(model.active.name)
+            .navigationTitle(here.active.name)
             .navigationSubtitle(subtitle)
-            .background(WindowAccessor { window in model.windowDidAppear(window) })
-            .overlay(alignment: .top) { ChromeOverlays() }
-            .overlay { TabDragOverlay() }
+            .background(WindowAccessor { [windowID] window in model.windowDidAppear(window, id: windowID) })
+            // What floats over a window, and dragging a tab, belong to the window in front.
+            .overlay(alignment: .top) { if here.isCurrent { ChromeOverlays() } }
+            .overlay { if here.isCurrent { TabDragOverlay() } }
             StatusBar()
         }
+        .environment(\.windowScope, scope)
+        .onAppear { model.adoptOpenWindow(openWindow) }
     }
 
     private var subtitle: String {
-        let folders = model.active.folders
+        let folders = here.active.folders
         switch folders.count {
         case 0: return ""
         case 1:
-            if let host = model.active.remote { return SSHConfigFile.displayName(of: host) + ": " + model.prettyPath(folders[0]) }
+            if let host = here.active.remote { return SSHConfigFile.displayName(of: host) + ": " + model.prettyPath(folders[0]) }
             return (folders[0] as NSString).abbreviatingWithTildeInPath
         default: return "\(folders.count) folders"
         }
@@ -60,12 +81,15 @@ struct WindowAccessor: NSViewRepresentable {
 
 struct MainToolbar: ToolbarContent {
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             // One button, one menu. A button and not a SwiftUI menu, because a toolbar drops a menu's title
             // when it shows icons and text, and this one would be the only one without words.
-            Button { NewMenu.popUp(model: model) } label: {
+            Button { NewMenu.popUp(model: model, folders: here.active.folders) } label: {
                 Label("New", systemImage: "plus")
             }
             .help("New terminal or agent")
@@ -103,7 +127,7 @@ enum NewMenu {
         @objc func fire() { run() }
     }
 
-    static func popUp(model: AppModel) {
+    static func popUp(model: AppModel, folders: [String]) {
         let menu = NSMenu()
         var handlers: [Handler] = []
         func item(_ title: String, _ run: @escaping () -> Void) -> NSMenuItem {
@@ -115,10 +139,10 @@ enum NewMenu {
             return item
         }
         for preset in model.settings.activePresets {
-            if model.active.folders.count > 1 {
+            if folders.count > 1 {
                 let sub = NSMenu()
-                for folder in model.active.folders {
-                    sub.addItem(item(MainToolbar.folderLabel(folder, in: model)) { model.newTerminal(command: preset.command, cwd: folder) })
+                for folder in folders {
+                    sub.addItem(item(MainToolbar.folderLabel(folder, among: folders)) { model.newTerminal(command: preset.command, cwd: folder) })
                 }
                 let parent = NSMenuItem(title: preset.name, action: nil, keyEquivalent: "")
                 parent.submenu = sub
@@ -143,9 +167,9 @@ enum NewMenu {
 
 extension MainToolbar {
     /// Two folders can share a name, and the choice decides where an agent works.
-    static func folderLabel(_ folder: String, in model: AppModel) -> String {
+    static func folderLabel(_ folder: String, among folders: [String]) -> String {
         let name = (folder as NSString).lastPathComponent
-        let shared = model.active.folders.filter { ($0 as NSString).lastPathComponent == name }.count > 1
+        let shared = folders.filter { ($0 as NSString).lastPathComponent == name }.count > 1
         return shared ? (folder as NSString).abbreviatingWithTildeInPath : name
     }
 }
@@ -154,18 +178,21 @@ extension MainToolbar {
 
 struct DetailView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            PaneNodeView(node: model.active.layout)
+            PaneNodeView(node: here.active.layout)
                 .background(Color(nsColor: TerminalTheme.background(dark: model.effectiveDark)))
-            if let peek = model.active.peek {
+            if let peek = here.active.peek {
                 PeekView(item: peek)
                     .transition(.asymmetric(insertion: AccessibilityDisplay.shared.slide(from: .trailing), removal: .opacity))
                     .id(peek.id)
             }
         }
-        .animation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.22)), value: model.active.peek?.id)
+        .animation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.22)), value: here.active.peek?.id)
     }
 }
 
@@ -197,6 +224,9 @@ extension PaneNode {
 struct SplitNodeView: View {
     let split: PaneSplit
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
     @State private var dragStartRatios: [Double]?
     private let dividerThickness: CGFloat = 1
 
@@ -246,7 +276,7 @@ struct SplitNodeView: View {
                             let first = min(max(start[index] + delta, minimum), pair - minimum)
                             ratios[index] = first
                             ratios[index + 1] = pair - first
-                            model.updateActive { $0.setRatios(splitID: split.id, ratios: ratios) }
+                            model.update(workspace: here.activeID) { $0.setRatios(splitID: split.id, ratios: ratios) }
                         }
                         .onEnded { _ in dragStartRatios = nil })
             }
@@ -288,6 +318,9 @@ extension Array {
 struct TabGroupView: View {
     let group: TabGroup
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
     @State private var owner = UUID()
 
     var body: some View {
@@ -295,7 +328,7 @@ struct TabGroupView: View {
             if !group.tabs.isEmpty {
                 TabBar(group: group)
             }
-            if let activeID = group.active, let item = model.active.item(activeID) {
+            if let activeID = group.active, let item = here.active.item(activeID) {
                 ItemHeader(item: item)
                 ItemContentView(item: item, group: group.id)
             } else {
@@ -343,6 +376,9 @@ struct ItemHost: NSViewRepresentable {
     /// In its own window, not in a tab or a Peek.
     var isDetached = false
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     final class Host: NSView {
         weak var installed: NSView?
@@ -420,12 +456,14 @@ struct ItemHost: NSViewRepresentable {
         if let group { model.groupHosts[group] = AppModel.WeakView(view: host) }
         // A view on its way out (a Peek fading after being promoted, a tab that just moved) still
         // gets updated. It must not pull the viewer back from where the item lives now.
-        let owns = { [model, group, itemID, isDetached] () -> Bool in
+        let workspaceID = here.activeID
+        let owns = { [model, group, itemID, isDetached, workspaceID] () -> Bool in
             if model.detachedItems.contains(itemID) { return isDetached }
-            if let group { return model.active.group(id: group)?.active == itemID }
-            return model.active.peek?.id == itemID
+            let workspace = model.workspaces.first { $0.id == workspaceID } ?? model.active
+            if let group { return workspace.group(id: group)?.active == itemID }
+            return workspace.peek?.id == itemID
         }
-        guard owns(), model.accessReady, let controller = model.controller(for: itemID) else { return }
+        guard owns(), here.accessReady, let controller = model.controller(for: itemID) else { return }
         host.ownsInstalledItem = owns
         let changed = host.installed !== controller.view
         host.install(controller.view)
@@ -437,8 +475,9 @@ struct ItemHost: NSViewRepresentable {
                 DispatchQueue.main.async { model.viewerReady(id) }
             }
             // Moving a view between parents drops first responder. Put it back.
-            let isFocusTarget = model.peekHasKeyboard ? model.active.peek?.id == itemID
-                                                      : model.active.focused.active == itemID
+            // Only in the window in front: one behind keeps the keyboard where it is.
+            let isFocusTarget = here.isCurrent && (model.peekHasKeyboard ? model.active.peek?.id == itemID
+                                                                         : model.active.focused.active == itemID)
             // A single click in the tree previews the file and leaves the keyboard in the tree,
             // so arrow keys can keep browsing and Enter can rename.
             let browsingTree = model.window?.firstResponder is TreeOutlineView
@@ -449,6 +488,9 @@ struct ItemHost: NSViewRepresentable {
 
 struct EmptyGroupView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     private func row(_ title: String, _ command: String) -> some View {
         HStack(spacing: 24) {
@@ -463,7 +505,7 @@ struct EmptyGroupView: View {
 
     var body: some View {
         Group {
-            if model.active.folders.isEmpty {
+            if here.active.folders.isEmpty {
                 start
             } else {
                 VStack(spacing: 22) {
@@ -514,9 +556,9 @@ struct EmptyGroupView: View {
     @ViewBuilder
     private func agentTile(_ preset: TerminalPreset) -> some View {
         let symbol = AgentCatalog.profile(executable: AppModel.tool(of: preset))?.symbol ?? "terminal"
-        if model.active.folders.count > 1 {
+        if here.active.folders.count > 1 {
             Menu {
-                ForEach(model.active.folders, id: \.self) { folder in
+                ForEach(here.active.folders, id: \.self) { folder in
                     Button((folder as NSString).lastPathComponent) { model.newTerminal(command: preset.command, cwd: folder) }
                 }
             } label: {
@@ -534,7 +576,7 @@ struct EmptyGroupView: View {
                 AgentTileLabel(name: preset.name, symbol: symbol)
             }
             .buttonStyle(.plain)
-            .help(model.active.folders.isEmpty ? "Choose a folder, then start \(preset.name) there" : "Start \(preset.name)")
+            .help(here.active.folders.isEmpty ? "Choose a folder, then start \(preset.name) there" : "Start \(preset.name)")
         }
     }
 
@@ -715,6 +757,9 @@ struct DetachedPlaceholder: View {
 struct ItemHeader: View {
     let item: Item
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
         switch item.content {
@@ -725,7 +770,7 @@ struct ItemHeader: View {
                 PluginPanelHeader(spec: spec, controller: web)
             }
         case .file(let spec):
-            if model.accessReady, let web = model.controller(for: item.id) as? WebController, web.panel == nil {
+            if here.accessReady, let web = model.controller(for: item.id) as? WebController, web.panel == nil {
                 WebHeader(controller: web, filePath: spec.path)
             } else {
                 FileHeader(item: item, path: spec.path)
@@ -763,6 +808,9 @@ struct FileActions: View {
     let item: Item
     let path: String
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
         let _ = model.controllerRevision
@@ -806,7 +854,18 @@ struct FileActions: View {
             .disabled(!FileManager.default.fileExists(atPath: path))
             .help("Show the file itself")
         }
-        if case .file = item.content, model.hasChanges(path) {
+        if case .file = item.content, let text = model.controller(for: item.id) as? TextController, text.encoding != .utf8 {
+            Button {
+                model.chooseEncoding(for: item.id)
+            } label: {
+                Text(TextEncodings.name(of: text.encoding))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .font(.caption)
+            .help("This file isn't UTF-8. Click to read it another way, or save it as UTF-8")
+        }
+        if case .file = item.content, here.hasChanges(path) {
             Button {
                 model.toggleChangesForFront()
             } label: {
@@ -817,7 +876,7 @@ struct FileActions: View {
             .font(.caption)
             .help("Show what changed in this file")
         }
-        if model.accessReady, let document = model.controller(for: item.id) as? ForceDarkCapable, document.supportsForceDark {
+        if here.accessReady, let document = model.controller(for: item.id) as? ForceDarkCapable, document.supportsForceDark {
             Button {
                 model.setForceDark(!document.forceDarkActive, item: item.id)
             } label: {
@@ -828,7 +887,7 @@ struct FileActions: View {
             .help(document.forceDarkActive ? "Showing dark. Click for true colors" : "Show this document dark")
             .accessibilityLabel(document.forceDarkActive ? "True Colors" : "Show Dark")
         }
-        if model.accessReady, let pdf = (model.controller(for: item.id) as? TextController)?.compiledPDF {
+        if here.accessReady, let pdf = (model.controller(for: item.id) as? TextController)?.compiledPDF {
             Button {
                 model.open(path: pdf, intent: .split(.right))
             } label: {
@@ -839,14 +898,14 @@ struct FileActions: View {
             .font(.caption)
             .help("Open \((pdf as NSString).lastPathComponent) to the Side")
         }
-        if model.accessReady, let conversation = model.conversation(shownAt: path) {
+        if here.accessReady, let conversation = model.conversation(shownAt: path) {
             ConversationBar(conversation: conversation, path: path)
         }
         PluginFileButtons(item: item, path: path)
-        if model.accessReady, let notebook = model.controller(for: item.id) as? MarkdownController, notebook.isNotebook, !notebook.showingSource, notebook.canToggleSource {
+        if here.accessReady, let notebook = model.controller(for: item.id) as? MarkdownController, notebook.isNotebook, !notebook.showingSource, notebook.canToggleSource {
             NotebookBar(viewer: notebook, kernel: model.notebookKernels.kernel(for: notebook.path))
         }
-        if model.accessReady, let markdown = model.controller(for: item.id) as? MarkdownController, markdown.canToggleSource {
+        if here.accessReady, let markdown = model.controller(for: item.id) as? MarkdownController, markdown.canToggleSource {
             Button {
                 model.toggleMarkdownSource(item.id)
             } label: {
@@ -866,6 +925,9 @@ struct FileActions: View {
 struct Breadcrumbs: View {
     let path: String
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
         let parts = crumbs
@@ -898,7 +960,7 @@ struct Breadcrumbs: View {
     private var crumbs: [(name: String, path: String)] {
         // The path within its workspace folder. Files elsewhere show their full path.
         var result: [(String, String)] = []
-        if let folder = model.active.folder(containing: path) {
+        if let folder = here.active.folder(containing: path) {
             result.append(((folder as NSString).lastPathComponent, folder))
             var current = folder
             for component in path.dropFirst(folder.count).split(separator: "/") {

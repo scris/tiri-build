@@ -35,12 +35,17 @@
 <main>
 
 <section class="hero" aria-labelledby="hero-title">
+  <div class="hero-head">
   <h1 id="hero-title">Keep your agent. <br>Get everything around it.</h1>
-  <p class="lede">Claude Code, Codex or Grok run untouched in their real terminals. Everything they make opens beside them as an equal, from diffs to pages, slides and screenshots, with every task in its own workspace.</p>
-  <p class="hero-more"><a href="#change">And it's the only one you can change by asking.</a></p>
+  <div class="hero-get">
+  <a class="get-download" href="/download/Tiri.dmg">Download for Mac</a>
+  <p>Free, with no account. macOS 26, Apple silicon.</p>
+  </div>
+  </div>
 
+  <div class="hero-show">
   <div class="stage" id="tour" data-stage="1120x680" data-zoom="600">
-    <div class="win film" data-film role="img" aria-label="A film of Tiri at work, playing by itself. The chapters below say what each part shows.">
+    <div class="win film" data-film role="img" aria-label="A film of Tiri at work, playing by itself. The chapters say what each part shows.">
       <div class="win-inner" data-inner aria-hidden="true"></div>
       <div class="spot" data-spot aria-hidden="true"></div>
       <div class="veil" aria-hidden="true"></div>
@@ -58,6 +63,7 @@
     <button type="button" data-ch="3"><i></i><b>Your agent drives Tiri</b><span>It opens what it made for you to read.</span></button>
     <button type="button" data-ch="4"><i></i><b>It improves itself</b><span>Say what you want instead, and your agent rewrites Tiri.</span></button>
     <button type="button" class="ch-pause" data-pause aria-label="Pause the film"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5v10M13 5v10"/></svg></button>
+  </div>
   </div>
 </section>
 
@@ -264,16 +270,18 @@
 
 <section class="get" id="get" aria-labelledby="get-title">
   <img src="/img/tiri-icon.png" alt="Tiri's icon: three panes in a dark frame, the top-right one pink" width="128" height="128">
-  <h2 id="get-title">Tiri is in private testing.</h2>
-  <p>The first public build is on its way. It needs macOS 26 on a Mac with Apple silicon.</p>
+  <h2 id="get-title">Get Tiri.</h2>
+  <a class="get-download" href="/download/Tiri.dmg">Download for Mac</a>
+  <p>Free, with no account. Needs macOS 26 on a Mac with Apple silicon. It updates itself, and keeps your changes when it does.</p>
+  <p class="get-small">Something wrong? <a href="https://github.com/tiri-build/tiri/issues/new">Tell us on GitHub</a>, or choose Help → Report a Problem in Tiri.</p>
 </section>
 
 </main>
 
 <footer class="foot">
   <span class="f-brand"><img src="/img/tiri-icon.png" alt="" width="22" height="22">Tiri</span>
-  <span class="f-by">Made by <a href="https://r-q.name">Tianrun Qiu</a>, an AI product builder.</span>
-  <span class="f-links"><a href="https://github.com/RoderickQiu">GitHub</a><a href="https://www.linkedin.com/in/tianrun-qiu/">LinkedIn</a><span>Built in Swift. MPL-2.0.</span></span>
+  <span class="f-by">Made by <a href="https://r-q.name/?ref=tiri.build" referrerpolicy="strict-origin-when-cross-origin">Tianrun Qiu</a>, an AI product builder.</span>
+  <span class="f-links"><a href="https://github.com/tiri-build/tiri">GitHub</a><a href="https://www.linkedin.com/in/tianrun-qiu/">LinkedIn</a><span>Built in Swift. MPL-2.0.</span></span>
 </footer>
 
 <script src="/app.js" defer></script>

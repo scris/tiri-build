@@ -93,6 +93,18 @@ public enum CLIOutput {
                 let folders = workspace["folders"]?.arrayValue?.compactMap(\.stringValue).joined(separator: ", ") ?? ""
                 say("\(marker) \(cell(workspace["name"]))\t\(folders)")
             }
+        case "window.list":
+            for window in response.result?.arrayValue ?? [] {
+                let marker = window["current"]?.boolValue == true ? "*" : " "
+                say("\(marker) \(cell(window["id"]))\t\(cell(window["workspace"]))")
+            }
+        case "window.new", "window.focus":
+            say(cell(response.result?["id"]))
+        case "window.close":
+            break
+        case "report":
+            say(cell(response.result?["body"]))
+            say(cell(response.result?["url"]))
         case "git":
             for repository in response.result?.arrayValue ?? [] {
                 let head = cell(repository["head"]) + (repository["dirty"]?.boolValue == true ? "*" : "")

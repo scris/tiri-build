@@ -132,7 +132,7 @@ Agents make branches and worktrees for themselves, and Tiri finds them. A line u
 
 ### Changes
 
-When a workspace folder is in a Git repository, the sidebar's **Changes** section lists every file changed since the last commit, updating live as agents work. Click a file to see its diff as a tab, or double-click to keep the tab. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.
+When a workspace folder is in a Git repository, the sidebar's **Changes** section lists every file changed since the last commit, updating live as agents work. Tiri uses whatever Git you have: Apple's, Homebrew's, MacPorts', Nix's, GitHub Desktop's, or the one on your shell's PATH. With none at all, Changes offers **Install** for Apple's free Command Line Tools. Tiri never brings up Apple's installer unless you press it. Click a file to see its diff as a tab, or double-click to keep the tab. A changed file has a **Changes** button above it, and a diff has **Open File** to go back. Agents can show you a diff too: `tiri diff src/app.ts` floats it over the terminal.
 
 The menu in the section's header narrows or widens what you see:
 
@@ -186,6 +186,8 @@ Agents often print paths that don't exist as written, like `/resume/index.html` 
 ### Quick edits
 
 Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes a file while you're editing it, your text stays on screen and Tiri tells you, so nothing is overwritten without your choice. Editing a Peek turns it into a tab.
+
+A file that isn't UTF-8, like Latin-1, Windows 1252, GB 18030, Big 5 or Shift JIS, opens the way it was written, and saves the same way. Its encoding shows above it. Click that, or choose **Reopen with Encoding…**, to read it another way or **Save as UTF-8**.
 
 The keys are VS Code's:
 
@@ -373,7 +375,7 @@ A plugin's commands also reach the palette, the Plugins menu and keyboard shortc
 Tiri can be changed the way it was made: by asking.
 
 1. **Ask.** Choose **Change Tiri…** from the Tiri menu, the command palette or the start screen. You can also ask when a palette or settings search finds nothing, or just tell any agent in a Tiri terminal. Drag a box around the part of the screen you mean, so your agent can see it.
-2. **Watch.** Your agent starts in its own tab, in a workspace called **Your Tiri** that holds the exact source of the version you're running. You can follow along in Tiri's own file tree and Changes.
+2. **Watch.** Your agent starts in its own tab, in a workspace called **Your Tiri** that holds the exact source of the version you're running. You can follow along in Tiri's own file tree and Changes. The first time, Claude Code asks whether it may work in that folder, with "No, exit" chosen; press **Trust Tiri's Code** on the tab to answer yes.
 3. **Try it.** When the agent is done, a card on its tab says what changed and how big the change is. Press **Try It**. Tiri closes and reopens in about half a second with everything still running, including the agent that made the change, now inside what it made.
 4. **Keep it or go back.** For ten minutes, the card offers **Keep** and **Back**. Back takes one click and loses nothing.
 
@@ -399,7 +401,9 @@ For agents, `tiri --skill` has the commands, and [CHANGING.md](CHANGING.md) has 
 
 ### Layout
 
-Terminals, files and pages are all tabs. Drag tabs to reorder them, move them between groups or drop them on the edge of a pane to split it. Right-click a tab and choose **Move to New Window** to put it on another display. The tab stays behind and says where it went, and closing the window brings the item back. Extra windows show one item each, and all workspaces stay in the main window.
+Terminals, files and pages are all tabs. Drag tabs to reorder them, move them between groups or drop them on the edge of a pane to split it. Right-click a tab and choose **Move to New Window** to put it on another display. The tab stays behind and says where it went, and closing the window brings the item back.
+
+**File → New Window** (⇧⌘N), or **Open in New Window** on a workspace in the sidebar, gives a workspace a window of its own, with its own sidebar, Changes and terminals. Whatever you do acts on the window in front. A workspace is in one window at a time, so choosing one that's open elsewhere brings its window forward, marked in the switcher with a small window. Closing a window leaves its workspace running in the switcher, and windows come back after a relaunch. Agents use `tiri window new [<workspace>]`, `tiri window list`, `focus` and `close`.
 
 The sidebar's sections (Explorer, Changes, Agents, Review, Open Items) each fold when you click their names. Tiri remembers which are folded, and the open sections take the room.
 
@@ -423,6 +427,7 @@ Shortcuts follow Cursor. You can change any of them in Settings, or by asking yo
 | Next / previous tab | ⌃Tab / ⌃⇧Tab, ⌘⇧] / ⌘⇧[ |
 | Focus group 1…9 | ⌘1…⌘9 |
 | Switch workspace 1…9 | ⌃1…⌃9 |
+| New window | ⇧⌘N |
 | Next terminal needing attention | ⌘⇧U |
 | Past conversations | ⇧⌘H |
 | Quote in agent / add files | ⌘L / ⇧⌘L |
@@ -471,6 +476,14 @@ tiri theme import Monokai --use
 
 `tiri --help` lists every command, and `tiri --skill` prints a guide written for agents. Terminals inside Tiri have `TIRI_SOCKET`, `TIRI_WORKSPACE` and `TIRI_ITEM_ID` set.
 
+### Updates
+
+A downloaded Tiri looks for a newer one every 6 hours while your Mac is plugged in and you're away from it, and offers **Update** in the bottom bar. **Tiri → Check for Updates…** looks right away. Updating keeps your terminals and agents running. A copy you built from source doesn't look; pull and build it instead.
+
+### Reporting a problem
+
+**Help → Report a Problem…** opens a new issue on GitHub, filled in with Tiri's version, macOS and Mac, the agents you use, how many of your own changes are on, and where Tiri last crashed in the past week, if it did. Only the crash's error and its top frames go in, not the file's identifiers or paths. Nothing is sent until you send it on GitHub, where you can edit all of it. After a crash, the next launch offers **Report** once. Agents can use `tiri report`, which prints the same issue, and `--open` shows it to you.
+
 `tiri` works in every terminal inside Tiri. To use it in other terminals, go to **Settings → General** and press **Install**. That adds a link at `~/.local/bin/tiri` that keeps working when the app updates. If your shell doesn't look there, Tiri gives you the line to add.
 
 ---
@@ -500,7 +513,15 @@ xcrun notarytool store-credentials tiri-notary --apple-id you@example.com --team
 scripts/release.sh
 ```
 
-This leaves a stapled `build/release/Tiri.app` with a zip beside it. It checks every program in the bundle before sending anything to Apple, doesn't touch a running Tiri and publishes nothing. `TIRI_RELEASE_IDENTITY` and `TIRI_NOTARY_PROFILE` choose another certificate or set of credentials.
+This leaves three things in `build/release`, next to the stapled `Tiri.app`:
+
+- `Tiri-<version>.dmg`, holding the app and a link to Applications. This is the download.
+- `Tiri-<version>.zip`, which updates fetch. It's the same app, so the disk image is the only thing sent to Apple, and both get its ticket stapled on.
+- `update.json`, the feed entry for that zip: its version, its address and its SHA-256. It goes at `https://tiri.build/update.json`, which is the feed the release looks at, and the zip goes in `https://tiri.build/download`. `TIRI_UPDATE_FEED` and `TIRI_DOWNLOAD_BASE` choose others.
+
+It checks every program in the bundle before sending anything to Apple, doesn't touch a running Tiri and publishes nothing. `TIRI_RELEASE_IDENTITY` and `TIRI_NOTARY_PROFILE` choose another certificate or set of credentials.
+
+`scripts/publish-release.sh` then puts that release on tiri.build: the DMG for people, and the zip and `update.json` that every copy's updates read. It checks the DMG is notarized first, and asks before it deploys.
 
 `scripts/release.sh` refuses to release in two cases: if the changes in `Tests/personal-changes` no longer apply (`scripts/replay-corpus.sh`), or if Tiri stops building with the Command Line Tools alone (`scripts/check-free-tools.sh`). The second usually means something depends on an Apple macro whose plugin only ships with Xcode. The Swift-aware merge for Your Tiri is Mergiraf with a Swift profile, built by `scripts/build-merge-tool.sh`. It's optional and goes at `your-tiri/tools/mergiraf`.
 

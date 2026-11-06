@@ -10,6 +10,9 @@ import TiriCore
 struct PeekView: View {
     let item: Item
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
     @AppStorage("peekWidthFraction") private var widthFraction = 0.6
     @State private var dragStartFraction: Double?
 
@@ -46,10 +49,10 @@ struct PeekView: View {
         .clipShape(.rect(cornerRadius: 16))
         .shadow(color: .black.opacity(0.32), radius: 26, y: 10)
         .reportingFrame { frame in
-            model.layoutRegistry.peekFrame = frame
+            if here.isCurrent { model.layoutRegistry.peekFrame = frame }
         }
         .onDisappear {
-            if model.active.peek == nil { model.layoutRegistry.peekFrame = nil }
+            if here.isCurrent, model.active.peek == nil { model.layoutRegistry.peekFrame = nil }
         }
     }
 
@@ -131,14 +134,14 @@ struct PeekView: View {
     private var detail: String? {
         switch item.content {
         case .file(let spec):
-            let relative = model.active.relativePath(spec.path)
+            let relative = here.active.relativePath(spec.path)
             let directory = (relative as NSString).deletingLastPathComponent
-            return directory.isEmpty ? model.active.folder(containing: spec.path).map { ($0 as NSString).lastPathComponent }
+            return directory.isEmpty ? here.active.folder(containing: spec.path).map { ($0 as NSString).lastPathComponent }
                                      : (directory as NSString).abbreviatingWithTildeInPath
         case .web(let spec):
             return spec.url
         case .diff(let spec):
-            let relative = model.active.relativePath(spec.path)
+            let relative = here.active.relativePath(spec.path)
             let directory = (relative as NSString).deletingLastPathComponent
             return directory.isEmpty ? spec.scopeWord : directory + " · " + spec.scopeWord
         case .terminal, .settings:

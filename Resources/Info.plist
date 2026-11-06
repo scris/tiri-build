@@ -12,6 +12,8 @@
     <string>1</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Tianrun Qiu</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>

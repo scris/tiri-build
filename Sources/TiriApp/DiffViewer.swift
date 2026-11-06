@@ -1304,7 +1304,10 @@ final class DiffContainer: NSView {
 // MARK: - The sidebar section
 
 struct ChangesList: View {
-    @Environment(AppModel.self) private var model
+    @Environment(AppModel.self) private var app
+    @Environment(\.windowScope) private var scope
+    /// The model as this window sees it, with its own workspace's changes.
+    private var model: WindowModel { WindowModel(app: app, scope: scope) }
 
     var body: some View {
         ScrollView {
@@ -1356,11 +1359,14 @@ struct EmptyChangesRow: View {
 struct CommitRow: View {
     let commit: CommitSummary
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
     @State private var hovering = false
 
     private var detail: String {
         var parts = [commit.shortOID, RelativeTime.text(commit.date)]
-        if model.repositories.count > 1 { parts.insert((commit.root as NSString).lastPathComponent, at: 0) }
+        if here.repositories.count > 1 { parts.insert((commit.root as NSString).lastPathComponent, at: 0) }
         return parts.joined(separator: " · ")
     }
 
@@ -1396,12 +1402,15 @@ struct CommitRow: View {
 struct ChangeRow: View {
     let change: ChangedFile
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
     @State private var hovering = false
 
     private var spec: DiffSpec { model.diffSpecForScope(path: change.path) }
 
     private var isActive: Bool {
-        guard case .diff(let front)? = model.active.activeItem?.content else { return false }
+        guard case .diff(let front)? = here.active.activeItem?.content else { return false }
         return front == spec
     }
 
@@ -1417,10 +1426,10 @@ struct ChangeRow: View {
     private var name: String { (change.path as NSString).lastPathComponent }
 
     private var detail: String {
-        let folder = model.active.folder(containing: change.path)
-        let relative = folder != nil ? model.active.relativePath(change.path) : change.relative
+        let folder = here.active.folder(containing: change.path)
+        let relative = folder != nil ? here.active.relativePath(change.path) : change.relative
         let directory = (relative as NSString).deletingLastPathComponent
-        guard model.active.folders.count > 1, let folder else { return directory }
+        guard here.active.folders.count > 1, let folder else { return directory }
         let folderName = (folder as NSString).lastPathComponent
         return directory.isEmpty ? folderName : folderName + " • " + directory
     }

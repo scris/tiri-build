@@ -9,9 +9,30 @@
   const wait = (ms) => new Promise((r) => setTimeout(r, calm ? Math.min(ms, 120) : ms));
 
   /* ---------- fit each fixed-size window into its column ---------- */
+  // On a laptop-or-wider screen the film and its chapters share the first screen: the film takes the
+  // height left under the headline, and the chapters run down beside it.
+  const sideBySide = matchMedia("(min-width: 1061px)");
+  const CHAPTERS_W = 220;
+  const GAP = 40;
+  function fitFirstScreen(stage, w, h) {
+    const show = stage.parentElement;
+    const room = show.clientWidth - CHAPTERS_W - GAP;
+    const top = show.getBoundingClientRect().top + scrollY;
+    const left = innerHeight - top - 32;
+    return Math.max(0.55, Math.min(1, room / w, left / h));
+  }
   function fit(stage) {
     const [w, h] = stage.dataset.stage.split("x").map(Number);
     const win = stage.firstElementChild;
+    if (stage.id === "tour" && sideBySide.matches) {
+      const s = fitFirstScreen(stage, w, h);
+      stage.classList.remove("zoomed");
+      stage.style.width = `${w * s}px`;
+      stage.style.height = `${h * s}px`;
+      win.style.transform = `scale(${s})`;
+      return;
+    }
+    if (stage.id === "tour") stage.style.width = "";
     const avail = stage.clientWidth;
     // On a phone the film zooms in and follows the action, instead of shrinking the whole window.
     const zoom = stage.dataset.zoom && avail < 760;
@@ -38,8 +59,12 @@
   const ro = new ResizeObserver(() => stages.forEach(fit));
   stages.forEach((s) => {
     fit(s);
-    ro.observe(s);
+    ro.observe(s.id === "tour" ? s.parentElement : s);
   });
+  const refit = () => stages.forEach(fit);
+  addEventListener("resize", refit);
+  sideBySide.addEventListener("change", refit);
+  document.fonts.ready.then(refit);
 
   /* ---------- times ---------- */
   function dur(since) {

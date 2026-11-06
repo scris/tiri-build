@@ -59,14 +59,17 @@ struct TerminalStatusIcon: View {
 struct TabBar: View {
     let group: TabGroup
     @Environment(AppModel.self) private var model
-    private var isFocusedGroup: Bool { model.active.focusedGroup == group.id }
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
+    private var isFocusedGroup: Bool { here.active.focusedGroup == group.id }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
                     ForEach(Array(group.tabs.enumerated()), id: \.element) { index, id in
-                        if let item = model.active.item(id) {
+                        if let item = here.active.item(id) {
                             HStack(spacing: 0) {
                                 if showInsertMarker(before: index) { insertMarker }
                                 TabView(item: item, group: group, isActive: group.active == id, isFocusedGroup: isFocusedGroup)
@@ -130,6 +133,9 @@ struct TabView: View {
     let isActive: Bool
     let isFocusedGroup: Bool
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
     @State private var hovering = false
     @State private var owner = UUID()
 
@@ -138,7 +144,7 @@ struct TabView: View {
         let _ = model.controllerRevision
         return model.title(for: item)
     }
-    private var isDeleted: Bool { item.filePath.map(model.deletedFiles.contains) ?? false }
+    private var isDeleted: Bool { item.filePath.map(here.deletedFiles.contains) ?? false }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -161,7 +167,7 @@ struct TabView: View {
         .frame(height: 26)
         .currentMark(isActive, hovering: hovering, cornerRadius: 7, strength: 0.11)
         .overlay {
-            if isActive, isFocusedGroup, model.active.groups.count > 1 {
+            if isActive, isFocusedGroup, here.active.groups.count > 1 {
                 RoundedRectangle(cornerRadius: 7)
                     .stroke(Color.accentColor.opacity(0.55), lineWidth: 1)
             }
@@ -188,7 +194,7 @@ struct TabView: View {
         .reportingFrame { frame in
             // A tab that just moved has an outgoing view in its old group. Only the view in the
             // group that holds the item now gets to say where it is.
-            if model.active.group(containing: item.id)?.id == group.id {
+            if here.active.group(containing: item.id)?.id == group.id {
                 model.layoutRegistry.setTab(item.id, frame: frame, owner: owner)
             }
         }
@@ -240,6 +246,9 @@ struct TabContextMenu: View {
     let item: Item
     let group: TabGroup
     @Environment(AppModel.self) private var model
+    @Environment(\.windowScope) private var scope
+    /// This window's workspace, which may not be the one in front.
+    private var here: WindowModel { WindowModel(app: model, scope: scope) }
 
     var body: some View {
         Button("Close") { model.requestClose(item.id) }
@@ -276,7 +285,7 @@ struct TabContextMenu: View {
             }
             Button("Copy Relative Path") {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(model.active.relativePath(path), forType: .string)
+                NSPasteboard.general.setString(here.active.relativePath(path), forType: .string)
             }
             Button("Reveal in Explorer") { model.revealOrOffer(path: path) }
             Button("Reveal in Finder") {

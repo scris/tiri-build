@@ -747,6 +747,13 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         didSet { if isDirty != oldValue { model.controllerRevision += 1 } }
     }
     nonisolated static let maximumBytes = 32 * 1024 * 1024
+    /// How the file's bytes are read, and written back. Found when it opens, unless someone chose one.
+    private(set) var encoding: String.Encoding = .utf8 {
+        didSet { if encoding != oldValue { model.controllerRevision += 1 } }
+    }
+    private var chosenEncoding: String.Encoding?
+    /// The start of what's on disk, so a byte order mark goes back on when it's saved.
+    private var startOnDisk = Data()
     /// Past this, a file gets no marks beside its lines.
     private static let largestWithMarks = 4 * 1024 * 1024
     private var marksGeneration = 0
@@ -1031,36 +1038,78 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         if loadedOnce, !FileManager.default.fileExists(atPath: path) { return }
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         let size = (attributes?[.size] as? Int) ?? 0
+        let wanted = chosenEncoding
         if size > 5 * 1024 * 1024 {
             // Big logs load off the main thread so opening one never stalls the app.
             Task.detached(priority: .userInitiated) { [weak self] in
-                let (text, editable) = Self.read(path: path)
-                await MainActor.run { self?.display(text, editable: editable) }
+                let read = Self.read(path: path, as: wanted)
+                await MainActor.run { self?.display(read) }
             }
         } else {
-            let (text, editable) = Self.read(path: path)
-            display(text, editable: editable)
+            display(Self.read(path: path, as: wanted))
         }
     }
 
-    /// Saving what's shown has to give back exactly what's on disk, or it isn't editable: a file
-    /// that was cut short or isn't valid UTF-8 would be damaged.
-    nonisolated private static func read(path: String) -> (String, Bool) {
+    /// Reopen with Encoding: the same file, read another way. Unsaved edits would be lost, so not with any.
+    func reopen(as wanted: String.Encoding) -> String? {
+        guard !isDirty else { return "Save or undo your edits first." }
+        let read = Self.read(path: path, as: wanted)
+        guard read.encoding == wanted else { return "It isn't valid \(TextEncodings.name(of: wanted))." }
+        chosenEncoding = wanted
+        loadedOnce = false
+        display(read)
+        return nil
+    }
+
+    /// Save as UTF-8: what's showing, written back as UTF-8 from now on.
+    func convertToUTF8() -> String? {
+        guard let bytes = textView.string.data(using: .utf8) else { return "Couldn't write it as UTF-8." }
+        do {
+            try bytes.write(to: URL(fileURLWithPath: path), options: .atomic)
+        } catch {
+            return error.localizedDescription
+        }
+        chosenEncoding = nil
+        encoding = .utf8
+        startOnDisk = Data()
+        savedText = textView.string
+        isDirty = false
+        textView.isEditable = true
+        model.languageServers.didSave(path)
+        return nil
+    }
+
+    struct Read: Sendable {
+        var text: String
+        var editable: Bool
+        var encoding: String.Encoding
+        var start: Data
+    }
+
+    /// Saving what's shown has to give back exactly what's on disk, or it isn't editable: a file that was cut
+    /// short, or that its encoding can't give back byte for byte, would be damaged. One that wasn't UTF-8 is
+    /// read the way it was written, or the way chosen, and saved the same way.
+    nonisolated private static func read(path: String, as wanted: String.Encoding? = nil) -> Read {
         guard let handle = FileHandle(forReadingAtPath: path) else {
-            return (FileManager.default.fileExists(atPath: path) ? "Tiri isn't allowed to read this file. Check its permissions." : "", false)
+            let text = FileManager.default.fileExists(atPath: path) ? "Tiri isn't allowed to read this file. Check its permissions." : ""
+            return Read(text: text, editable: false, encoding: .utf8, start: Data())
         }
         defer { try? handle.close() }
         let data = (try? handle.read(upToCount: maximumBytes)) ?? Data()
-        let decoded = String(data: data, encoding: .utf8)
-        var text = decoded ?? String(decoding: data, as: UTF8.self)
+        // A choice that can't read it is reported by the caller, which gets back what would be found instead.
+        let decoded = wanted.flatMap { TextEncodings.decode(data, as: $0) } ?? TextEncodings.decode(data)
+        var text = decoded?.text ?? String(decoding: data, as: UTF8.self)
+        let start = data.prefix(4)
         if data.count == maximumBytes {
             text += "\n\n… truncated at \(maximumBytes / (1024 * 1024)) MB. Open it in an external editor to see the rest."
-            return (text, false)
+            return Read(text: text, editable: false, encoding: decoded?.encoding ?? .utf8, start: start)
         }
-        return (text, decoded != nil)
+        return Read(text: text, editable: decoded?.roundTrips == true, encoding: decoded?.encoding ?? .utf8, start: start)
     }
 
-    private func display(_ text: String, editable: Bool) {
+    private func display(_ read: Read) {
+        let text = read.text
+        let editable = read.editable
         // Your edits come first. An agent writing the same file doesn't get to erase them.
         if isDirty {
             if text != savedText {
@@ -1073,6 +1122,8 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             return
         }
         savedText = text
+        encoding = read.encoding
+        startOnDisk = read.start
         textView.isEditable = editable
         guard text != textView.string || !loadedOnce else {
             applyPendingLocation()
@@ -1214,10 +1265,13 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     func save(overwriting: Bool) -> SaveResult {
         guard isDirty else { return .saved }
-        let onDisk = Self.read(path: path).0
+        let onDisk = Self.read(path: path, as: encoding).text
         if !overwriting, onDisk != savedText, FileManager.default.fileExists(atPath: path) { return .changedOnDisk }
+        guard let bytes = TextEncodings.encode(textView.string, as: encoding, bom: startOnDisk) else {
+            return .failed("\(TextEncodings.name(of: encoding)) can't hold everything typed here. Choose Save as UTF-8 from its encoding above the file.")
+        }
         do {
-            try textView.string.write(toFile: path, atomically: true, encoding: .utf8)
+            try bytes.write(to: URL(fileURLWithPath: path), options: .atomic)
             savedText = textView.string
             diskChangedUnderEdits = false
             isDirty = false

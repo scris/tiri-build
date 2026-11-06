@@ -97,6 +97,8 @@ public struct UpdateStatus: Codable, Equatable, Sendable {
 /// One entry of a release feed: a small JSON file somewhere, naming a zip of the app.
 public struct ReleaseEntry: Codable, Equatable, Sendable {
     public var version: String
+    /// CFBundleVersion: a new build of the same version is still an update.
+    public var build: String?
     public var url: String
     public var sha256: String
     public var notes: String?
@@ -235,12 +237,22 @@ public enum UpdateTools {
 
     // MARK: The new release
 
+    /// https only. A test copy may also use a feed on this Mac, so a whole update can be tried without publishing one.
+    static func isFeedAddress(_ address: String) -> Bool {
+        if address.hasPrefix("https://") { return true }
+        return ProcessInfo.processInfo.environment["TIRI_DEV_OFFSCREEN"] == "1" && address.hasPrefix("http://127.0.0.1:")
+    }
+
     private static func checkFeed(_ address: String, repo: SourceRepo, context: ChangeTools.Context) throws -> String {
-        guard let url = URL(string: address), url.scheme == "https", let data = try? Data(contentsOf: url) else { throw ChangeFailure("Couldn't read \(address). A feed has to be https.") }
-        guard let entry = try? JSONDecoder().decode(ReleaseEntry.self, from: data), entry.url.hasPrefix("https://"),
+        guard isFeedAddress(address), let url = URL(string: address), let data = try? Data(contentsOf: url) else { throw ChangeFailure("Couldn't read \(address). A feed has to be https.") }
+        guard let entry = try? JSONDecoder().decode(ReleaseEntry.self, from: data), isFeedAddress(entry.url),
               !entry.version.isEmpty, entry.version.allSatisfy({ $0.isNumber || $0 == "." }) else { throw ChangeFailure("\(address) isn't a release feed.") }
         let state = try ChangeTools.facts()
-        if let running = state.plainVersion, !isNewer(entry.version, than: running) { return "Tiri \(running) is the newest.\n" }
+        if let running = state.plainVersion, !isNewer(entry.version, than: running) {
+            let runningBuild = state.plainPath.flatMap { Bundle(path: $0)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String }
+            let newerBuild = entry.version == running && entry.build.map { build in runningBuild.map { isNewer(build, than: $0) } ?? false } == true
+            if !newerBuild { return "Tiri \(running) is the newest.\n" }
+        }
         if let waiting = UpdateStatus.load(), waiting.version == entry.version { return waiting.line + "\n" }
         let folder = YourTiri.updates.appendingPathComponent(entry.version, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

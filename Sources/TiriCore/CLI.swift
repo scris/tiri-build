@@ -341,6 +341,12 @@ public enum CLIParser {
             guard args.count == 1, let code = Int(args[0]) else { throw UsageError("usage: tiri dev-key <key code>   (test copies only)") }
             return request("dev.key", ["code": .int(code)])
 
+        case "dev-blocked-link":
+            guard args.count >= 2 else { throw UsageError("usage: tiri dev-blocked-link <item-id> <target> [<reason>]   (test copies only)") }
+            var payload: [String: JSONValue] = ["item": .string(args[0]), "target": .string(args[1])]
+            if args.count > 2 { payload["reason"] = .string(args[2]) }
+            return request("dev-blocked-link", payload)
+
         case "dev-compose":
             // What an input method does, which keys posted to a process can't: `dev-compose ni` shows
             // letters still being worked on, and `dev-compose --commit 你` settles on some.
@@ -368,6 +374,14 @@ public enum CLIParser {
         case "git":
             guard args.isEmpty else { throw UsageError("usage: tiri git") }
             return request("git")
+
+        case "report":
+            var options = Options(args)
+            let open = options.flag("--open")
+            let title = try options.value("--title")
+            var payload: [String: JSONValue] = ["open": .bool(open)]
+            if let title { payload["title"] = .string(title) }
+            return request("report", payload)
 
         case "diff":
             var options = Options(args)
@@ -494,6 +508,24 @@ public enum CLIParser {
                 return request("workspace.delete", ["name": .string(name)])
             default:
                 throw UsageError(workspaceUsage)
+            }
+
+        case "window":
+            var options = Options(Array(args.dropFirst()))
+            switch args.first {
+            case "list":
+                try options.finish()
+                return request("window.list")
+            case "new":
+                let target = options.positional()
+                try options.finish()
+                return request("window.new", target.map { ["workspace": .string($0)] } ?? [:])
+            case "focus", "close":
+                guard let target = options.positional() else { throw UsageError("usage: tiri window \(args[0]) <window-or-workspace>") }
+                try options.finish()
+                return request("window.\(args[0])", ["window": .string(target)])
+            default:
+                throw UsageError(windowUsage)
             }
 
         case "focus", "close":
@@ -873,6 +905,8 @@ public enum CLIParser {
         AgentCatalog.all.filter { $0.parseHook != nil }.map(\.id).joined(separator: "|")
     }
 
+    private static let windowUsage = "usage: tiri window list | new [<workspace>] | focus <window-or-workspace> | close <window-or-workspace>"
+
     private static let workspaceUsage = "usage: tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR> | remove-folder <DIR> | import <file.code-workspace> | rename <new-name> [<workspace>] | delete <name>"
 
     public static let usage = """
@@ -888,6 +922,8 @@ public enum CLIParser {
       tiri remote disconnect <host> | ports | forward <port>
       tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR>
                      remove-folder <DIR> | import <file.code-workspace> | rename <new-name> | delete <name>
+      tiri window list | new [<workspace>] | focus <window-or-workspace> | close <window-or-workspace>
+                                   (each window shows a workspace of its own; one in front is what the rest act on)
       tiri items
       tiri focus <item-id> | close <item-id>
       tiri notify <working|needs-input|done> [--message TEXT]
@@ -906,6 +942,7 @@ public enum CLIParser {
       tiri log [--limit N]         (recent commits)
       tiri turns                   (agents' recent turns)
       tiri git                     (each repository's branch, and commits to pull and push)
+      tiri report [--title T] [--open]   (a GitHub issue about a problem with Tiri, filled in; --open shows it in the browser to send)
       tiri diff <path> [--tab] [--branch | --commit <rev> | --turn <id|latest>]
                                    (what changed in one file; floats as a Peek)
       tiri review [add <path>[:line[-line]] <text> | remove <id> | clear | send [--to <item-id>]]
@@ -1157,6 +1194,8 @@ public enum AgentGuide {
     tiri workspace switch api
     tiri workspace add-folder ~/docs
     tiri workspace import team.code-workspace
+    tiri window new api                   # api in a window of its own, beside this one
+    tiri window list                      # each window, its workspace, and which is in front
     ```
 
     ## Show what changed

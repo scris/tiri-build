@@ -323,8 +323,10 @@ final class TiriTerminalView: LocalProcessTerminalView {
 
     override func mouseDown(with event: NSEvent) {
         // Every ⌘-click is Tiri's: a hyperlink goes where it points, and anything that looks like a
-        // path is found. SwiftTerm only sees one that's neither, so it never puts up "Link blocked".
+        // path is found. SwiftTerm only sees one that's neither, so it never puts up "Link blocked";
+        // should it still, `BlockedLinks` takes the alert over.
         if event.modifierFlags.contains(.command) {
+            BlockedLinks.clicked = (self, Date(), event.modifierFlags.contains(.shift))
             let forceTab = event.modifierFlags.contains(.shift)
             let local = convert(event.locationInWindow, from: nil)
             let size = cellSize
@@ -378,7 +380,7 @@ final class TiriTerminalView: LocalProcessTerminalView {
         }
     }
 
-    private func openHyperlink(_ link: String, forceTab: Bool) {
+    func openHyperlink(_ link: String, forceTab: Bool) {
         guard let model = owner?.model else { return }
         let url = URL(string: link)
         if let url, url.isFileURL {
@@ -891,6 +893,12 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     var view: NSView { container }
 
     private let container = TerminalContainer()
+    /// A line over the terminal, for something about what runs in it rather than its connection.
+    func showNotice(_ text: String?, busy: Bool = false, actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        container.showNotice(text, busy: busy, actionTitle: actionTitle, action: action)
+    }
+    var noticeText: String? { container.noticeText }
+    func pressNotice() { container.pressNotice() }
     private let spec: TerminalSpec
     private var launchCommand: String?
     /// Typed at the prompt after a relaunch, for a command that shouldn't just run again.
@@ -1777,12 +1785,16 @@ final class TerminalContainer: NSView {
 
     private var noticeAction: (() -> Void)?
     @objc private func noticePressed() { noticeAction?() }
+    /// For a test copy, which takes no clicks: what the notice says, and its button pressed.
+    private(set) var noticeText: String?
+    func pressNotice() { noticeAction?() }
 
     /// A quiet line over the terminal about its connection. Never in the way of reading it.
     func showNotice(_ text: String?, busy: Bool = true, actionTitle: String? = nil, action: (() -> Void)? = nil) {
         notice?.removeFromSuperview()
         notice = nil
         noticeAction = action
+        noticeText = text
         guard let text else { return }
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = .systemFont(ofSize: 12)
@@ -1974,4 +1986,45 @@ enum TerminalTheme {
         0x1D1D1F, 0xC4262E, 0x1A7F37, 0x8F6500, 0x0A66D6, 0x8E44AD, 0x0B7C8C, 0x6E6E73,
         0x55555A, 0xD93A42, 0x22963F, 0xA67800, 0x2B7DE9, 0xA056C5, 0x1293A6, 0x1D1D1F,
     ] as [UInt32]).map { color($0) }
+}
+
+/// SwiftTerm refuses a labelled hyperlink whose target has no scheme, or names a file that isn't there as
+/// written, with a "Link blocked" alert, and gives no way to see the target first. Those are what Tiri finds for
+/// itself, so that alert never shows: its target, which the alert carries, goes to Tiri's path search instead.
+/// A target with invisible characters keeps its alert, and so does SwiftTerm's question before another app opens a link.
+@MainActor
+enum BlockedLinks {
+    /// The terminal ⌘-clicked last. The alert comes a moment after, with no word of where from.
+    static var clicked: (view: TiriTerminalView, at: Date, forceTab: Bool)?
+    static let title = "Link blocked"
+    static let keepsAlert = "The target contains invisible characters or line breaks."
+
+    static func install() {
+        guard let original = class_getInstanceMethod(NSAlert.self, #selector(NSAlert.beginSheetModal(for:completionHandler:))),
+              let replacement = class_getInstanceMethod(NSAlert.self, #selector(NSAlert.tiri_beginSheetModal(for:completionHandler:))) else { return }
+        method_exchangeImplementations(original, replacement)
+    }
+
+    /// The target, if this is the alert to take over, from a click on one of Tiri's terminals just now.
+    static func take(_ alert: NSAlert) -> (TiriTerminalView, String, Bool)? {
+        guard alert.messageText == title, alert.informativeText != keepsAlert,
+              let text = (alert.accessoryView as? NSScrollView)?.documentView as? NSTextView,
+              let clicked, Date().timeIntervalSince(clicked.at) < 2 else { return nil }
+        let target = text.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return nil }
+        Self.clicked = nil
+        return (clicked.view, target, clicked.forceTab)
+    }
+}
+
+extension NSAlert {
+    /// In place of `beginSheetModal(for:completionHandler:)` once `BlockedLinks.install()` has run; calling it calls the original.
+    @objc func tiri_beginSheetModal(for window: NSWindow, completionHandler handler: ((NSApplication.ModalResponse) -> Void)?) {
+        if let (view, target, forceTab) = MainActor.assumeIsolated({ BlockedLinks.take(self) }) {
+            handler?(.alertFirstButtonReturn)
+            MainActor.assumeIsolated { view.openHyperlink(target, forceTab: forceTab) }
+            return
+        }
+        tiri_beginSheetModal(for: window, completionHandler: handler)
+    }
 }

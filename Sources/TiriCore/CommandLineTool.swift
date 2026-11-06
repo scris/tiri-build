@@ -3,6 +3,66 @@ import Foundation
 /// What the user's own shell can run. An app opened from Finder doesn't have their PATH, and agents
 /// are often installed somewhere only their shell setup knows about, or as an alias. So this asks
 /// that shell, the same way a terminal starts it.
+/// On a Mac without Apple's Command Line Tools, `/usr/bin` still has git, clangd, python3 and dozens more, all one
+/// small stand-in program. Running any of them puts up Apple's "install the developer tools" window, so Tiri never
+/// runs one by itself: plain Tiri shouldn't need developer tools, and only asks for them when you ask for something that does.
+public enum DeveloperTools {
+    /// `TIRI_DEV_NO_DEVELOPER_TOOLS=1` makes a test copy act as if the Mac had none, and `=all` as if it had no git at all.
+    public static var pretendMissing: Bool { ["1", "all"].contains(ProcessInfo.processInfo.environment["TIRI_DEV_NO_DEVELOPER_TOOLS"]) }
+    static var pretendNoGit: Bool { ProcessInfo.processInfo.environment["TIRI_DEV_NO_DEVELOPER_TOOLS"] == "all" }
+
+    /// Whether Apple's tools are installed: `xcode-select -p` names a folder that holds them. That only reads a setting.
+    public static var areInstalled: Bool {
+        if pretendMissing { return false }
+        installedLock.lock()
+        defer { installedLock.unlock() }
+        if foundInstalled { return true }
+        let folder = Tool.run("/usr/bin/xcode-select", ["-p"]).output.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Only a yes is kept, so installing them is noticed without a relaunch.
+        foundInstalled = !folder.isEmpty && FileManager.default.isExecutableFile(atPath: folder + "/usr/bin/git")
+        return foundInstalled
+    }
+    private static let installedLock = NSLock()
+    nonisolated(unsafe) private static var foundInstalled = false
+
+    /// One of the stand-ins: the same file as `/usr/bin/git`, which on macOS is always one.
+    public static func isStandIn(_ path: String) -> Bool {
+        let resolved = (path as NSString).resolvingSymlinksInPath
+        guard resolved.hasPrefix("/usr/bin/") else { return false }
+        var file = stat(), git = stat()
+        guard stat(resolved, &file) == 0, stat("/usr/bin/git", &git) == 0 else { return false }
+        return file.st_ino == git.st_ino && file.st_dev == git.st_dev
+    }
+
+    /// False only for a stand-in when the tools aren't there.
+    public static func canRun(_ path: String) -> Bool {
+        !isStandIn(path) || areInstalled
+    }
+
+    /// The git to run, or nil when the only one is Apple's stand-in. Any other counts, wherever it came from.
+    public static var git: String? {
+        if canRun("/usr/bin/git") { return "/usr/bin/git" }
+        if pretendNoGit { return nil }
+        let path = [shellPath, ProcessInfo.processInfo.environment["PATH"]].compactMap { $0 }.joined(separator: ":")
+        return gitCandidates(path: path).first { FileManager.default.isExecutableFile(atPath: $0) && !isStandIn($0) }
+    }
+
+    /// The PATH of the person's own shell, once the app has asked it. A Mac app opened from Finder doesn't have it.
+    nonisolated(unsafe) public static var shellPath: String?
+
+    /// Their shell's PATH first, since that's the git their terminals use. Then where git's installers put it, for
+    /// before the shell has answered: Homebrew, MacPorts, git-scm.com, Nix, and GitHub Desktop's own copy.
+    static func gitCandidates(path: String) -> [String] {
+        let home = NSHomeDirectory()
+        let fromPath = path.split(separator: ":").map { "\($0)/git" }
+        let known = ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/opt/local/bin/git", "/usr/local/git/bin/git",
+                     "\(home)/.nix-profile/bin/git", "/run/current-system/sw/bin/git", "/nix/var/nix/profiles/default/bin/git",
+                     "/Applications/GitHub Desktop.app/Contents/Resources/app/git/bin/git"]
+        var seen = Set<String>()
+        return (fromPath + known).filter { $0.hasPrefix("/") && seen.insert($0).inserted }
+    }
+}
+
 public enum ShellLookup {
     private static let marker = "tiri-found:"
 
@@ -41,7 +101,8 @@ public enum ShellLookup {
         var found: [String: String] = [:]
         for line in text.split(whereSeparator: \.isNewline) where line.hasPrefix(marker) {
             let parts = line.dropFirst(marker.count).split(separator: "=", maxSplits: 1)
-            if parts.count == 2, parts[1].hasPrefix("/") { found[String(parts[0])] = String(parts[1]) }
+            // Apple's stand-in for a tool that isn't installed counts as not found: running it would put up an installer.
+            if parts.count == 2, parts[1].hasPrefix("/"), DeveloperTools.canRun(String(parts[1])) { found[String(parts[0])] = String(parts[1]) }
         }
         return found
     }
