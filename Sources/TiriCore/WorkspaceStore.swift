@@ -55,45 +55,86 @@ public struct WorkspaceStore: Sendable {
         return encoder
     }
 
-    public func load() -> Snapshot? {
-        guard let data = try? Data(contentsOf: indexURL) else { return nil }
+    /// What was saved last time, or nil if nothing was. `damaged` says some of it couldn't be read,
+    /// so what came back is the last copy that could be, or less: nothing should be taken as gone.
+    public func load() -> Snapshot? { loadRecovering().snapshot }
+
+    public func loadRecovering() -> (snapshot: Snapshot?, damaged: Bool) {
+        guard let data = try? Data(contentsOf: indexURL) else { return (nil, false) }
+        let manager = FileManager.default
         guard let index = try? JSONDecoder().decode(Index.self, from: data) else {
             // The next save starts over, so keep everything it would otherwise replace or
             // delete, layouts included.
-            let manager = FileManager.default
             let backup = directory.appendingPathComponent("workspaces.corrupt.json")
             try? manager.removeItem(at: backup)
             try? manager.copyItem(at: indexURL, to: backup)
             let layoutsBackup = directory.appendingPathComponent("layouts.corrupt", isDirectory: true)
             try? manager.removeItem(at: layoutsBackup)
             try? manager.copyItem(at: layoutsURL, to: layoutsBackup)
-            return nil
+            // A crash or a power cut mid-write leaves a file empty or cut short. The last good copy comes back.
+            let previous = WorkspaceStore(directory: lastGoodURL)
+            guard let recovered = previous.read() else { return (nil, true) }
+            return (recovered.snapshot, true)
         }
+        let read = read(index: index, fallback: WorkspaceStore(directory: lastGoodURL))
+        if !read.damaged { keepLastGood() }
+        return (read.snapshot, read.damaged)
+    }
+
+    /// Reads without keeping backups or falling back: for the last good copy itself.
+    private func read() -> (snapshot: Snapshot, damaged: Bool)? {
+        guard let data = try? Data(contentsOf: indexURL),
+              let index = try? JSONDecoder().decode(Index.self, from: data) else { return nil }
+        return read(index: index, fallback: nil)
+    }
+
+    private func read(index: Index, fallback: WorkspaceStore?) -> (snapshot: Snapshot, damaged: Bool) {
+        var damaged = false
         var workspaces: [Workspace] = []
         for entry in index.workspaces {
             var workspace = Workspace(id: entry.id, name: entry.name, folders: entry.folders)
             workspace.remote = entry.remote
             if let data = try? Data(contentsOf: layoutURL(entry.id)) {
-                guard let layout = try? JSONDecoder().decode(LayoutFile.self, from: data) else {
-                    // This workspace comes back empty. Its old layout shouldn't vanish with the next save.
+                var layout = try? JSONDecoder().decode(LayoutFile.self, from: data)
+                if layout == nil {
+                    damaged = true
+                    // Its old layout shouldn't vanish with the next save.
                     let backup = directory.appendingPathComponent("\(entry.id).layout.corrupt.json")
                     try? FileManager.default.removeItem(at: backup)
                     try? FileManager.default.copyItem(at: layoutURL(entry.id), to: backup)
-                    workspaces.append(workspace)
-                    continue
+                    // The last good copy of it, or else this workspace comes back empty.
+                    layout = fallback.flatMap { try? Data(contentsOf: $0.layoutURL(entry.id)) }
+                        .flatMap { try? JSONDecoder().decode(LayoutFile.self, from: $0) }
                 }
-                workspace.items = layout.items
-                workspace.layout = layout.layout
-                workspace.focusedGroup = layout.focusedGroup
-                workspace.closed = layout.closed
-                workspace.expandedFolders = layout.expandedFolders ?? []
-                workspace.recentFiles = layout.recentFiles ?? []
-                workspace.groupMRU = layout.groupMRU ?? []
-                workspace.review = layout.review ?? []
+                if let layout { workspace.apply(layout) }
             }
             workspaces.append(workspace)
         }
-        return Snapshot(workspaces: workspaces, activeID: index.activeID, windows: index.windows ?? [])
+        return (Snapshot(workspaces: workspaces, activeID: index.activeID, windows: index.windows ?? []), damaged)
+    }
+
+    /// A copy of what was last read or written whole, to come back to if the files are ever damaged.
+    private var lastGoodURL: URL { directory.appendingPathComponent("last-good", isDirectory: true) }
+
+    private func keepLastGood() {
+        let manager = FileManager.default
+        let staging = directory.appendingPathComponent("last-good.new", isDirectory: true)
+        try? manager.removeItem(at: staging)
+        do {
+            try manager.createDirectory(at: staging, withIntermediateDirectories: true)
+            try manager.copyItem(at: indexURL, to: staging.appendingPathComponent("workspaces.json"))
+            if manager.fileExists(atPath: layoutsURL.path) {
+                try manager.copyItem(at: layoutsURL, to: staging.appendingPathComponent("layouts", isDirectory: true))
+            }
+            // Swapped whole, so a crash part way leaves the old copy or the new one, never half of each.
+            if manager.fileExists(atPath: lastGoodURL.path) {
+                _ = try manager.replaceItemAt(lastGoodURL, withItemAt: staging)
+            } else {
+                try manager.moveItem(at: staging, to: lastGoodURL)
+            }
+        } catch {
+            try? manager.removeItem(at: staging)
+        }
     }
 
     public func save(_ snapshot: Snapshot) throws {
@@ -113,6 +154,7 @@ public struct WorkspaceStore: Sendable {
                                     review: workspace.review.isEmpty ? nil : workspace.review)
             try encoder.encode(layout).write(to: layoutURL(workspace.id), options: .atomic)
         }
+        if Self.lastGoodDue(lastGoodURL) { keepLastGood() }
         // Drop layouts for workspaces that no longer exist.
         let live = Set(snapshot.workspaces.map { "\($0.id).json" })
         if let files = try? FileManager.default.contentsOfDirectory(atPath: layoutsURL.path) {
@@ -120,6 +162,27 @@ public struct WorkspaceStore: Sendable {
                 try? FileManager.default.removeItem(at: layoutsURL.appendingPathComponent(file))
             }
         }
+    }
+}
+
+extension WorkspaceStore {
+    /// While Tiri runs, the last good copy follows along, but not on every save.
+    static func lastGoodDue(_ url: URL) -> Bool {
+        let modified = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
+        return modified.map { Date().timeIntervalSince($0) > 600 } ?? true
+    }
+}
+
+extension Workspace {
+    fileprivate mutating func apply(_ layout: WorkspaceStore.LayoutFile) {
+        items = layout.items
+        self.layout = layout.layout
+        focusedGroup = layout.focusedGroup
+        closed = layout.closed
+        expandedFolders = layout.expandedFolders ?? []
+        recentFiles = layout.recentFiles ?? []
+        groupMRU = layout.groupMRU ?? []
+        review = layout.review ?? []
     }
 }
 

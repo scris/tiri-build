@@ -8,6 +8,7 @@ All of milestones M0 to M8 are built. The work is one commit, not one per milest
 
 - `swift test`: unit tests for the model, path parsing, persistence, import, settings, keybindings, CLI and an in-process control server.
 - `scripts/e2e.sh`: drives a real app through every CLI command, with isolated state.
+- `scripts/e2e-exits.sh`: ends a real app every way it can end while a program counts in a terminal and files have unsaved edits (quit, a terminate signal, SIGKILL moments after typing or after opening a terminal, damaged state and layout files, a file changed while closed, ⌘K before a reattach, two launches at once) and checks what comes back. 51 checks.
 - Real launches, driven with real mouse and keyboard events and checked with window screenshots.
 - Real Claude Code sessions in Tiri terminals, in a scratch project: prompts, status, ⌘-clicking its output, relaunch and resume, and a session running a nested `claude -p`, before and after the fix. Codex was launched to confirm its TUI renders, but no session was run.
 - Real folders, read-only, at their true paths: `~/ai-hotpoints-2026`, `~/nvcm-agent`, `~/mgx-dev`, `~/Documents/tiri`, and the real `seenot-web.code-workspace` in `~/Documents`, after you allowed access. No prompt appeared.
@@ -50,7 +51,7 @@ An independent review of correctness found 15 defects and one of trust found 8, 
 | The theme following a live change of the Mac's own appearance | Flipping it would change the whole Mac while it's in use. `"system"` is verified while the Mac stays dark, and `tiri theme` switches live both ways | Change Appearance in System Settings with a PDF open |
 | Color: the swatches pressed with a mouse, and "Your Mac" on a Mac whose accent isn't pink | Test copies take no clicks, and this Mac's accent is pink. Switching was driven through `tiri settings set colorTheme`, live both ways and across a relaunch, with `TIRI_DEV_MAC_ACCENT=blue` standing in for a blue Mac | Press each swatch; on another Mac, change Accent color in System Settings while on "Your Mac" |
 | A notarized build on another Mac | Notarization is checked here with `spctl` and `stapler`. A real download on a Mac that's never seen Tiri isn't | Unzip one elsewhere and double-click it |
-| Sessions over days, and across a reboot | Quit and relaunch are tested on a real Claude session. A long run isn't | Use it |
+| Sessions over days, and across a reboot | Quit, crash, force quit and damaged state are tested by `scripts/e2e-exits.sh`. A long run and a real reboot aren't | Use it |
 | Clicking a native notification | What a click does is tested: the right workspace and terminal come up. The click itself comes from the system, and notifications need permission | Allow notifications, then click one when an agent finishes while you're in another app |
 | rust-analyzer, gopls, pyright, ruby-lsp, lua-language-server and the newer servers in the catalog | clangd and sourcekit-lsp are tested for real: diagnostics, definition, references, hover, an edit on disk, and stopping when idle. Completion is tested for real on basedpyright and typescript-language-server here, and clangd over SSH. On this Mac rust-analyzer is a rustup shim for a component that isn't installed, which did prove that case is reported. The others aren't installed. The protocol they share is the same, but each has its own habits | Open a file in each language, and press F12 on a name |
 | Fetch, pull and push against a real remote | Tested with a local bare repository, so no real remote changed. SSH keys, the keychain and push hooks are unproven from the app | Fetch in a real repository, then push something you mean to |
@@ -114,6 +115,7 @@ An independent review of correctness found 15 defects and one of trust found 8, 
 - **Tree → terminal:** drag inserts a shell-quoted path.
 - **Agent attention:** status on the tab, item list and workspace switcher, toasts, dock badge, jump to next (⌘⇧U), hooks, fallback estimate when there are no hooks.
 - **Session restore:** layout, cwd and terminals. Agents resume, and one with nothing to resume starts fresh. Other commands wait typed at the prompt, so nothing like `./deploy.sh` re-runs by itself.
+- **Exits mid-work:** unsaved edits are kept half a second after typing stops and come back unsaved after a quit, crash, force quit or terminate signal, with a toast if the file changed meanwhile; quitting no longer asks about them. Saved state keeps a last good copy, refreshed at launch and every 10 minutes, which comes back when a file is empty or cut short. A program still running with no tab (a crash before saving, or damaged state) comes back as a tab instead of being ended. A terminate signal saves before Tiri exits. ⌘K tells the session helper to forget what was cleared. Not tried: a real logout or shutdown (simulated by signals), and where the cursor lands in a restored file (at the top, not where it was).
 - **Dark mode:** every viewer. PDF, Office, iWork, RTF, font and web archive pages are inverted with their colors kept, with a moon button for true colors. Black artwork on transparency gets a light plate.
 - **Viewers:** markdown (rendered and source, with math and Mermaid), Jupyter notebooks (rendered and source), code with highlighting, images (HEIC, GIF), SVG, PDF (keeps page and zoom on reload), audio, video, HTML, CSV and TSV of any size, Office and iWork through Quick Look, Quick Look for everything else. All reload when the file changes. A `.tex` file offers its PDF to the side.
 - **Web:** address bar, back, forward, reload, auto-reload for local files, forced dark.
@@ -205,7 +207,6 @@ Open times run from the request until the content is showing, except for Office 
 - Large Office files show Quick Look's spinner for a few seconds before they appear.
 - Ignoring `claude -p` runs depends on `CLAUDE_CODE_ENTRYPOINT`, read from real hooks in Claude Code 2.1.318. If Claude Code changes it, those runs report again.
 - Status without hooks is an estimate. A long silent pause can read as done.
-- ⌘K may not survive a reattach: the session helper isn't told, so it may replay what was cleared. Not tested.
 - With several cursors, line commands like ⌘/ apply to the newest one and drop the rest.
 - On a server, files whose names differ only by case get one place on this Mac, so only the first shows. A toast says so, and terminals see them all.
 - Hard-wrap joining for paths is a heuristic, and hasn't been seen against a long real path from Claude.

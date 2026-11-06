@@ -1524,6 +1524,9 @@
 "%@ changed on disk" = "%@ 在磁盘上已更改";
 "You have unsaved changes here, so they're still showing." = "你在这里有未保存的更改，因此仍显示这些更改。";
 "Use Disk Version" = "使用磁盘上的版本";
+"%@ changed on disk while Tiri was closed" = "Tiri 关闭期间，%@ 在磁盘上已更改";
+"Your unsaved changes are still showing." = "你未保存的更改仍然显示着。";
+"Some of what Tiri saved couldn't be read, so its last good copy came back." = "Tiri 保存的部分内容无法读取，已恢复为上一份完好的副本。";
 "%@ can't hold everything typed here. Choose Save as UTF-8 from its encoding above the file." = "%@ 无法容纳这里输入的所有内容。请在文件上方的编码中选择“保存为 UTF-8”。";
 "Replace All" = "全部替换";
 "Play" = "播放";

@@ -80,13 +80,46 @@ enum TerminalSessions {
         }
     }
 
-    /// Sessions whose tabs no longer exist have nothing to come back to.
-    static func endAll(except keep: Set<ItemID>) {
+    struct Orphan {
+        var id: ItemID
+        var cwd: String?
+        /// What it was started with, if it wasn't a plain shell.
+        var command: String?
+    }
+
+    /// Programs still running whose tabs aren't in the saved state: a crash came between opening one and
+    /// saving, or the state was damaged. Closing a tab ends its program, so none of these was closed.
+    static func orphans(except keep: Set<ItemID>) -> [Orphan] {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
-        for file in files where file.hasSuffix(".sock") {
-            let item = String(file.dropLast(5))
-            if !keep.contains(item) { end(item) }
-        }
+        return files.filter { $0.hasSuffix(".sock") }.map { String($0.dropLast(5)) }.sorted()
+            .filter { !keep.contains($0) && isAlive($0) }
+            .map { id in
+                guard let pid = shellPID(for: id) else { return Orphan(id: id) }
+                return Orphan(id: id, cwd: directory(of: pid), command: command(of: pid))
+            }
+    }
+
+    private static func directory(of pid: pid_t) -> String? {
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+        let path = withUnsafeBytes(of: info.pvi_cdir.vip_path) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        return path.isEmpty ? nil : path
+    }
+
+    /// `shell -l -i -c <command>` for a terminal started with a command, `-shell` for a plain one.
+    private static func command(of pid: pid_t) -> String? {
+        var request = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&request, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&request, 3, &buffer, &size, nil, 0) == 0 else { return nil }
+        let count = buffer.withUnsafeBytes { Int($0.load(as: Int32.self)) }
+        // The executable's path, then the arguments, split by NULs.
+        let parts = buffer[MemoryLayout<Int32>.size..<size].split(separator: 0, omittingEmptySubsequences: true)
+            .dropFirst().prefix(count).map { String(decoding: $0, as: UTF8.self) }
+        guard let flag = parts.firstIndex(of: "-c"), flag + 1 < parts.count else { return nil }
+        return parts[flag + 1]
     }
 
     /// The process group in the foreground of the session's terminal.

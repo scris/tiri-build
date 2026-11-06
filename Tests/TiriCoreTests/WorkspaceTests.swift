@@ -451,11 +451,47 @@ private func file(_ name: String, preview: Bool = false) -> Item {
         let workspace = Workspace(name: "precious", folders: ["/a"])
         try store.save(.init(workspaces: [workspace], activeID: workspace.id))
         try "{ not json".write(to: directory.appendingPathComponent("workspaces.json"), atomically: true, encoding: .utf8)
-        #expect(store.load() == nil)
-        // What the app does next: start fresh, and save.
+        _ = store.load()
         try store.save(.init(workspaces: [Workspace(name: "Home")], activeID: nil))
         let kept = directory.appendingPathComponent("layouts.corrupt/\(workspace.id).json")
         #expect(FileManager.default.fileExists(atPath: kept.path))
+    }
+
+    /// A power cut can leave a file that was written "atomically" empty. Running agents depend on this.
+    @Test func damagedIndexComesBackFromTheLastGoodCopy() throws {
+        let directory = temporaryDirectory()
+        let store = WorkspaceStore(directory: directory)
+        var workspace = Workspace(name: "precious", folders: ["/a"])
+        workspace.addInitialTerminal(fallbackCwd: "/a")
+        try store.save(.init(workspaces: [workspace], activeID: workspace.id))
+        for damage in ["", "{\"version\":1,\"workspa"] {
+            try damage.write(to: directory.appendingPathComponent("workspaces.json"), atomically: true, encoding: .utf8)
+            let loaded = store.loadRecovering()
+            #expect(loaded.damaged)
+            #expect(loaded.snapshot?.workspaces.first?.name == "precious")
+            #expect(loaded.snapshot?.workspaces.first?.items.map(\.id) == workspace.items.map(\.id))
+        }
+    }
+
+    @Test func damagedLayoutComesBackFromTheLastGoodCopy() throws {
+        let directory = temporaryDirectory()
+        let store = WorkspaceStore(directory: directory)
+        var workspace = Workspace(name: "w", folders: ["/a"])
+        workspace.addInitialTerminal(fallbackCwd: "/a")
+        try store.save(.init(workspaces: [workspace], activeID: workspace.id))
+        try "".write(to: directory.appendingPathComponent("layouts/\(workspace.id).json"), atomically: true, encoding: .utf8)
+        let loaded = store.loadRecovering()
+        #expect(loaded.damaged)
+        #expect(loaded.snapshot?.workspaces.first?.items.map(\.id) == workspace.items.map(\.id))
+    }
+
+    @Test func aGoodLoadIsNotDamaged() throws {
+        let directory = temporaryDirectory()
+        let store = WorkspaceStore(directory: directory)
+        #expect(store.loadRecovering().damaged == false)
+        let workspace = Workspace(name: "w")
+        try store.save(.init(workspaces: [workspace], activeID: workspace.id))
+        #expect(store.loadRecovering().damaged == false)
     }
 
     @Test func corruptLayoutIsBackedUp() throws {
@@ -485,7 +521,8 @@ private func file(_ name: String, preview: Bool = false) -> Item {
         let directory = temporaryDirectory()
         let index = directory.appendingPathComponent("workspaces.json")
         try "{ not json".write(to: index, atomically: true, encoding: .utf8)
-        #expect(WorkspaceStore(directory: directory).load() == nil)
+        let loaded = WorkspaceStore(directory: directory).loadRecovering()
+        #expect(loaded.snapshot == nil && loaded.damaged)
         let backup = directory.appendingPathComponent("workspaces.corrupt.json")
         #expect(try String(contentsOf: backup, encoding: .utf8) == "{ not json")
     }

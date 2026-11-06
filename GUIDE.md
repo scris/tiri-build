@@ -57,7 +57,7 @@ The **Agents** section of the sidebar lists every running agent in every workspa
 
 ### Terminals outlive Tiri
 
-If you quit Tiri, update it or it crashes, your agents keep working. When Tiri comes back, each terminal reattaches and its screen is redrawn. Closing a terminal's tab is what ends it. Restarting your Mac still ends terminals, and then agents resume their conversations. You can turn this off in **Settings → Agents**.
+If you quit Tiri, update it, force quit it or it crashes, your agents keep working. When Tiri comes back, each terminal reattaches and its screen is redrawn, and one opened moments before a crash comes back as a tab too. Closing a terminal's tab is what ends it. If Tiri's saved layout is ever damaged, its last good copy comes back, and running agents are never ended for it. Restarting your Mac still ends terminals, and then agents resume their conversations. You can turn this off in **Settings → Agents**.
 
 ### Give agents lines, files and images
 
@@ -185,7 +185,7 @@ Agents often print paths that don't exist as written, like `/resume/index.html` 
 
 ### Quick edits
 
-Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes, and Tiri asks before closing or quitting over them. If an agent changes a file while you're editing it, your text stays on screen and Tiri tells you, so nothing is overwritten without your choice. Editing a Peek turns it into a tab.
+Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes. Tiri asks before closing a tab over them, but not before quitting: unsaved changes are kept, and come back unsaved after a quit, a crash or a restart, as in VS Code. If the file changed on disk meanwhile, your text stays on screen and Tiri says so. If an agent changes a file while you're editing it, your text stays on screen and Tiri tells you, so nothing is overwritten without your choice. Editing a Peek turns it into a tab.
 
 A file that isn't UTF-8, like Latin-1, Windows 1252, GB 18030, Big 5 or Shift JIS, opens the way it was written, and saves the same way. Its encoding shows above it. Click that, or choose **Reopen with Encoding…**, to read it another way or **Save as UTF-8**.
 

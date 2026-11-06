@@ -188,7 +188,8 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
         self.model = model
         // There's nothing to read in an empty file, so it's somewhere to type.
         let isEmpty = format == .markdown && (try? FileManager.default.attributesOfItem(atPath: spec.path))?[.size] as? Int == 0
-        self.showingSource = spec.showSource ?? isEmpty
+        // Edits kept from before a quit or a crash are in the source, so that's what comes back.
+        self.showingSource = UnsavedEdits.read(itemID)?.path == spec.path ? true : (spec.showSource ?? isEmpty)
         self.pendingLine = (spec.line, spec.col)
         super.init()
         token = FileWatchHub.shared.watch(path: path) { [weak self] in self?.fileChanged() }
@@ -607,6 +608,7 @@ final class MarkdownController: NSObject, ItemController, WKNavigationDelegate, 
     }
     var isDirty: Bool { source?.isDirty ?? false }
     func save(overwriting: Bool) -> SaveResult { source?.save(overwriting: overwriting) ?? .saved }
+    func keepUnsavedEdits() -> Bool { source?.keepEditsNow() ?? true }
 
     func find(_ query: String, backwards: Bool) -> Bool {
         if inSource { return source?.find(query, backwards: backwards) ?? false }
@@ -738,6 +740,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var findAnchor: Int?
     private var markedMatches: [NSRange] = []
     private var diskChangedUnderEdits = false
+    private var keepEditsWork: DispatchWorkItem?
     private var menuProblems: [LSPDiagnostic] = []
     private var folderToken: FileWatchHub.Token?
     /// The PDF this LaTeX file builds, once there is one.
@@ -1075,6 +1078,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         startOnDisk = Data()
         savedText = textView.string
         isDirty = false
+        keepEditsNow()
         textView.isEditable = true
         model.languageServers.didSave(path)
         return nil
@@ -1134,9 +1138,12 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         }
         let origin = scrollView.contentView.bounds.origin
         let selection = textView.selectedRange()
+        // Edits from before a quit or a crash come back over what's on disk, as they were.
+        let kept = loadedOnce || !editable ? nil : UnsavedEdits.read(itemID).flatMap { $0.path == path ? $0 : nil }
+        let shown = kept?.text ?? text
         textView.dropExtraCursors()
-        textView.string = text
-        highlighter.use(language: LanguageCatalog.language(forPath: path, firstLine: Self.firstLine(of: text)))
+        textView.string = shown
+        highlighter.use(language: LanguageCatalog.language(forPath: path, firstLine: Self.firstLine(of: shown)))
         // What undo remembers is about text that's gone.
         undo.removeAllActions()
         reviewChanged()
@@ -1150,11 +1157,55 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             textView.setSelectedRange(NSRange(location: 0, length: 0))
         }
         loadedOnce = true
+        if let kept { cameBack(kept, onDisk: text) }
         applyPendingLocation()
         highlighter.paintVisible()
         diagnosticsChanged()
         model.languageServers.fileMayHaveChanged(path)
         refreshChangeMarks()
+    }
+
+    private func cameBack(_ kept: UnsavedEdit, onDisk text: String) {
+        guard kept.text != text else {
+            UnsavedEdits.remove(itemID)
+            return
+        }
+        isDirty = true
+        model.fileWasEdited(itemID)
+        guard kept.diskChanged(now: text) else { return }
+        diskChangedUnderEdits = true
+        model.showToast(title: String(localized: "\((path as NSString).lastPathComponent) changed on disk while Tiri was closed"),
+                        detail: String(localized: "Your unsaved changes are still showing."),
+                        symbol: "exclamationmark.triangle", tint: .orange, actionTitle: String(localized: "Use Disk Version")) { [weak self] in
+            self?.discardEdits()
+        }
+    }
+
+    /// Kept on disk shortly after each edit, so nothing typed is lost to a crash.
+    private func scheduleKeepingEdits() {
+        keepEditsWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.keepEditsNow() }
+        keepEditsWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    func keepUnsavedEdits() -> Bool { keepEditsNow() }
+
+    /// False if there are edits and they couldn't be kept.
+    @discardableResult
+    func keepEditsNow() -> Bool {
+        keepEditsWork?.cancel()
+        keepEditsWork = nil
+        guard isDirty else {
+            UnsavedEdits.remove(itemID)
+            return true
+        }
+        do {
+            try UnsavedEdits.write(UnsavedEdit(path: path, text: textView.string, onDisk: savedText), for: itemID)
+            return true
+        } catch {
+            return false
+        }
     }
 
     // MARK: Marks beside the lines
@@ -1231,6 +1282,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         isDirty = textView.nsText.length != (savedText as NSString).length || textView.string != savedText
         ruler.changesHidden = isDirty
         if isDirty { model.fileWasEdited(itemID) }
+        scheduleKeepingEdits()
         reviewChanged()
         ruler.needsDisplay = true
         findIsStale = true
@@ -1277,6 +1329,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
             savedText = textView.string
             diskChangedUnderEdits = false
             isDirty = false
+            keepEditsNow()
             model.languageServers.didSave(path)
             model.remote.didSave(path)
             model.plugins.fileSaved(path)
@@ -1288,6 +1341,7 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     func discardEdits() {
         isDirty = false
+        keepEditsNow()
         diskChangedUnderEdits = false
         undo.removeAllActions()
         reload()

@@ -36,6 +36,7 @@
 
 // Frames from the relay to the server: type, then a 16-bit length, then that many bytes.
 //   'D' input for the program   'W' rows and columns, 16 bits each   'K' stop the program
+//   'C' forget the output so far: the view was cleared with ⌘K, and a reattach shouldn't bring it back
 // Frames from the server to the relay: type, then a 32-bit length, then that many bytes.
 //   'D' the program's output    'R' the replay is over              'X' it exited, with this code
 
@@ -540,6 +541,9 @@ static void run_server(const launch_options *options, int listener) {
                             ioctl(master, TIOCSWINSZ, &nudge);
                         }
                         ioctl(master, TIOCSWINSZ, &wanted);
+                    } else if (type == 'C') {
+                        ring_start = 0;
+                        ring_count = 0;
                     } else if (type == 'K') {
                         // An agent is usually its own process group, in the foreground.
                         pid_t foreground = tcgetpgrp(master);
@@ -659,6 +663,23 @@ static int send_input(int fd, char type, const void *data, size_t count) {
     return count ? write_all(fd, data, count) : 0;
 }
 
+// The view asks for 'C' in what it types, so it stays in order with the keys around it. A private
+// message, which nothing else sends: it never reaches the program.
+static const char forget_marker[] = "\x1b_tiri:forget\x1b\\";
+
+static int send_keys(int server, const unsigned char *keys, size_t count) {
+    size_t marker_length = sizeof forget_marker - 1;
+    size_t start = 0;
+    for (size_t index = 0; index + marker_length <= count; index++) {
+        if (keys[index] != 0x1b || memcmp(keys + index, forget_marker, marker_length) != 0) continue;
+        if (index > start && send_input(server, 'D', keys + start, index - start) < 0) return -1;
+        if (send_input(server, 'C', NULL, 0) < 0) return -1;
+        start = index + marker_length;
+        index = start - 1;
+    }
+    return count > start ? send_input(server, 'D', keys + start, count - start) : 0;
+}
+
 static int relay(int server) {
     signal(SIGPIPE, SIG_IGN);
     int room = 4 * READ_BYTES;  // See the server's side, in run_server.
@@ -706,7 +727,7 @@ static int relay(int server) {
             ssize_t got = read(STDIN_FILENO, keys, sizeof keys);
             if (got <= 0) return 0;  // The view went away. The server and its program carry on.
             int accepting = accept_input_after >= 0 && now_seconds() >= accept_input_after;
-            if (accepting && can_send && send_input(server, 'D', keys, (size_t)got) < 0) can_send = 0;
+            if (accepting && can_send && send_keys(server, keys, (size_t)got) < 0) can_send = 0;
         }
         if (fds[0].revents & (POLLIN | POLLHUP)) {
             ssize_t got = read(server, incoming + incoming_count, sizeof incoming - incoming_count);

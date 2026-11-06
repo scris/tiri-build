@@ -492,6 +492,7 @@ enum ControlHandler {
             if let message = runtime.message { object["message"] = .string(message) }
         case .file(let spec):
             object["path"] = .string(spec.path)
+            if model.existingController(for: item.id)?.isDirty == true { object["status"] = .string("unsaved") }
         case .web(let spec):
             object["url"] = .string((model.existingController(for: item.id) as? WebController)?.currentURLString ?? spec.url)
         case .diff(let spec):
@@ -1490,7 +1491,7 @@ enum ControlHandler {
 
         case "quit":
             // Asked for from outside, nobody's there to answer "save your changes?".
-            if let name = model.firstUnsavedFileName { throw ControlFailure("\(name) has unsaved changes") }
+            if !model.keepAllUnsavedEdits(), let name = model.firstUnsavedFileName { throw ControlFailure("\(name) has unsaved changes") }
             model.skipQuitConfirmation = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { NSApp.terminate(nil) }
             return .object([:])

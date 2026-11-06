@@ -34,6 +34,8 @@ protocol ItemController: AnyObject {
     func select(text: String, to end: String?) -> Bool
     var isDirty: Bool { get }
     func save(overwriting: Bool) -> SaveResult
+    /// Puts unsaved edits somewhere they outlive Tiri. False if there are some it can't keep.
+    func keepUnsavedEdits() -> Bool
     /// Returns false when nothing matches.
     func find(_ query: String, backwards: Bool) -> Bool
     /// While it's being typed, a match already found stays found.
@@ -48,6 +50,7 @@ protocol ItemController: AnyObject {
 }
 
 extension ItemController {
+    func keepUnsavedEdits() -> Bool { !isDirty }
     func didAttach() {}
     func applySettings() {}
     func goTo(line: Int?, col: Int?) {}
@@ -1163,6 +1166,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
                                     itemID: itemID, workspaceID: workspaceID, socket: model.socketPath)
         terminalView.startProcess(executable: launch.executable, args: launch.args, environment: launch.environment,
                                   execName: launch.execName, currentDirectory: launch.cwd)
+        throughSession = launch.execName == "tiri-session"
         exited = false
         container.hideExitBar()
         if let prefill {
@@ -1175,6 +1179,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     // MARK: On a server
 
     private var isRemote: Bool { remoteDestination != nil }
+    /// Running under this Mac's session helper, which understands what ⌘K asks of it.
+    private var throughSession = false
 
     /// The program runs on the server, and what's here is `ssh` showing it. Comes up when the
     /// connection does, and comes back whenever the connection does.
@@ -1762,6 +1768,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// ⌘K, as in Cursor: everything above the cursor's line goes. A full-screen program keeps its screen.
     func clearScreen() {
         guard terminalView.clearKeepingCursorLine() else { return }
+        // The session keeps output to replay when Tiri comes back. What was cleared shouldn't come back with it.
+        if throughSession { terminalView.send(txt: "\u{1B}_tiri:forget\u{1B}\\") }
         // At a prompt, or in an agent's input, a redraw puts back whatever spans several lines.
         if !isShellBusy || runningAgent != nil { terminalView.send(txt: "\u{0C}") }
     }

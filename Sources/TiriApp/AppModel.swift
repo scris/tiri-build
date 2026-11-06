@@ -251,6 +251,8 @@ final class AppModel {
     @ObservationIgnored private var didFinishLaunching = false
     /// Nothing saved from before: the very first launch, which is the one that says hello.
     @ObservationIgnored private var isNewInstall = false
+    /// Some saved state couldn't be read, so what came back is the last good copy of it.
+    @ObservationIgnored private var stateWasDamaged = false
     @ObservationIgnored private var checkedPaths: Set<String> = []
     @ObservationIgnored private var tabDragCommitted = false
 
@@ -260,7 +262,9 @@ final class AppModel {
 
     private init() {
         var savedWindows: [SavedWindow] = []
-        if let snapshot = store.load(), !snapshot.workspaces.isEmpty {
+        let loaded = store.loadRecovering()
+        stateWasDamaged = loaded.damaged
+        if let snapshot = loaded.snapshot, !snapshot.workspaces.isEmpty {
             workspaces = snapshot.workspaces
             activeID = snapshot.activeID.flatMap { id in workspaces.contains { $0.id == id } ? id : nil } ?? workspaces[0].id
             savedWindows = snapshot.windows
@@ -271,7 +275,8 @@ final class AppModel {
                 }
             }
         } else {
-            isNewInstall = true
+            // Saved state that couldn't be read isn't a new install: nobody needs welcoming.
+            isNewInstall = !loaded.damaged
             // Nothing runs until you've said where: see `startTerminal`.
             let first = Workspace(name: Workspace.placeholderName)
             workspaces = [first]
@@ -314,8 +319,10 @@ final class AppModel {
         yourTiri.finishLaunching()
         // So the first file's colors aren't late, without making launch any longer.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { HighlightEngine.shared.prepare() }
-        // Whatever isn't in a tab any more has nothing to come back to.
-        TerminalSessions.endAll(except: Set(workspaces.flatMap { $0.items.map(\.id) }))
+        // A program still running with no tab lost it in a crash, or in damaged state. It comes back as one:
+        // closing a tab is what ends its program, and that never happened.
+        adoptOrphanedSessions()
+        bringBackUnsavedEdits()
         router.install(model: self)
         applyTheme()
         observeSystemAppearance()
@@ -404,8 +411,54 @@ final class AppModel {
         }
     }
 
+    private func adoptOrphanedSessions() {
+        guard settings.terminalKeepRunning else { return }
+        var adopted = 0
+        for orphan in TerminalSessions.orphans(except: Set(workspaces.flatMap { $0.items.map(\.id) })) {
+            let cwd = orphan.cwd ?? active.folders.first ?? NSHomeDirectory()
+            // Where it ran says which workspace it belongs to, best as it can be told.
+            let index = workspaces.firstIndex { $0.remote == nil && $0.folder(containing: cwd) != nil }
+                ?? workspaces.firstIndex { $0.id == activeID } ?? 0
+            workspaces[index].addItem(Item(id: orphan.id, content: .terminal(TerminalSpec(command: orphan.command, cwd: cwd))))
+            adopted += 1
+        }
+        if adopted > 0 { scheduleSave() }
+        if stateWasDamaged {
+            showBanner(String(localized: "Some of what Tiri saved couldn't be read, so its last good copy came back."), isError: true)
+        }
+    }
+
+    /// Edits that weren't saved come back with their tabs. Those whose tab is gone, after a crash or damaged
+    /// state, come back in a tab of their own: nobody chose not to keep them.
+    private func bringBackUnsavedEdits() {
+        for id in UnsavedEdits.all() {
+            guard let edit = UnsavedEdits.read(id) else {
+                UnsavedEdits.remove(id)
+                continue
+            }
+            if anyItem(id) == nil {
+                let index = workspaces.firstIndex { $0.remote == nil && $0.folder(containing: edit.path) != nil }
+                    ?? workspaces.firstIndex { $0.id == activeID } ?? 0
+                workspaces[index].addItem(Item(id: id, content: .file(FileSpec(path: edit.path))))
+                scheduleSave()
+            }
+            // Made now, so its tab shows it has changes.
+            _ = controller(for: id)
+        }
+    }
+
+    /// Unsaved edits, kept so a quit doesn't need to ask about them. False if some couldn't be.
+    func keepAllUnsavedEdits() -> Bool {
+        var kept = true
+        for controller in controllers.values where controller.isDirty {
+            if !controller.keepUnsavedEdits() { kept = false }
+        }
+        return kept
+    }
+
     func prepareForTermination() {
         saveWork?.cancel()
+        _ = keepAllUnsavedEdits()
         saveNow()
         editorBridge.stop()
         remote.prepareForQuit()
@@ -529,6 +582,8 @@ final class AppModel {
             if let peek = workspace.peek { live.insert(peek.id) }
         }
         for (id, controller) in controllers where !live.contains(id) {
+            // Its tab is gone, and with it any edits it was keeping.
+            UnsavedEdits.remove(id)
             bringBack(id)
             (controller as? TerminalController)?.endSession()
             controller.teardown()

@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppModel.shared.finishLaunching()
         AppModel.shared.offerCrashReport()
         CopyHealth.startWatching()
+        Self.saveOnTerminateSignal()
         // After a crash or a force quit, SwiftUI can start without opening its window. Terminals have
         // reattached by then, but nothing shows until the Dock icon is clicked, so do that for it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -55,6 +56,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private static var terminateSignal: DispatchSourceSignal?
+
+    /// `kill`, `launchctl`, a shutdown that runs out of patience: a terminate signal would otherwise end Tiri
+    /// on the spot, without saving the last moment's tabs or keeping unsaved edits.
+    private static func saveOnTerminateSignal() {
+        // A handler that does nothing, rather than ignoring it: what's ignored stays ignored in every program
+        // Tiri starts, and a server in a terminal would shrug off `kill`. A handler goes back to normal there.
+        var quiet = sigaction()
+        quiet.__sigaction_u.__sa_handler = { _ in }
+        sigaction(SIGTERM, &quiet, nil)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global(qos: .userInitiated))
+        // Sendable, so it isn't taken to belong to the main thread: run here, that would be a crash.
+        source.setEventHandler { @Sendable in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    CopyHealth.quitOnPurpose()
+                    AppModel.shared.prepareForTermination()
+                    exit(0)
+                }
+            }
+            // A Tiri that's stuck still ends when asked to, as it did before.
+            Thread.sleep(forTimeInterval: 3)
+            _exit(0)
+        }
+        source.resume()
+        terminateSignal = source
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
             AppModel.shared.handleExternalOpen(url)
@@ -65,6 +94,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// False if someone chose to stay. Also asked before a switch, since nothing should have moved by then.
     static func settleUnsavedFiles() -> Bool {
+        // Kept, they come back with their tabs, so there's nothing to ask, as in VS Code or Zed.
+        if AppModel.shared.keepAllUnsavedEdits() { return true }
         guard let name = AppModel.shared.firstUnsavedFileName else { return true }
         let alert = NSAlert()
         alert.messageText = String(localized: "Save your changes before quitting?")
