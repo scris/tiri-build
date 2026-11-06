@@ -1523,6 +1523,15 @@ enum ControlHandler {
             if shown, let sheet = window.attachedSheet { window.endSheet(sheet) }
             return .object(["alertShown": .bool(shown)])
 
+        case "dev-hover":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only in a test copy.") }
+            let id = try requireItem(request, model: model)
+            guard let terminal = model.controller(for: id) as? TerminalController,
+                  let row = request.args["row"]?.intValue, let col = request.args["col"]?.intValue else { throw ControlFailure("\(id) isn't a terminal") }
+            let started = Date()
+            let found = terminal.terminalView.hoverForTest(row: row, column: col)
+            return .object(["link": found.map(JSONValue.string) ?? .null, "ms": .double(Date().timeIntervalSince(started) * 1000)])
+
         case "dev-compose":
             guard Bundle.main.bundleIdentifier?.contains(".test.") == true else { throw ControlFailure("Only in a test copy.") }
             guard let view = model.frontEditor?.codeView, let text = request.args["text"]?.stringValue else { throw ControlFailure("No file in front.") }
@@ -1579,6 +1588,7 @@ enum ControlHandler {
             if let launch = model.launchMilliseconds { object["launchMs"] = .double(launch) }
             if let open = model.lastOpenMilliseconds { object["lastOpenMs"] = .double(open) }
             object["indexedFiles"] = .int(model.fileIndex.files.count)
+            object["indexReachedLimit"] = .bool(model.fileIndex.reachedLimit)
             object["firstResponder"] = .string(model.window?.firstResponder.map { String(describing: type(of: $0)) } ?? "none")
             if let editor = model.frontEditor { object["completion"] = editor.completion.state }
             // What each terminal has parsed and drawn, for scripts/bench-terminal.sh.

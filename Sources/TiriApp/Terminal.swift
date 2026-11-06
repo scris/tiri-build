@@ -175,6 +175,8 @@ final class TiriTerminalView: LocalProcessTerminalView {
     private var underlines: [CALayer] = []
     private var hoverKey: String?
     private var hoverTarget: LinkTarget?
+    /// The last answer for the cell under the mouse, which asks again with each pixel it moves.
+    private var lastResolution: (key: String, time: Date, result: (LinkTarget, LogicalLine, Range<Int>)?)?
     private var swallowNextMouseUp = false
 
     /// Whether what's running asked for pasted text to be marked as a paste, so that a line break in it
@@ -534,16 +536,37 @@ final class TiriTerminalView: LocalProcessTerminalView {
     }
 
     private func resolveAt(windowPoint point: NSPoint) -> (LinkTarget, LogicalLine, Range<Int>)? {
-        for variant in logicalLines(atWindowPoint: point) {
+        let local = convert(point, from: nil)
+        let size = cellSize
+        guard size.width > 0, size.height > 0 else { return nil }
+        return resolveAt(row: Int((bounds.height - local.y) / size.height), column: Int(local.x / size.width))
+    }
+
+    /// What `tiri dev-hover` asks: the hover's answer for a cell, as a path or a URL.
+    func hoverForTest(row: Int, column: Int) -> String? {
+        switch resolveAt(row: row, column: column)?.0 {
+        case .path(let found): found.path
+        case .choice(let found): found.first?.path
+        case .web(let url): url.absoluteString
+        case nil: nil
+        }
+    }
+
+    private func resolveAt(row: Int, column: Int) -> (LinkTarget, LogicalLine, Range<Int>)? {
+        let variants = logicalLines(row: row, column: column)
+        let key = ([String(row), String(column), owner?.currentDirectory ?? ""] + variants.map(\.line.text)).joined(separator: "\n")
+        if let last = lastResolution, last.key == key, Date().timeIntervalSince(last.time) < 2 { return last.result }
+        let result = resolveAt(row: row, column: column, variants: variants)
+        lastResolution = (key, Date(), result)
+        return result
+    }
+
+    private func resolveAt(row: Int, column: Int, variants: [(line: LogicalLine, column: Int)]) -> (LinkTarget, LogicalLine, Range<Int>)? {
+        for variant in variants {
             if let (target, range) = resolveLink(in: variant.line, column: variant.column) {
                 return (target, variant.line, range)
             }
         }
-        let local = convert(point, from: nil)
-        let size = cellSize
-        guard size.width > 0, size.height > 0 else { return nil }
-        let row = Int((bounds.height - local.y) / size.height)
-        let column = Int(local.x / size.width)
         if let found = locationUnderPath(row: row, column: column), let line = logicalLines(row: row, column: column).first?.line {
             return (found.target, line, found.range)
         }
@@ -676,10 +699,15 @@ final class TiriTerminalView: LocalProcessTerminalView {
         return resolver
     }
 
+    private static let webLinkPattern = try? NSRegularExpression(pattern: #"https?://[^\s"'`<>│]+"#)
+
     static func webLink(in text: String, column: Int) -> (URL, Range<Int>)? {
+        // A long line is only looked at around the column, as paths are.
         let characters = Array(text)
-        guard let match = try? NSRegularExpression(pattern: #"https?://[^\s"'`<>│]+"#) else { return nil }
-        let string = String(characters)
+        guard column >= 0, column < characters.count else { return nil }
+        let window = max(0, column - 2000)..<min(characters.count, column + 2000)
+        guard let match = webLinkPattern else { return nil }
+        let string = String(characters[window])
         for result in match.matches(in: string, range: NSRange(string.startIndex..., in: string)) {
             guard let range = Range(result.range, in: string) else { continue }
             var raw = String(string[range])
@@ -687,7 +715,7 @@ final class TiriTerminalView: LocalProcessTerminalView {
                 if last == ")", raw.filter({ $0 == "(" }).count >= raw.filter({ $0 == ")" }).count { break }
                 raw.removeLast()
             }
-            let lower = string.distance(from: string.startIndex, to: range.lowerBound)
+            let lower = window.lowerBound + string.distance(from: string.startIndex, to: range.lowerBound)
             let span = lower..<(lower + raw.count)
             if span.contains(column), let url = URL(string: raw) { return (url, span) }
         }

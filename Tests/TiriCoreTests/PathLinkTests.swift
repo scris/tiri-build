@@ -235,6 +235,57 @@ struct LinkCase: Sendable, CustomTestStringConvertible {
     }
 }
 
+/// Minified output and logs: one line of ten thousand characters.
+@Suite struct LongLinePathTests {
+    static func longLine(around path: String, filler: String) -> (line: String, column: Int) {
+        var before = ""
+        while before.count < 5_000 { before += filler }
+        var after = ""
+        while after.count < 5_000 { after += filler }
+        return (before + path + after, before.count + 2)
+    }
+
+    @Test(arguments: ["x.ts ", "{\"a.b\":\"c/d\"},", "word word word ", "a:1"])
+    func aPathInsideALongLineStillResolves(filler: String) {
+        let (line, column) = Self.longLine(around: " src/main.swift:42 ", filler: filler)
+        let found = resolver().resolve(atColumn: column, in: line)
+        #expect(found?.path == "/repo/src/main.swift")
+        #expect(found?.line == 42)
+        // The range is in the whole line's columns, not the part that was looked at.
+        let start = line.distance(from: line.startIndex, to: line.range(of: "src/main.swift")!.lowerBound)
+        #expect(found?.range == start..<(start + "src/main.swift:42".count))
+    }
+
+    @Test func aQuotedPathInsideALongLineStillResolves() {
+        let (line, column) = Self.longLine(around: " \"My Documents/report final.pdf\" ", filler: "{\"a.b\":\"c/d\"},")
+        #expect(resolver().resolve(atColumn: column + 1, in: line)?.path == "/repo/My Documents/report final.pdf")
+    }
+
+    @Test(arguments: ["x.ts ", "{\"a.b\":\"c/d\"},", "a:1", "a."])
+    func aLongLineResolvesInAFewMilliseconds(filler: String) {
+        var line = ""
+        while line.count < 10_000 { line += filler }
+        let clock = ContinuousClock()
+        let resolver = resolver()
+        _ = resolver.resolveAll(atColumn: line.count / 2, in: line)
+        let elapsed = clock.measure {
+            for column in stride(from: 4_000, to: 6_000, by: 400) { _ = resolver.resolveAll(atColumn: column, in: line) }
+        }
+        // Five hovers. Each took about a second before it looked only around the column.
+        #expect(elapsed < .milliseconds(250))
+    }
+
+    @Test func aScanOfAWholeLongLineIsBounded() {
+        var line = ""
+        while line.count < 50_000 { line += "x.ts " }
+        let clock = ContinuousClock()
+        var found: [PathCandidate] = []
+        let elapsed = clock.measure { found = PathLinkDetector.candidates(in: line) }
+        #expect(found.count == PathLinkDetector.maxScannedLength / 5)
+        #expect(elapsed < .seconds(1))
+    }
+}
+
 @Suite struct ShortcutEditingTests {
     func bindings(_ user: [(key: String, command: String)]) -> [Keybinding] { Keymap.build(user: user) }
 

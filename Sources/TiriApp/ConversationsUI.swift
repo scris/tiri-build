@@ -423,7 +423,7 @@ extension AppModel {
             return await runForConversations("cat -- \(ShellQuote.quote(conversation.file))", timeout: 300)
         }
         let path = conversation.file
-        return await Task.detached(priority: .userInitiated) { try? Data(contentsOf: URL(fileURLWithPath: path)) }.value
+        return await Task.detached(priority: .userInitiated) { try? Data(contentsOf: URL(fileURLWithPath: path), options: .alwaysMapped) }.value
     }
 
     /// Written out as a document, so that it reads like one and any viewer's tools work on it.

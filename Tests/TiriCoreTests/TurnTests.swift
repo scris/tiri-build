@@ -145,6 +145,79 @@ private struct Repository {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         #expect(TurnSnapshots(directory: folder.appendingPathComponent("s")).snapshot(root: folder.path) == nil)
     }
+
+    private static func noise(_ count: Int) -> String {
+        var generator = SystemRandomNumberGenerator()
+        return Data((0..<count).map { _ in UInt8.random(in: 0...255, using: &generator) }).base64EncodedString(options: [.lineLength76Characters, .endLineWithLineFeed])
+    }
+
+    private static func size(of folder: URL) -> Int {
+        let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey])?.allObjects as? [URL] ?? []
+        return files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+    }
+
+    @Test func aFileOverTheCapIsLeftOutButStillListed() throws {
+        let repo = try Repository()
+        let snapshots = TurnSnapshots(directory: repo.store)
+        let start = try #require(snapshots.snapshot(root: repo.root))
+        try repo.write("big.txt", Self.noise(TurnSnapshots.largestFile))
+        let middle = try #require(snapshots.snapshot(root: repo.root))
+        try repo.write("big.txt", Self.noise(TurnSnapshots.largestFile))
+        try repo.write("a.txt", "one\nTWO\n")
+        let end = try #require(snapshots.snapshot(root: repo.root))
+        #expect(snapshots.changes(root: repo.root, from: start, to: middle).map(\.relative) == ["big.txt"])
+        #expect(snapshots.changes(root: repo.root, from: middle, to: end).map(\.relative) == ["a.txt", "big.txt"])
+        #expect(snapshots.diff(root: repo.root, relative: "big.txt", from: start, to: end).isTooLarge)
+        #expect(snapshots.diff(root: repo.root, relative: "big.txt", from: middle, to: end).isTooLarge)
+        #expect(snapshots.diff(root: repo.root, relative: "a.txt", from: middle, to: end).additions == 1)
+        // Neither version was copied.
+        #expect(Self.size(of: repo.store) < 1024 * 1024)
+        #expect(try repo.git("status", "--porcelain=v1") == " M a.txt\n?? big.txt\n")
+    }
+
+    @Test func pruningKeepsWhatTurnsNeedAndDropsTheRest() throws {
+        let repo = try Repository()
+        let snapshots = TurnSnapshots(directory: repo.store)
+        let refs = try repo.git("for-each-ref")
+        let objects = repo.listing(".git/objects")
+        let first = try #require(snapshots.snapshot(root: repo.root))
+        var trees: [String] = []
+        for _ in 0..<6 {
+            try repo.write("data.txt", Self.noise(512 * 1024))
+            trees.append(try #require(snapshots.snapshot(root: repo.root)))
+        }
+        let before = Self.size(of: repo.store)
+        #expect(snapshots.prune(root: repo.root, keeping: [first, trees[1]], expire: "now"))
+        let after = Self.size(of: repo.store)
+        // The second version and the newest, which the store's index holds, stay: two of six.
+        #expect(after < before / 2)
+        #expect(snapshots.diff(root: repo.root, relative: "data.txt", from: first, to: trees[1]).additions > 1000)
+        // Snapshots go on from where they were.
+        try repo.write("a.txt", "one\nTWO\n")
+        let next = try #require(snapshots.snapshot(root: repo.root))
+        #expect(snapshots.changes(root: repo.root, from: trees[5], to: next).map(\.relative) == ["a.txt"])
+        #expect(snapshots.changes(root: repo.root, from: trees[1], to: next).map(\.relative) == ["a.txt", "data.txt"])
+        // The repository itself is as it was.
+        #expect(try repo.git("for-each-ref") == refs)
+        #expect(repo.listing(".git/objects") == objects)
+    }
+
+    @Test func aTurnWhoseFilesAreGoneDoesNotStopThePrune() throws {
+        let repo = try Repository()
+        let snapshots = TurnSnapshots(directory: repo.store)
+        try repo.write("data.txt", "first\n")
+        let broken = try #require(snapshots.snapshot(root: repo.root))
+        let lost = try repo.git("hash-object", "data.txt").trimmingCharacters(in: .whitespacesAndNewlines)
+        try repo.write("data.txt", Self.noise(256 * 1024))
+        let kept = try #require(snapshots.snapshot(root: repo.root))
+        // As if it had been collected away.
+        let store = try #require(FileManager.default.contentsOfDirectory(atPath: repo.store.path).first)
+        try FileManager.default.removeItem(atPath: repo.store.path + "/" + store + "/objects/" + lost.prefix(2) + "/" + lost.dropFirst(2))
+        #expect(snapshots.prune(root: repo.root, keeping: [broken, kept], expire: "now"))
+        try repo.write("a.txt", "one\nTWO\n")
+        let next = try #require(snapshots.snapshot(root: repo.root))
+        #expect(snapshots.changes(root: repo.root, from: kept, to: next).map(\.relative) == ["a.txt"])
+    }
 }
 
 @Suite struct AgentTurnTests {

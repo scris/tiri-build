@@ -4,7 +4,8 @@ import TiriCore
 
 extension AppModel {
     func loadTurns() {
-        turns = turnStore.load().trimmed()
+        let stored = turnStore.load()
+        turns = stored.trimmed()
         // A terminal that's gone can't finish its turn, and nothing says what it had changed by then.
         let items = Set(workspaces.flatMap { $0.items.map(\.id) })
         for index in turns.indices where turns[index].isOpen && !items.contains(turns[index].item) {
@@ -14,6 +15,7 @@ extension AppModel {
         let snapshots = self.snapshots
         let needed = Set(turns.flatMap { Array($0.startTrees.keys) })
         Task.detached(priority: .background) { snapshots.removeStores(except: needed) }
+        pruneSnapshots(always: turns.count < stored.count)
     }
 
     private func saveTurns() {
@@ -48,7 +50,7 @@ extension AppModel {
                     self.turns[index].ended = Date()
                     self.turns[index].endTrees = trees
                 }
-                self.turns = self.turns.trimmed()
+                self.trimTurns(roots: roots)
                 self.saveTurns()
                 self.refreshChanges(workspace.id)
             }
@@ -76,7 +78,7 @@ extension AppModel {
                     self.turns.append(AgentTurn(workspace: workspace.id, item: item, title: name, started: last?.ended ?? Date(), ended: Date(),
                                                 startTrees: last?.endTrees ?? trees, endTrees: trees))
                 }
-                self.turns = self.turns.trimmed()
+                self.trimTurns(roots: roots)
                 self.saveTurns()
                 self.refreshChanges(workspace.id)
             }

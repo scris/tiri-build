@@ -595,10 +595,13 @@ extension Git {
         let revisions = [from] + (to.map { [$0] } ?? [])
         let old = renameSource(of: relative, revisions: revisions, in: root)
         let paths = [relative] + (old.map { [$0] } ?? [])
-        guard let output = text(["diff", "-M", "--no-color", "--no-ext-diff", "-U3"] + revisions + ["--"] + paths, in: root) else {
+        if tooLargeToDiff(root: root, relatives: paths, revisions: revisions, workingCopy: to == nil ? path : nil) { return .tooLarge }
+        guard let found = runGit(["diff", "-M", "--no-color", "--no-ext-diff", "-U3"] + revisions + ["--"] + paths, in: root, outputLimit: largestDiffOutput) else {
             return FileDiff()
         }
-        var result = DiffParser.parse(output)
+        if found.output.count > largestDiffOutput { return .tooLarge }
+        guard found.status == 0 else { return FileDiff() }
+        var result = DiffParser.parse(String(decoding: found.output, as: UTF8.self))
         result.oldRelative = old
         return result
     }

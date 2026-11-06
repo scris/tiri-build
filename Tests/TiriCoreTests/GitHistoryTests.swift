@@ -317,6 +317,71 @@ struct ScratchRepository {
     }
 }
 
+@Suite struct LargeDiffTests {
+    @Test func aDiffPastTheBudgetIsTooLargeAndGitIsStopped() throws {
+        let repo = try ScratchRepository()
+        // Ten megabytes of changed lines, under the file limit but over the output budget.
+        try repo.write("a.txt", String(repeating: "a changed line, long enough to add up quickly\n", count: 230_000))
+        let started = Date()
+        let diff = Git.diff(path: repo.root + "/a.txt")
+        #expect(diff.isTooLarge)
+        #expect(diff.lines.isEmpty)
+        #expect(Date().timeIntervalSince(started) < 10)
+        #expect(try #require(Git.diff(path: repo.root + "/a.txt", target: .head)).isTooLarge)
+    }
+
+    @Test func aSmallDiffIsStillRead() throws {
+        let repo = try ScratchRepository()
+        try repo.write("a.txt", "one\nTWO\nthree\n")
+        let diff = Git.diff(path: repo.root + "/a.txt")
+        #expect(!diff.isTooLarge)
+        #expect(diff.additions == 1)
+    }
+
+    @Test func outputPastTheLimitStopsTheCommand() throws {
+        let repo = try ScratchRepository()
+        try repo.write("a.txt", String(repeating: "x\n", count: 200_000))
+        let result = try #require(Git.runGit(["diff"], in: repo.root, outputLimit: 1000))
+        #expect(result.output.count > 1000)
+        #expect(result.output.count <= 1000 + 65536)
+    }
+}
+
+@Suite struct QuickOpenIndexTests {
+    @Test func aRepositoryIndexesWhatGitDoesNotIgnore() throws {
+        let repo = try ScratchRepository()
+        try repo.write(".gitignore", "target/\n")
+        try repo.write("target/debug/out.o", "")
+        try repo.write("src/new.rs", "fresh\n")
+        try repo.write("node_modules/x.js", "")
+        let found = FileIndexer.index(roots: [repo.root], excludes: ExcludeMatcher(patterns: ["node_modules"]))
+        #expect(Set(found.files.map(\.relative)) == [".gitignore", "a.txt", "src/new.rs"])
+        #expect(found.files.first { $0.relative == "src/new.rs" }?.name == "new.rs")
+        #expect(!found.reachedLimit)
+        #expect(FileIndexer.index(roots: [repo.root], excludes: ExcludeMatcher(patterns: []), limit: 2).reachedLimit)
+    }
+
+    @Test func aFolderOutsideARepositoryIsWalked() throws {
+        let folder = Git.real(FileManager.default.temporaryDirectory.appendingPathComponent("tiri-index-\(UUID().uuidString)").path)
+        try FileManager.default.createDirectory(atPath: folder + "/sub", withIntermediateDirectories: true)
+        try "x".write(toFile: folder + "/sub/a.txt", atomically: true, encoding: .utf8)
+        #expect(FileIndexer.index(roots: [folder], excludes: ExcludeMatcher(patterns: [])).files.map(\.relative) == ["sub/a.txt"])
+    }
+
+    @Test func aRepositoryInsideIsListedByItsOwnGit() throws {
+        let repo = try ScratchRepository()
+        let inner = repo.root + "/vendor/lib"
+        try FileManager.default.createDirectory(atPath: inner, withIntermediateDirectories: true)
+        try repo.run(["init", "-q", "-b", "main"], in: inner)
+        try ".build/\n".write(toFile: inner + "/.gitignore", atomically: true, encoding: .utf8)
+        try "x".write(toFile: inner + "/lib.c", atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(atPath: inner + "/.build", withIntermediateDirectories: true)
+        try "x".write(toFile: inner + "/.build/junk.o", atomically: true, encoding: .utf8)
+        let found = Set(FileIndexer.index(roots: [repo.root], excludes: ExcludeMatcher(patterns: [])).files.map(\.relative))
+        #expect(found == ["a.txt", "vendor/lib/.gitignore", "vendor/lib/lib.c"])
+    }
+}
+
 @Suite struct ReviewFromCommitTests {
     @Test func aCommentSaysWhichCommit() {
         let comment = ReviewComment(path: "/p/a.txt", commit: "abcdef1234567", text: "Why?")

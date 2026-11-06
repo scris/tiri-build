@@ -220,12 +220,10 @@ public enum Conversations {
     /// The whole of it as a document: what was said, and what was done in a line each. Tool output is left
     /// out: it's most of the file and little of the conversation.
     public static func markdown(_ data: Data, summary: ConversationSummary, limit: Int = 1_500_000) -> String {
-        guard let profile = AgentCatalog.profile(id: summary.agent), let format = profile.conversationFormat else { return "" }
+        guard let profile = AgentCatalog.profile(id: summary.agent), profile.conversationFormat != nil else { return "" }
         var pieces: [Piece] = []
-        for line in data.split(separator: 10) {
-            guard let object = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] else { continue }
-            pieces += Self.pieces(of: object, format: format)
-        }
+        // Line by line in place, and the long lines of tool output aren't parsed at all.
+        forEachPiece(of: data, agent: summary.agent, limit: .max) { pieces.append($0) }
         var body = ""
         var last = ""
         for piece in pieces {

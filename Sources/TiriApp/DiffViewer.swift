@@ -23,6 +23,8 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private var generation = 0
     private var firstLoad = true
     private var wasMissing = false
+    /// The file's size and date when its diff was found too large to show.
+    private var tooLargeStamp: [Int]?
     private var shownImages: Data?
     private let message = NSTextField(labelWithString: "")
     private var quoteButtons: [QuoteButton] = []
@@ -219,6 +221,9 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     func load() {
         // A commit doesn't change, unless it couldn't be found.
         if spec.commit != nil, !firstLoad, !wasMissing { return }
+        // Too large stays too large until the file changes, so each refresh doesn't run git again.
+        let stamp = Self.stamp(of: path)
+        if diff.isTooLarge, tooLargeStamp != nil, tooLargeStamp == stamp { return }
         generation += 1
         let current = generation
         let spec = spec
@@ -230,6 +235,7 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
             let loaded = spec.unsaved == true ? Self.read(spec.path, against: unsaved) : Self.read(spec, turn: found, snapshots: snapshots, scale: scale)
             await MainActor.run {
                 guard let self, self.generation == current else { return }
+                self.tooLargeStamp = loaded.diff?.isTooLarge == true ? stamp : nil
                 self.display(loaded)
             }
         }
@@ -245,6 +251,12 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
         loaded.pairs = DiffRows.pairs(diff.lines)
         loaded.starts = DiffRows.changeStarts(diff.lines)
         return loaded
+    }
+
+    private static func stamp(of path: String) -> [Int]? {
+        var info = stat()
+        guard stat(path, &info) == 0 else { return nil }
+        return [Int(info.st_size), info.st_mtimespec.tv_sec, info.st_mtimespec.tv_nsec, Int(info.st_ino)]
     }
 
     nonisolated private static func read(_ spec: DiffSpec, turn: AgentTurn?, snapshots: TurnSnapshots, scale: CGFloat) -> Loaded {
@@ -317,6 +329,7 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
     private func messageText(for result: FileDiff, missing: Bool) -> String? {
         if missing { return spec.commit != nil ? String(localized: "Tiri can't find this commit any more.") : String(localized: "Tiri no longer has this turn's snapshot.") }
         if result.isBinary { return String(localized: "This is a binary file. Git can't show its changes line by line.") }
+        if result.isTooLarge { return String(localized: "This file's changes are too large to show.") }
         guard result.isEmpty else { return nil }
         if let old = result.oldRelative { return String(localized: "Renamed from \(old), with no other changes.") }
         if let note = result.note { return note }

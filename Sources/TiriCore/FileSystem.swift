@@ -128,6 +128,61 @@ public enum FileIndexer {
         }
         return files
     }
+
+    /// Quick open's files. In a repository, what git counts as the project: tracked files and new ones
+    /// it doesn't ignore, so a big ignored build folder can't fill the index before the source does.
+    /// Anywhere else, or on a server, a walk. `reachedLimit` says the list was cut short.
+    public static func index(roots: [String], excludes: ExcludeMatcher, limit: Int = 200_000,
+                             isCancelled: () -> Bool = { false }) -> (files: [IndexedFile], reachedLimit: Bool) {
+        var files: [IndexedFile] = []
+        for root in roots {
+            if files.count >= limit || isCancelled() { break }
+            let room = limit - files.count
+            if RemoteRegistry.shared.connection(forLocal: root) == nil, let found = projectFiles(root: root, excludes: excludes, limit: room) {
+                files += found
+            } else {
+                files += walk(roots: [root], excludes: excludes, limit: room, isCancelled: isCancelled)
+            }
+        }
+        return (Array(files.prefix(limit)), files.count >= limit)
+    }
+
+    /// Nil when `folder` isn't in a repository git can read. Paths are relative to `folder`, as walk's are.
+    /// A submodule and a repository inside that git doesn't track are listed the same way, by their own git.
+    private static func projectFiles(root: String, folder: String? = nil, excludes: ExcludeMatcher, limit: Int, depth: Int = 0) -> [IndexedFile]? {
+        let folder = folder ?? root
+        guard let top = Git.repositoryRoot(of: folder),
+              let result = Git.runGit(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], in: folder, timeout: 60),
+              result.status == 0 else { return nil }
+        var nested = Set<String>()
+        if FileManager.default.fileExists(atPath: top + "/.gitmodules"),
+           let staged = Git.runGit(["ls-files", "-z", "--stage"], in: folder, timeout: 60), staged.status == 0 {
+            for entry in staged.output.split(separator: 0) where entry.starts(with: Array("160000 ".utf8)) {
+                if let tab = entry.firstIndex(of: 9) { nested.insert(String(decoding: entry[(tab + 1)...], as: UTF8.self)) }
+            }
+        }
+        var files: [IndexedFile] = []
+        for raw in result.output.split(separator: 0) {
+            if files.count >= limit { break }
+            var relative = String(decoding: raw, as: UTF8.self)
+            let isFolder = relative.hasSuffix("/")
+            if isFolder { relative.removeLast() }
+            if relative.split(separator: "/").contains(where: { excludes.excludes(name: String($0)) }) { continue }
+            let path = folder + "/" + relative
+            if isFolder || nested.contains(relative) {
+                guard depth < 4 else { continue }
+                let inner = projectFiles(root: root, folder: path, excludes: excludes, limit: limit - files.count, depth: depth + 1)
+                    ?? walk(roots: [path], excludes: excludes, limit: limit - files.count).map { file in
+                        IndexedFile(path: file.path, root: root, relative: String(file.path.dropFirst(root.count + 1)), name: file.name)
+                    }
+                files += inner
+                continue
+            }
+            files.append(IndexedFile(path: path, root: root, relative: String(path.dropFirst(root.count + 1)),
+                                     name: (relative as NSString).lastPathComponent))
+        }
+        return files
+    }
 }
 
 // MARK: - Fuzzy matching

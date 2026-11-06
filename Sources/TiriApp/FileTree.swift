@@ -89,7 +89,11 @@ final class FileNode: NSObject {
     let isDirectory: Bool
     let isRoot: Bool
     weak var parent: FileNode?
-    var children: [FileNode]?
+    var children: [FileNode]? {
+        didSet { childrenByName = nil }
+    }
+    /// For finding one child of a big folder by name, which each file event does.
+    private var childrenByName: [String: FileNode]?
     /// A row that exists only while its name is being typed.
     var pendingCreation: PendingKind?
 
@@ -101,6 +105,15 @@ final class FileNode: NSObject {
         self.isDirectory = isDirectory
         self.isRoot = isRoot
         self.parent = parent
+    }
+
+    func child(named name: Substring) -> FileNode? {
+        guard let children else { return nil }
+        if children.count < 64 { return children.first { $0.name == name } }
+        if childrenByName == nil {
+            childrenByName = Dictionary(children.filter { $0.pendingCreation == nil }.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+        return childrenByName?[String(name)]
     }
 }
 
@@ -195,6 +208,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     func clear() {
         saveExpansion()
         workspaceID = nil
+        forgetReads()
         roots = []
         outline.reloadData()
     }
@@ -203,6 +217,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         // Leaving a workspace remembers what was open in it.
         saveExpansion()
         workspaceID = workspace.id
+        forgetReads()
         excludes = ExcludeMatcher(patterns: model?.settings.filesExclude ?? [])
         expanded = Set(workspace.expandedFolders)
         // A folder with no expansion state starts open: its root is the first thing you want to see.
@@ -242,11 +257,29 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     // MARK: Children
 
+    /// What's been read of a folder. One not read yet is read away from the main thread, and its rows
+    /// come in when that's done: a folder of a hundred thousand files takes a third of a second.
     private func children(of node: FileNode) -> [FileNode] {
+        if let children = node.children { return children }
+        read(node)
+        return []
+    }
+
+    /// Read here and now, for what has to find a row straight away: reveal, and a new file's row.
+    private func childrenNow(of node: FileNode) -> [FileNode] {
         if let children = node.children { return children }
         let entries = (try? fileSystem.list(directory: node.path, excludes: excludes)) ?? []
         let children = entries.map { FileNode(path: $0.path, name: $0.name, isDirectory: $0.isDirectory, parent: node) }
         node.children = children
+        // The outline may have shown it as empty while a read was underway.
+        let row = head(of: node)
+        if !children.isEmpty, outline.isItemExpanded(row) {
+            outline.reloadItem(row, reloadChildren: true)
+            let wasRestoring = restoringExpansion
+            restoringExpansion = true
+            for child in displayedChildren(of: row) where child.isDirectory && expanded.contains(child.path) { restoreExpansion(child) }
+            restoringExpansion = wasRestoring
+        }
         return children
     }
 
@@ -415,7 +448,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             let components = path.dropFirst(root.path.count + 1).split(separator: "/")
             var failed = false
             for component in components {
-                guard let next = node.children?.first(where: { $0.name == component }) else {
+                guard let next = node.child(named: component) else {
                     failed = true
                     break
                 }
@@ -426,12 +459,73 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         return nil
     }
 
+    /// Read again away from the main thread. Asking while a read is underway only asks for one more after it.
     private func refresh(_ node: FileNode) {
+        read(node)
+    }
+
+    /// Read again here and now, for a change made from the tree itself.
+    private func refreshNow(_ node: FileNode) {
         guard editingNode == nil else { return }
         guard FileManager.default.fileExists(atPath: node.path) else { return }
-        let entries = (try? fileSystem.list(directory: node.path, excludes: excludes)) ?? []
+        apply((try? fileSystem.list(directory: node.path, excludes: excludes)) ?? [], to: node)
+    }
+
+    /// Folders being read, and whether another read of each was asked for meanwhile.
+    private var reading: [String: Bool] = [:]
+    private var readGeneration = 0
+
+    /// Reads still underway are for nodes that are gone.
+    private func forgetReads() {
+        readGeneration += 1
+        reading = [:]
+    }
+
+    private func read(_ node: FileNode) {
+        let path = node.path
+        if reading[path] != nil {
+            reading[path] = true
+            return
+        }
+        reading[path] = false
+        let generation = readGeneration
+        let fileSystem = fileSystem
+        let excludes = excludes
+        Task.detached(priority: .userInitiated) { [weak self, weak node] in
+            let entries: [FileEntry]? = FileManager.default.fileExists(atPath: path)
+                ? ((try? fileSystem.list(directory: path, excludes: excludes)) ?? []) : nil
+            await MainActor.run {
+                guard let self, self.readGeneration == generation else { return }
+                let again = self.reading.removeValue(forKey: path) ?? false
+                guard let node else { return }
+                if let entries {
+                    // Mid-rename the rows stay put, and they're read again after.
+                    if self.editingNode != nil, node.children != nil {
+                        self.retry(node, generation: generation)
+                        return
+                    }
+                    self.apply(entries, to: node)
+                } else if node.children == nil {
+                    node.children = []
+                }
+                // Something is still writing there. Let more of it pile up before reading again.
+                if again { self.retry(node, generation: generation) }
+            }
+        }
+    }
+
+    private func retry(_ node: FileNode, generation: Int) {
+        // Showing a very big folder's rows again costs the main thread, so it's done less often.
+        let wait = (node.children?.count ?? 0) > 10_000 ? 1.5 : 0.3
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self, weak node] in
+            guard let self, let node, self.readGeneration == generation else { return }
+            self.read(node)
+        }
+    }
+
+    private func apply(_ entries: [FileEntry], to node: FileNode) {
         let old = node.children ?? []
-        if old.map(\.path) == entries.map(\.path) { return }
+        if node.children != nil, old.map(\.path) == entries.map(\.path) { return }
         let byPath = Dictionary(old.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         let selection = selectedPaths()
         // Keep the node objects that survive, so their expansion and scroll stay put.
@@ -480,11 +574,16 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         if !outline.isItemExpanded(root) { outline.expandItem(root) }
         let components = path.dropFirst(root.path.count).split(separator: "/")
         for component in components {
-            guard let next = children(of: node).first(where: { $0.name == component }) else { return }
+            _ = childrenNow(of: node)
+            guard let next = node.child(named: component) else { return }
             node = next
             if node.path != path, !outline.isItemExpanded(head(of: node)) { outline.expandItem(head(of: node)) }
         }
-        if expand, node.isDirectory { outline.expandItem(head(of: node)) }
+        if expand, node.isDirectory {
+            // Asked for by name, so it's shown at once.
+            _ = childrenNow(of: tail(of: node))
+            outline.expandItem(head(of: node))
+        }
         // Reading on the way down can have made its row's run longer.
         refreshRowLabel(head(of: node))
         let row = outline.row(forItem: head(of: node))
@@ -619,7 +718,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         for part in run(from: row) { expanded.insert(part.path) }
         let pending = FileNode(path: directory.path + "/", name: "", isDirectory: kind == .folder, parent: directory)
         pending.pendingCreation = kind
-        var list = children(of: directory)
+        var list = childrenNow(of: directory)
         let index = kind == .folder ? 0 : (list.firstIndex { !$0.isDirectory } ?? list.count)
         list.insert(pending, at: index)
         directory.children = list
@@ -721,7 +820,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
             model?.showToast(title: String(localized: "Couldn't rename \(node.name)"), detail: error.localizedDescription,
                              symbol: "exclamationmark.triangle", tint: .orange)
         }
-        if let parent = node.parent { refresh(parent) }
+        if let parent = node.parent { refreshNow(parent) }
         // It may sort somewhere else now. The selection goes with it, so the next key means this file.
         if FileManager.default.fileExists(atPath: destination) { reveal(path: destination, expand: false, quiet: true) }
     }
@@ -745,7 +844,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                         model?.showToast(title: String(localized: "Couldn't create \(name)"), detail: failure.description, symbol: "exclamationmark.triangle", tint: .orange)
                         return
                     }
-                    self?.refresh(parent)
+                    self?.refreshNow(parent)
                     self?.reveal(path: path, expand: false, quiet: true)
                     if kind == .file { model?.openFromTree(path: path, pin: true) }
                 }
@@ -766,7 +865,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
                              symbol: "exclamationmark.triangle", tint: .orange)
             return
         }
-        refresh(parent)
+        refreshNow(parent)
         reveal(path: path, expand: false, quiet: true)
         if kind == .file { model?.openFromTree(path: path, pin: true) }
     }

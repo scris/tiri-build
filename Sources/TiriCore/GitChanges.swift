@@ -95,9 +95,11 @@ public struct FileDiff: Sendable, Equatable {
     public var oldRelative: String?
     /// What git says about a file with no lines to compare: new and empty, or only its mode changed.
     public var note: String?
+    /// Too big to show: the file, or its diff. Its lines aren't read.
+    public var isTooLarge = false
     public var additions: Int { lines.filter { $0.kind == .added }.count }
     public var deletions: Int { lines.filter { $0.kind == .removed }.count }
-    public var isEmpty: Bool { lines.isEmpty && !isBinary }
+    public var isEmpty: Bool { lines.isEmpty && !isBinary && !isTooLarge }
 
     public init(lines: [DiffLine] = [], isBinary: Bool = false) {
         self.lines = lines
@@ -249,13 +251,16 @@ public struct ChangesScan: Sendable, Equatable {
 
 /// Runs git, for the changes view and the status bar. Only `transfer` touches a remote.
 public enum Git {
-    static func runGit(_ arguments: [String], in directory: String, environment: [String: String] = [:], timeout: Double = 20) -> (status: Int32, output: Data)? {
-        run(arguments, in: directory, timeout: timeout, extraEnvironment: environment)
+    static func runGit(_ arguments: [String], in directory: String, environment: [String: String] = [:], timeout: Double = 20,
+                       outputLimit: Int? = nil) -> (status: Int32, output: Data)? {
+        run(arguments, in: directory, timeout: timeout, extraEnvironment: environment, outputLimit: outputLimit)
     }
 
     private static func run(_ arguments: [String], in directory: String, timeout: Double = 20,
-                            includeErrors: Bool = false, extraEnvironment: [String: String] = [:]) -> (status: Int32, output: Data)? {
-        ran(arguments, in: directory, timeout: timeout, includeErrors: includeErrors, extraEnvironment: extraEnvironment).map { ($0.status, $0.output) }
+                            includeErrors: Bool = false, extraEnvironment: [String: String] = [:],
+                            outputLimit: Int? = nil) -> (status: Int32, output: Data)? {
+        ran(arguments, in: directory, timeout: timeout, includeErrors: includeErrors, extraEnvironment: extraEnvironment,
+            outputLimit: outputLimit).map { ($0.status, $0.output) }
     }
 
     /// How a run went, for the callers that need more than what it printed.
@@ -270,8 +275,10 @@ public enum Git {
 
     /// Spawned and waited for directly. Foundation's Process can wait forever for a child that has
     /// already exited, which would silently stop the changes list. A hung git gets killed.
+    /// Past `outputLimit` bytes git is stopped, and the output it returns is longer than the limit.
     private static func ran(_ arguments: [String], in directory: String, timeout: Double = 20,
-                            includeErrors: Bool = false, extraEnvironment: [String: String] = [:], records: Int? = nil) -> Ran? {
+                            includeErrors: Bool = false, extraEnvironment: [String: String] = [:], records: Int? = nil,
+                            outputLimit: Int? = nil) -> Ran? {
         if let connection = RemoteRegistry.shared.connection(forLocal: directory) {
             return runRemote(arguments, on: connection, in: directory, timeout: timeout, includeErrors: includeErrors, extraEnvironment: extraEnvironment)
                 .map { Ran(status: $0.status, output: $0.output) }
@@ -352,6 +359,10 @@ public enum Git {
                         cut = true
                         break
                     }
+                }
+                if let outputLimit, output.count > outputLimit {
+                    kill(pid, SIGKILL)
+                    break
                 }
             } else if count == 0 || errno != EINTR {
                 break
@@ -579,7 +590,10 @@ public enum Git {
         // git only sees a rename when it's asked about both names.
         let old = renameSource(of: relative, revisions: ["HEAD"], in: root)
         let paths = [relative] + (old.map { [$0] } ?? [])
-        if let result = run(["diff", "HEAD", "-M", "--no-color", "--no-ext-diff", "-U3", "--"] + paths, in: root), result.status == 0 {
+        if tooLargeToDiff(root: root, relatives: paths, revisions: ["HEAD"], workingCopy: path) { return .tooLarge }
+        if let result = run(["diff", "HEAD", "-M", "--no-color", "--no-ext-diff", "-U3", "--"] + paths, in: root, outputLimit: largestDiffOutput),
+           result.status == 0 || result.output.count > largestDiffOutput {
+            if result.output.count > largestDiffOutput { return .tooLarge }
             var diff = DiffParser.parse(String(decoding: result.output, as: UTF8.self))
             diff.oldRelative = old
             return diff

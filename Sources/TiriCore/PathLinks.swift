@@ -70,6 +70,25 @@ public enum PathLinkDetector {
     /// Characters that end an unquoted token.
     private static let tokenBreaks: Set<Character> = [" ", "\t", "|", "\"", "'", "`", "<", ">", "│", "┃", "·", "•", "❯", "›", "⎿", "→"]
 
+    /// Hover looks this many characters either side of the column, as VS Code's terminal links do,
+    /// so a ⌘-hover over a minified line costs the same as over a short one.
+    public static let hoverContext = 500
+    /// A scan of a whole line looks at no more than this much of it.
+    public static let maxScannedLength = 2000
+
+    // Built once: a regex literal costs more to set up than to run.
+    nonisolated(unsafe) private static let lineWordLocation = /[,:]? ?(?:on )?lines? (\d+)(?:-\d+)?(?:,? ?(?:col|column|character) (\d+))?/
+    nonisolated(unsafe) private static let bracketLocation = /:? ?[\(\[](\d+)(?:[,: ] ?(\d+))?[\)\]]/
+    nonisolated(unsafe) private static let spacedLocation = /,? ?(\d+)(?::(\d+))?(?![\w.\/])/
+    nonisolated(unsafe) private static let splitColumn = /\s?(\d+)[\)\]]/
+    nonisolated(unsafe) private static let locationRow = /( *)(\d+):(\d+)?/
+    nonisolated(unsafe) private static let hashLocation = /(.+?)#L?(\d+)(?:-L?\d+)?(?::(\d+))?[.,;:)\]]?/
+    nonisolated(unsafe) private static let bracketGlued = /(.+?)[\(\[](\d+)(?:[,:](\d+)?)?[\)\]]?[:,.]?/
+    nonisolated(unsafe) private static let colonGlued = /(.+?):(\d+)(?:[:.](\d+))?(?:-\d+(?:\.\d+)?)?(?=$|[:,;.)\]}!?'"`])/
+    nonisolated(unsafe) private static let trailingLocation = /(.+?):(\d+)(:\d+)?:?/
+    /// The most a location after a path can take: `, line 12345, column 678`.
+    private static let followingLocationLength = 48
+
     /// The argument of something shaped like `Update(src/a.ts)`.
     private static func toolCallArgument(_ line: [Character], start: Int, end: Int) -> Range<Int>? {
         guard let open = line[start..<end].firstIndex(of: "("), open > start,
@@ -97,7 +116,12 @@ public enum PathLinkDetector {
     /// Every path-looking candidate in a line, left to right. Conservative: bare words
     /// without a slash or extension are skipped. Use `candidates(atColumn:in:)` for hover.
     public static func candidates(in rawLine: String) -> [PathCandidate] {
-        let line = Array(stripANSI(rawLine))
+        var line = Array(stripANSI(rawLine))
+        if line.count > maxScannedLength { line.removeSubrange(maxScannedLength...) }
+        return scan(line)
+    }
+
+    private static func scan(_ line: [Character]) -> [PathCandidate] {
         var results: [PathCandidate] = []
         var index = 0
         while index < line.count {
@@ -136,12 +160,41 @@ public enum PathLinkDetector {
     /// Candidates under a column, best first. Hover has an existence check behind it,
     /// so it can try anything: plain words too (`ls` output), and spaces in unquoted paths.
     public static func candidates(atColumn column: Int, in rawLine: String) -> [PathCandidate] {
-        let line = Array(stripANSI(rawLine))
-        guard column >= 0, column < line.count else { return [] }
+        let full = Array(stripANSI(rawLine))
+        guard column >= 0, column < full.count else { return [] }
+        let window = hoverWindow(full, column: column)
+        guard window.lowerBound > 0 || window.upperBound < full.count else {
+            return candidates(atColumn: column, in: full, diffHeader: isDiffHeader(full))
+        }
+        let offset = window.lowerBound
+        return candidates(atColumn: column - offset, in: Array(full[window]), diffHeader: isDiffHeader(full)).map {
+            var candidate = $0
+            candidate.range = (candidate.range.lowerBound + offset)..<(candidate.range.upperBound + offset)
+            return candidate
+        }
+    }
+
+    /// About `hoverContext` characters either side of the column, cut where tokens break: at a
+    /// space if there is one, so quotes still pair up.
+    static func hoverWindow(_ line: [Character], column: Int) -> Range<Int> {
+        var lower = max(0, column - hoverContext)
+        var upper = min(line.count, column + hoverContext + 1)
+        func isSpace(_ index: Int) -> Bool { (line[index] == " " || line[index] == "\t") && isTokenBreak(line, index) }
+        if lower > 0, let index = (lower..<column).first(where: isSpace) ?? (lower..<column).first(where: { isTokenBreak(line, $0) }) {
+            lower = index + 1
+        }
+        if upper < line.count, column + 1 < upper,
+           let index = ((column + 1)..<upper).last(where: isSpace) ?? ((column + 1)..<upper).last(where: { isTokenBreak(line, $0) }) {
+            upper = index
+        }
+        return lower..<upper
+    }
+
+    private static func candidates(atColumn column: Int, in line: [Character], diffHeader: Bool) -> [PathCandidate] {
         var results: [PathCandidate] = []
 
         // 1. Inside quotes.
-        for candidate in candidates(in: rawLine) where candidate.range.contains(column) {
+        for candidate in scan(line) where candidate.range.contains(column) {
             results.append(candidate)
         }
 
@@ -162,7 +215,7 @@ public enum PathLinkDetector {
             if let candidate = cleanToken(line, start: start, end: end),
                candidate.range.contains(column) {
                 // On a diff header, `a/foo.swift` means `foo.swift`, even if `a/foo.swift` exists.
-                if isDiffHeader(line), let stripped = strippingDiffPrefix(candidate) {
+                if diffHeader, let stripped = strippingDiffPrefix(candidate) {
                     results.removeAll { $0.path == candidate.path }
                     results.append(stripped)
                 }
@@ -179,8 +232,9 @@ public enum PathLinkDetector {
         if line[column] != "\t" {
             var start = column
             var end = column + 1
-            while start > 0, canJoinAcrossSpace(line, start - 1) { start -= 1 }
-            while end < line.count, canJoinAcrossSpace(line, end) { end += 1 }
+            // A name with spaces in it is never this long, and each variant is a regex run over it.
+            while start > 0, column - start < 256, canJoinAcrossSpace(line, start - 1) { start -= 1 }
+            while end < line.count, end - column < 256, canJoinAcrossSpace(line, end) { end += 1 }
             let hasSpace = line[start..<end].contains(" ")
             if hasSpace {
                 var variants: [(Int, Int)] = []
@@ -192,8 +246,9 @@ public enum PathLinkDetector {
                     if line[index] == " " { ends.append(index) }
                     index -= 1
                 }
-                for from in starts {
-                    for to in ends where from <= column && to > column {
+                // Only the 24 longest are tried, and they start and end farthest out.
+                for from in starts.prefix(24) {
+                    for to in ends.prefix(24) where from <= column && to > column {
                         variants.append((from, to))
                     }
                 }
@@ -261,13 +316,13 @@ public enum PathLinkDetector {
         guard candidate.line == nil, index < line.count else { return }
         let start = index + 1
         guard start <= line.count else { return }
-        let rest = String(line[start...])
+        let rest = String(line[start..<min(line.count, start + followingLocationLength)])
         var matched: (line: Int?, col: Int?, length: Int)?
-        if let match = rest.prefixMatch(of: /[,:]? ?(?:on )?lines? (\d+)(?:-\d+)?(?:,? ?(?:col|column|character) (\d+))?/) {
+        if let match = rest.prefixMatch(of: lineWordLocation) {
             matched = (Int(match.1), match.2.flatMap { Int($0) }, match.0.count)
-        } else if let match = rest.prefixMatch(of: /:? ?[\(\[](\d+)(?:[,: ] ?(\d+))?[\)\]]/) {
+        } else if let match = rest.prefixMatch(of: bracketLocation) {
             matched = (Int(match.1), match.2.flatMap { Int($0) }, match.0.count)
-        } else if let match = rest.prefixMatch(of: /,? ?(\d+)(?::(\d+))?(?![\w.\/])/) {
+        } else if let match = rest.prefixMatch(of: spacedLocation) {
             matched = (Int(match.1), match.2.flatMap { Int($0) }, match.0.count)
         }
         guard let matched else { return }
@@ -290,8 +345,8 @@ public enum PathLinkDetector {
         if var glued = parseGluedLocation(raw, start: from) {
             // `foo.ts(339, 12)`: the space split the column off into the next token.
             if glued.col == nil, raw.hasSuffix(",") || raw.hasSuffix(":") {
-                let rest = String(line[end...])
-                if let match = rest.prefixMatch(of: /\s?(\d+)[\)\]]/) {
+                let rest = String(line[end..<min(line.count, end + followingLocationLength)])
+                if let match = rest.prefixMatch(of: splitColumn) {
                     glued.col = Int(match.1)
                     glued.range = glued.range.lowerBound..<(end + match.0.count)
                 }
@@ -336,7 +391,7 @@ public enum PathLinkDetector {
     /// on the nearest line above that doesn't start with a number, as in VS Code.
     public static func locationUnderPath(atColumn column: Int, row: Int, in rows: [String]) -> (candidates: [PathCandidate], range: Range<Int>)? {
         guard rows.indices.contains(row),
-              let match = rows[row].prefixMatch(of: /( *)(\d+):(\d+)?/) else { return nil }
+              let match = rows[row].prefixMatch(of: locationRow) else { return nil }
         let start = match.1.count
         let length = match.2.count + 1 + (match.3?.count ?? 0)
         guard column >= start, column < start + length, let line = Int(match.2) else { return nil }
@@ -376,16 +431,16 @@ public enum PathLinkDetector {
             PathCandidate(path: String(path), line: line.flatMap { Int($0) }, col: col.flatMap { Int($0) },
                           range: start..<(start + length))
         }
-        if let match = text.wholeMatch(of: /(.+?)#L?(\d+)(?:-L?\d+)?(?::(\d+))?[.,;:)\]]?/) {
+        if let match = text.wholeMatch(of: hashLocation) {
             let trailing = text.last.map { ".,;:)]".contains($0) } == true ? 1 : 0
             return candidate(match.1, match.2, match.3, length: text.count - trailing)
         }
-        if let match = text.wholeMatch(of: /(.+?)[\(\[](\d+)(?:[,:](\d+)?)?[\)\]]?[:,.]?/) {
+        if let match = text.wholeMatch(of: bracketGlued) {
             let trimmed = text.reversed().prefix { ":,.".contains($0) }.count
             return candidate(match.1, match.2, match.3, length: text.count - trimmed)
         }
         // The lookahead is what lets `a.ts:12/b` stay a path while `a.ts:12:const` stops at the 12.
-        if let match = text.prefixMatch(of: /(.+?):(\d+)(?:[:.](\d+))?(?:-\d+(?:\.\d+)?)?(?=$|[:,;.)\]}!?'"`])/) {
+        if let match = text.prefixMatch(of: colonGlued) {
             return candidate(match.1, match.2, match.3, length: match.0.count)
         }
         return nil
@@ -396,7 +451,7 @@ public enum PathLinkDetector {
     }
 
     private static func looksLikePath(_ text: String, quoted: Bool) -> Bool {
-        let body = text.wholeMatch(of: /(.+?):(\d+)(:\d+)?:?/).map { String($0.1) } ?? text
+        let body = text.wholeMatch(of: trailingLocation).map { String($0.1) } ?? text
         guard !body.isEmpty else { return false }
         if body.contains("://") { return body.hasPrefix("file://") }
         if body.hasPrefix("-") { return false }

@@ -103,7 +103,15 @@ public enum WordDiff {
         let a = tokens(old)
         let b = tokens(new)
         guard !a.isEmpty, !b.isEmpty else { return Ranges() }
-        let kept = longestCommon(a.map(\.text), b.map(\.text))
+        // Compared as numbers: the table below compares every token with every other.
+        var ids: [Substring: Int32] = [:]
+        func id(_ token: Token) -> Int32 {
+            if let known = ids[token.text] { return known }
+            let next = Int32(ids.count)
+            ids[token.text] = next
+            return next
+        }
+        let kept = longestCommon(a.map(id), b.map(id))
         var keptLength = 0
         var oldKept = [Bool](repeating: false, count: a.count)
         var newKept = [Bool](repeating: false, count: b.count)
@@ -181,7 +189,7 @@ public enum WordDiff {
     }
 
     /// Longest common subsequence, as pairs of indexes. Lines are capped, so plain dynamic programming is enough.
-    static func longestCommon(_ a: [Substring], _ b: [Substring]) -> [(Int, Int)] {
+    static func longestCommon<Element: Equatable>(_ a: [Element], _ b: [Element]) -> [(Int, Int)] {
         var prefix = 0
         while prefix < a.count, prefix < b.count, a[prefix] == b[prefix] { prefix += 1 }
         var suffix = 0

@@ -381,7 +381,7 @@ extension Conversations {
         return turns
     }
 
-    private static func forEachPiece(of data: Data, agent: String, limit: Int, _ body: (Piece) -> Void) {
+    static func forEachPiece(of data: Data, agent: String, limit: Int, _ body: (Piece) -> Void) {
         guard let format = AgentCatalog.profile(id: agent)?.conversationFormat else { return }
         var size = 0
         data.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in

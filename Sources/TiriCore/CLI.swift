@@ -394,6 +394,13 @@ public enum CLIParser {
             if args.count > 1 { payload["title"] = .string(args.dropFirst().joined(separator: " ")) }
             return request("dev-editor", payload)
 
+        case "dev-hover":
+            // What holding ⌘ over a terminal's cell works out, timed, without a mouse.
+            guard args.count == 3, let row = Int(args[1]), let col = Int(args[2]) else {
+                throw UsageError("usage: tiri dev-hover <item-id> <row> <col>   (test copies only)")
+            }
+            return request("dev-hover", ["item": .string(args[0]), "row": .int(row), "col": .int(col)])
+
         case "agents":
             let usage = "usage: tiri agents [on <agent> | off <agent> | add <name> <command> | remove <agent>]"
             switch args.first {

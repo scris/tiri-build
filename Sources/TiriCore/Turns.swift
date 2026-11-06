@@ -99,13 +99,13 @@ public final class TurnSnapshots: Sendable {
     public let directory: URL
     /// One index per repository, and an index can't be shared. Nothing here needs to be quick,
     /// and one lock is simpler than one per repository.
-    private static let lock = NSLock()
+    static let lock = NSLock()
 
     public init(directory: URL = TiriPaths.supportDirectory.appendingPathComponent("snapshots", isDirectory: true)) {
         self.directory = directory
     }
 
-    private func storeDirectory(for root: String) -> URL {
+    func storeDirectory(for root: String) -> URL {
         let hash = SHA256.hash(data: Data(root.utf8)).prefix(10).map { String(format: "%02x", $0) }.joined()
         // On a server, git runs there, so its snapshots live there. Named as local paths here, and
         // translated like every other path that goes to it.
@@ -116,7 +116,7 @@ public final class TurnSnapshots: Sendable {
         return directory.appendingPathComponent(hash, isDirectory: true)
     }
 
-    private func environment(root: String, store: URL) -> [String: String]? {
+    func environment(root: String, store: URL) -> [String: String]? {
         guard let objects = Git.runGit(["rev-parse", "--path-format=absolute", "--git-path", "objects"], in: root),
               objects.status == 0 else { return nil }
         let shared = String(decoding: objects.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -156,7 +156,8 @@ public final class TurnSnapshots: Sendable {
             try? manager.copyItem(atPath: existing, toPath: index.path)
         }
         // A file that can't be read shouldn't cost the whole snapshot.
-        _ = Git.runGit(["add", "-A", "--ignore-errors", "--", "."], in: root, environment: environment, timeout: 60)
+        _ = Git.runGit(["add", "-A", "--ignore-errors", "--", "."] + leaveOutLargeFiles(root: root, environment: environment, store: store),
+                       in: root, environment: environment, timeout: 60)
         guard let tree = Git.runGit(["write-tree"], in: root, environment: environment), tree.status == 0 else { return nil }
         let id = String(decoding: tree.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return id.isEmpty ? nil : id
@@ -194,9 +195,12 @@ public final class TurnSnapshots: Sendable {
     public func diff(root: String, relative: String, from: String, to: String) -> FileDiff {
         guard let environment = environment(root: root, store: storeDirectory(for: root)),
               let result = Git.runGit(["diff", "--no-color", "--no-ext-diff", "--no-renames", "-U3", from, to, "--", relative],
-                                      in: root, environment: environment),
-              result.status == 0 else { return FileDiff() }
-        return DiffParser.parse(String(decoding: result.output, as: UTF8.self))
+                                      in: root, environment: environment, outputLimit: Git.largestDiffOutput) else { return FileDiff() }
+        if result.output.count > Git.largestDiffOutput { return .tooLarge }
+        guard result.status == 0 else { return FileDiff() }
+        let output = String(decoding: result.output, as: UTF8.self)
+        if Self.mentionsPlaceholder(output) { return .tooLarge }
+        return DiffParser.parse(output)
     }
 
     /// A file before and after a turn, as bytes. For what can't be compared line by line.

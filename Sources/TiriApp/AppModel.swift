@@ -3597,6 +3597,8 @@ final class FileIndexStore {
         didSet { byName = nil }
     }
     private var byName: [String: [String]]?
+    /// The last list stopped at the cap, so some files aren't in it.
+    private(set) var reachedLimit = false
     private var dirty = true
     private var building = false
     private var generation = 0
@@ -3639,12 +3641,13 @@ final class FileIndexStore {
         building = true
         let currentGeneration = generation
         Task.detached(priority: .userInitiated) {
-            let files = FileIndexer.walk(roots: roots, excludes: excludes)
+            let (files, reachedLimit) = FileIndexer.index(roots: roots, excludes: excludes)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.building = false
                 if self.generation == currentGeneration {
                     self.files = files
+                    self.reachedLimit = reachedLimit
                     self.onUpdate?()
                     let ready = self.waiting
                     self.waiting = []
