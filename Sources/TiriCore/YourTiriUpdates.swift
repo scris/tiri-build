@@ -36,6 +36,13 @@ public struct UpdateStatus: Codable, Equatable, Sendable {
     public var leftOut: [Named] = []
     public var retired: [Named] = []
     public var notes: String?
+    /// The same version as the one installed, only built later. It's news, but not a new version, and isn't called one.
+    public var sameVersion: Bool?
+
+    /// What it's called, to start a sentence.
+    public var name: String { sameVersion == true ? "A new build of Tiri" : "Tiri \(version)" }
+    /// What it's called, inside one.
+    public var inSentence: String { sameVersion == true ? "the new build of Tiri" : "Tiri \(version)" }
 
     public init(version: String, newRelease: String, phase: Phase, app: String) {
         self.version = version
@@ -62,17 +69,24 @@ public struct UpdateStatus: Codable, Equatable, Sendable {
     /// The line beside the button.
     public var line: String {
         switch phase {
-        case .waiting: return "Tiri \(version) will start when the change being made is finished."
-        case .replaying, .building, .checking: return "Getting Tiri \(version) ready, with your changes."
+        case .waiting: return "\(name) will start when the change being made is finished."
+        case .replaying, .building, .checking: return "Getting \(inSentence) ready, with your changes."
         case .needsRepair:
-            return "Tiri \(version) is almost ready. \(UpdateStatus.names(needsRepair)) \(needsRepair.count == 1 ? "has" : "have") to be redone to fit it."
+            return "\(name) is almost ready. \(UpdateStatus.names(needsRepair)) \(needsRepair.count == 1 ? "has" : "have") to be redone to fit it."
         case .ready:
             let count = carried.count + repaired.count
-            var text = count == 0 ? "Tiri \(version) is ready." : count == 1 ? "Tiri \(version) is ready, with your change." : "Tiri \(version) is ready, with your \(count) changes."
+            var text = count == 0 ? "\(name) is ready." : count == 1 ? "\(name) is ready, with your change." : "\(name) is ready, with your \(count) changes."
+            if let retiredLine { text += " " + retiredLine }
             if !leftOut.isEmpty { text += " \(UpdateStatus.names(leftOut)) stays off for now." }
             return text
-        case .failed: return message ?? "Tiri \(version) couldn't be got ready."
+        case .failed: return message ?? "\(name) couldn't be got ready."
         }
+    }
+
+    /// Good news, and the one thing about an update someone can't otherwise tell: what they asked for is Tiri's own now.
+    public var retiredLine: String? {
+        guard !retired.isEmpty else { return nil }
+        return "It does \(UpdateStatus.names(retired)) itself now, so \(retired.count == 1 ? "your change isn't" : "those changes aren't") needed any more."
     }
 
     public static func names(_ list: [Named]) -> String {
@@ -297,6 +311,7 @@ public enum UpdateTools {
         let commit = info?[YourTiri.commitKey] as? String ?? "unknown"
         // One release at a time, always: replaying only ever crosses one step.
         var status = UpdateStatus(version: version, newRelease: commit, phase: .replaying, app: app.path)
+        if version == state.plainVersion { status.sameVersion = true }
         status.notes = notes ?? notesInside(app)
         guard repo.exists else {
             // Nobody's changes to carry. The app as it came is the whole update, and there's nothing to build.
@@ -409,7 +424,7 @@ public enum UpdateTools {
             // Whatever went wrong, people's changes and new changes aren't held up by it.
             var status = UpdateStatus.load() ?? incoming
             status.phase = .failed
-            status.message = status.message ?? "Tiri \(status.version) couldn't be got ready: \(error)"
+            status.message = status.message ?? "\(status.name) couldn't be got ready: \(error)"
             try? status.save()
             restoreWorkingFiles(repo: repo)
             ChangeTools.tellTheApp()
@@ -435,7 +450,7 @@ public enum UpdateTools {
                 return try carry(status, repo: repo, context: context)
             }
             status.phase = .failed
-            status.message = "Tiri \(status.version) didn't build, and none of your changes is why."
+            status.message = "\(status.name) didn't build, and none of your changes is why."
             try status.save()
             throw ChangeFailure(ChangeTools.trimmedBuildOutput(build.output))
         }
@@ -527,9 +542,9 @@ public enum UpdateTools {
 
     /// The prompt carries the sentence, the old diff and the release notes.
     public static func repairPrompt(_ entry: UpdateStatus.Named, status: UpdateStatus) -> String {
-        var text = "Tiri \(status.version) is out, and one of my changes needs mending to go with it. The change, in my words: \(entry.sentence). The trouble: \(entry.why ?? "it doesn't fit any more"). This folder is Tiri's source, on the new version with my other changes on it."
-        if let notes = status.notes, !notes.isEmpty { text += " What's new in \(status.version): \(notes)" }
-        text += " Run `tiri update repair \(entry.id)`, which puts the old change into these files with any conflicts marked and shows its old diff. Keep what the sentence asks for, and keep what's new in \(status.version). Run `tiri change build`, then `tiri update repaired`. If the new version already does what the sentence asks, run `tiri update retire \(entry.id)`. If it really can't be done, run `tiri update leave-out \(entry.id)`. Say what you touched. Change nothing else."
+        var text = "\(status.name) is out, and one of my changes needs mending to go with it. The change, in my words: \(entry.sentence). The trouble: \(entry.why ?? "it doesn't fit any more"). This folder is Tiri's source, on the new version with my other changes on it."
+        if let notes = status.notes, !notes.isEmpty { text += " What's new in \(status.inSentence): \(notes)" }
+        text += " Run `tiri update repair \(entry.id)`, which puts the old change into these files with any conflicts marked and shows its old diff. Keep what the sentence asks for, and keep what's new in \(status.inSentence). Run `tiri change build`, then `tiri update repaired`. If the new version already does what the sentence asks, run `tiri update retire \(entry.id)`. If it really can't be done, run `tiri update leave-out \(entry.id)`. Say what you touched. Change nothing else."
         return text
     }
 
@@ -647,14 +662,18 @@ public enum UpdateTools {
         }
         state.trial = nil
         state.attempts = 0
-        var notices: [String] = []
+        // Said once, by the copy that comes up: good news, so not where trouble is said.
+        var news: [String] = []
+        let count = status.carried.count + status.repaired.count
+        if count > 0 { news.append(count == 1 ? "Your change came along." : "Your \(count) changes came along.") }
         if !status.retired.isEmpty {
-            notices.append("Tiri \(status.version) now does this itself, so your change retired itself: \(UpdateStatus.names(status.retired)).")
+            // What happened first, then their words, which are long and can be cut.
+            news.append("\(status.retired.count == 1 ? "Your change is" : "Those changes are") retired, since Tiri does \(status.retired.count == 1 ? "it" : "them") itself now: \(UpdateStatus.names(status.retired)).")
         }
-        if !status.leftOut.isEmpty {
-            notices.append("\(UpdateStatus.names(status.leftOut)) stays off for now, and is kept.")
-        }
-        state.notice = notices.isEmpty ? nil : notices.joined(separator: " ")
+        if !status.leftOut.isEmpty { news.append("\(UpdateStatus.names(status.leftOut)) stays off for now, and is kept.") }
+        state.news = CopyState.News(title: status.sameVersion == true ? "Tiri is up to date" : "Updated to Tiri \(status.version)",
+                                    detail: news.isEmpty ? nil : news.joined(separator: " "), retired: !status.retired.isEmpty)
+        state.notice = nil
         try state.save()
     }
 }

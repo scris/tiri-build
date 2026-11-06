@@ -388,11 +388,11 @@ struct UpdateLine: View {
                 }
                 if update.phase == .needsRepair, yours.state?.repairsAllowed == nil, let preset = model.runnableAgentPresets().first {
                     HStack(spacing: 10) {
-                        Text("\(preset.name) can redo it for you, now and at future updates.")
+                        Text("\(preset.name) can redo it on the new code, or retire it if Tiri does this itself now. It does this by itself at future updates.")
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        Button("Skip It") { yours.answerRepairs(false) }
+                        Button("Leave It Off") { yours.answerRepairs(false) }
                         Button("Redo It") { yours.answerRepairs(true) }
                             .buttonStyle(.borderedProminent)
                     }

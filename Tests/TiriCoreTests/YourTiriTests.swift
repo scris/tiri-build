@@ -308,6 +308,40 @@ import Testing
         #expect(status.line == "Tiri 0.3 is ready.")
     }
 
+    @Test func theLineSaysWhatTiriDoesItselfNow() {
+        var status = UpdateStatus(version: "0.3", newRelease: "abc", phase: .ready, app: "/x")
+        status.retired = [.init(id: "a", sentence: "open links in my browser")]
+        #expect(status.line == "Tiri 0.3 is ready. It does “open links in my browser” itself now, so your change isn't needed any more.")
+        status.retired.append(.init(id: "b", sentence: "a timer"))
+        #expect(status.retiredLine?.hasSuffix("so those changes aren't needed any more.") == true)
+    }
+
+    @Test func aLaterBuildOfTheSameVersionIsntCalledANewVersion() {
+        var status = UpdateStatus(version: "0.1.0", newRelease: "abc", phase: .ready, app: "/x")
+        #expect(status.name == "Tiri 0.1.0")
+        status.sameVersion = true
+        #expect(status.line == "A new build of Tiri is ready.")
+        status.phase = .building
+        #expect(status.line == "Getting the new build of Tiri ready, with your changes.")
+        status.phase = .needsRepair
+        status.needsRepair = [.init(id: "a", sentence: "x")]
+        #expect(UpdateTools.repairPrompt(status.needsRepair[0], status: status).hasPrefix("A new build of Tiri is out"))
+    }
+
+    @Test func newsAfterAnUpdateIsKeptApartFromTrouble() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("state-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        var state = CopyState()
+        state.news = .init(title: "Tiri is up to date", detail: "It does “x” itself now.", retired: true)
+        try state.save(to: file)
+        let loaded = try #require(CopyState.load(from: file))
+        #expect(loaded.news?.retired == true)
+        #expect(loaded.notice == nil)
+        // A state written before news existed still reads.
+        try Data(#"{"active":"personal","attempts":0}"#.utf8).write(to: file)
+        #expect(CopyState.load(from: file)?.news == nil)
+    }
+
     @Test func aRepairPromptCarriesTheSentenceAndTheCommands() {
         var status = UpdateStatus(version: "0.3", newRelease: "abc", phase: .needsRepair, app: "/x")
         status.notes = "Tabs were rewritten."

@@ -84,6 +84,21 @@ public struct CopyState: Codable, Equatable, Sendable {
     public var rejectedChange: String?
     /// Asked once, the first time an update has something to mend. Nil until then.
     public var repairsAllowed: Bool?
+    /// Said once after an update, by whichever copy next has a window. Unlike `notice`, it isn't trouble.
+    public var news: News?
+
+    public struct News: Codable, Equatable, Sendable {
+        public var title: String
+        public var detail: String?
+        /// Something someone asked for is Tiri's own now, which is worth more than a passing word.
+        public var retired: Bool
+
+        public init(title: String, detail: String?, retired: Bool) {
+            self.title = title
+            self.detail = detail
+            self.retired = retired
+        }
+    }
 
     public init() {}
 

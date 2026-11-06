@@ -211,6 +211,18 @@ struct YourTiriStatusItem: View {
                             .controlSize(.mini)
                     }
                 }
+                if waiting.laterKey != nil {
+                    // Busy now: out of the way, with nothing decided. It comes back, and Change Tiri… has it meanwhile.
+                    Button { yours.putOffWaiting() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 16, height: 16)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Later. It's back in a few hours, and in Change Tiri… until then.")
+                }
             }
         }
     }

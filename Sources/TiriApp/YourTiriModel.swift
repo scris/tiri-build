@@ -17,6 +17,8 @@ struct YourTiriWaiting {
     var isBusy = false
     var isTrouble = false
     var actions: [Action] = []
+    /// Set when it can be put off: what it's remembered by, so that something new to say comes back at once.
+    var laterKey: String?
 }
 
 /// The part of the window someone marked to say what they mean.
@@ -38,6 +40,9 @@ struct ChangeMark {
     private(set) var isUpdating = false
     /// A card you said Not now to, until another copy is ready.
     private var dismissedReady: Date?
+    /// What someone said Later to in the bar, and when. Back after a while, at the next launch, or when there's news.
+    private var putOff: [String: Date] = [:]
+    static let putOffFor: TimeInterval = 3 * 3600
     /// Being dragged around right now, with the window dimmed.
     private(set) var isMarking = false
     /// The box being dragged, in the window's content coordinates from the top left.
@@ -57,6 +62,8 @@ struct ChangeMark {
     @ObservationIgnored private var updateTimer: Timer?
     @ObservationIgnored private var markingQuery = ""
     @ObservationIgnored private var announcedUpdate: String?
+    /// What was said about the update last. A step later, or once answered, it's out of date and goes.
+    @ObservationIgnored private var updateToast: UUID?
 
     let isPersonalCopy = Bundle.main.object(forInfoDictionaryKey: YourTiri.copyKey) as? String == "personal"
 
@@ -85,7 +92,9 @@ struct ChangeMark {
             }
         }
         let notice = loaded.notice
+        let news = loaded.news
         loaded.notice = nil
+        loaded.news = nil
         try? loaded.save()
         state = loaded
         refresh()
@@ -101,6 +110,10 @@ struct ChangeMark {
         }
         if let notice {
             model?.showToast(title: "Back to a copy that starts", detail: notice, symbol: "arrow.uturn.backward", tint: .orange, duration: 20)
+        }
+        if let news {
+            model?.showToast(title: news.title, detail: news.detail, symbol: news.retired ? "checkmark.seal" : "arrow.down.circle",
+                             tint: .accentColor, duration: news.retired ? 20 : 8)
         }
     }
 
@@ -152,26 +165,61 @@ struct ChangeMark {
         let key = "\(update.newRelease)-\(update.phase)"
         guard key != announcedUpdate else { return }
         announcedUpdate = key
+        if let updateToast { model.dismissToast(updateToast) }
+        updateToast = nil
         switch update.phase {
         case .ready:
-            let rest = update.line.replacingOccurrences(of: "Tiri \(update.version) is ready, with", with: "With").replacingOccurrences(of: "Tiri \(update.version) is ready.", with: "")
-            model.showToast(title: "Tiri \(update.version) is ready", detail: rest.isEmpty ? nil : rest.trimmingCharacters(in: .whitespaces), symbol: "arrow.down.circle", tint: .accentColor,
-                            actionTitle: "Update", duration: 20) { [weak self] in self?.applyUpdate() }
+            // What retired leads: it's the one thing the update did that nobody would otherwise know. Short, then
+            // what to do, then their own words, which are long and can be cut.
+            let rest = update.line.replacingOccurrences(of: "\(update.name) is ready, with", with: "With").replacingOccurrences(of: "\(update.name) is ready.", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            if update.retired.isEmpty {
+                updateToast = model.showToast(title: "\(update.name) is ready", detail: rest.isEmpty ? nil : rest, symbol: "arrow.down.circle", tint: .accentColor,
+                                              actionTitle: "Update", duration: 30) { [weak self] in self?.applyUpdate() }
+            } else {
+                let which = update.retired.count == 1 ? "your change" : "\(update.retired.count) of your changes"
+                updateToast = model.showToast(title: "Tiri does \(which) itself now", detail: "Update to use Tiri's own. \(UpdateStatus.names(update.retired))",
+                                              symbol: "checkmark.seal", tint: .accentColor, actionTitle: "Update", duration: 30) { [weak self] in self?.applyUpdate() }
+            }
         case .needsRepair where state?.repairsAllowed == nil && !update.needsRepair.isEmpty:
-            model.showToast(title: "Tiri \(update.version) is out", detail: Self.redoLine(update), symbol: "arrow.down.circle", tint: .accentColor,
-                            actionTitle: "Redo It", duration: 20) { [weak self] in self?.answerRepairs(true) }
+            updateToast = model.showToast(title: update.needsRepair.count == 1 ? "Your change needs redoing" : "\(update.needsRepair.count) of your changes need redoing",
+                            detail: Self.redoExplained(update, agent: agentName), symbol: "arrow.down.circle", tint: .accentColor,
+                            actionTitle: "Redo It", duration: 30) { [weak self] in self?.answerRepairs(true) }
         default: break
         }
     }
 
     private var entriesOrUsed: Bool { entriesAreOn || isUsed }
 
-    private static func redoLine(_ update: UpdateStatus) -> String {
-        "\(UpdateStatus.names(update.needsRepair)) \(update.needsRepair.count == 1 ? "has" : "have") to be redone to fit it."
+    private var agentName: String { model?.runnableAgentPresets().first?.name ?? "Your agent" }
+
+    /// Before anything is redone, what happened, in a line: the new Tiri is here, and a change of theirs doesn't fit it.
+    static func redoTitle(_ update: UpdateStatus) -> String {
+        let which = update.needsRepair.count == 1 ? "Your change doesn't" : "\(update.needsRepair.count) of your changes don't"
+        return "\(which) fit \(update.inSentence)"
     }
 
-    /// What the bar along the bottom says. Nothing at all when nothing's happening.
+    /// And what redoing is, since nobody has seen this before: who does it, what can come of it, and that nothing changes meanwhile.
+    /// Two short lines in a toast: what's in the bar already isn't said again.
+    static func redoExplained(_ update: UpdateStatus, agent: String) -> String {
+        "\(agent) can fit it to \(update.inSentence), or retire it if Tiri does this itself now."
+    }
+
+    /// What the bar along the bottom says. Nothing at all when nothing's happening, or when it's been put off.
     var waiting: YourTiriWaiting? {
+        guard let waiting = waitingNow else { return nil }
+        if let key = waiting.laterKey, let at = putOff[key], Date().timeIntervalSince(at) < Self.putOffFor { return nil }
+        return waiting
+    }
+
+    /// Hidden from the bar for a while, with nothing decided. Change Tiri… still has it.
+    func putOffWaiting() {
+        guard let key = waitingNow?.laterKey else { return }
+        putOff[key] = Date()
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.putOffFor + 1) { [weak self] in self?.putOff[key] = nil }
+    }
+
+    private var waitingNow: YourTiriWaiting? {
         if let trial = state?.trial {
             return YourTiriWaiting(text: "Trying: \(trial.sentence)", symbol: "checkmark.circle", actions: [
                 .init(title: "Go Back") { [weak self] in self?.back() },
@@ -179,7 +227,8 @@ struct ChangeMark {
             ])
         }
         if let ready, ready.kind != .update {
-            return YourTiriWaiting(text: "Ready to try: \(ready.sentence)", actions: [.init(title: "Try It", isMain: true) { [weak self] in self?.tryReady() }])
+            return YourTiriWaiting(text: "Ready to try: \(ready.sentence)", actions: [.init(title: "Try It", isMain: true) { [weak self] in self?.tryReady() }],
+                                   laterKey: "ready-\(ready.builtAt.timeIntervalSince1970)")
         }
         if let draft {
             let row = draft.item.flatMap { item in model?.agentRows.first { $0.item == item } }
@@ -193,25 +242,42 @@ struct ChangeMark {
             return YourTiriWaiting(text: "Changing Tiri: \(draft.sentence)", isBusy: alive, actions: [action])
         }
         if let update {
-            switch update.phase {
-            case .ready:
-                return YourTiriWaiting(text: update.line, symbol: "arrow.down.circle", actions: [.init(title: "Update", isMain: true) { [weak self] in self?.applyUpdate() }])
-            case .needsRepair where state?.repairsAllowed == nil:
-                let which = update.needsRepair.count == 1 ? "your change" : "\(update.needsRepair.count) of your changes"
-                return YourTiriWaiting(text: "Tiri \(update.version) is out. Redo \(which) to fit it?", symbol: "arrow.down.circle", actions: [
-                    .init(title: "Skip It") { [weak self] in self?.answerRepairs(false) },
-                    .init(title: "Redo It", isMain: true) { [weak self] in self?.answerRepairs(true) },
-                ])
-            case .needsRepair:
-                return YourTiriWaiting(text: "Redoing your change for Tiri \(update.version)", isBusy: true)
-            case .failed:
-                return YourTiriWaiting(text: update.line, symbol: "exclamationmark.triangle", isTrouble: true)
-            case .replaying, .building, .checking, .waiting:
-                return YourTiriWaiting(text: update.line, isBusy: true)
+            return updateWaiting(update).map { item in
+                var item = item
+                item.laterKey = "update-\(update.newRelease)-\(update.phase)-\(state?.repairsAllowed.map { "\($0)" } ?? "")"
+                return item
             }
         }
         if !toggling.isEmpty { return YourTiriWaiting(text: "Making a copy of Tiri with that change", isBusy: true) }
         return nil
+    }
+
+    private func updateWaiting(_ update: UpdateStatus) -> YourTiriWaiting? {
+        switch update.phase {
+        case .ready:
+            // The news first, and their own words last, where being cut short costs least.
+            let text = update.retired.isEmpty ? update.line
+                : update.retired.count == 1 ? "\(update.name) does your change itself now: \(update.retired[0].sentence)"
+                : "\(update.name) does \(update.retired.count) of your changes itself now"
+            return YourTiriWaiting(text: text, symbol: update.retired.isEmpty ? "arrow.down.circle" : "checkmark.seal",
+                                   actions: [.init(title: "Update", isMain: true) { [weak self] in self?.applyUpdate() }])
+        case .needsRepair where state?.repairsAllowed == nil:
+            // Their own words last, where being cut short costs least.
+            let what = update.needsRepair.count == 1 ? update.needsRepair[0].sentence : "\(update.needsRepair.count) changes"
+            return YourTiriWaiting(text: "\(Self.redoTitle(update)): \(what)", symbol: "arrow.down.circle", actions: [
+                .init(title: "Leave It Off") { [weak self] in self?.answerRepairs(false) },
+                .init(title: "Redo It", isMain: true) { [weak self] in self?.answerRepairs(true) },
+            ])
+        case .needsRepair:
+            let entry = update.needsRepair.first
+            let tab = entry.flatMap { redoTab(for: $0) }
+            return YourTiriWaiting(text: "\(agentName) is fitting your change to \(update.inSentence)\(entry.map { ": \($0.sentence)" } ?? "")", isBusy: true,
+                                   actions: tab.map { item in [.init(title: "Show") { [weak self] in _ = self?.model?.focusItem(item) }] } ?? [])
+        case .failed:
+            return YourTiriWaiting(text: update.line, symbol: "exclamationmark.triangle", isTrouble: true)
+        case .replaying, .building, .checking, .waiting:
+            return YourTiriWaiting(text: update.line, isBusy: true)
+        }
     }
 
     var isUsed: Bool { update != nil || !changes.isEmpty || draft != nil || ready != nil || state?.active == .personal || isPersonalCopy }
@@ -236,7 +302,7 @@ struct ChangeMark {
 
     /// The one line, in the palette, with the agent named. Return is the only thing that spends anything.
     func beginChange(surface: String?, initial: String = "") {
-        guard let model, let preset = model.runnableAgentPresets().first else { return }
+        guard let model, !model.runnableAgentPresets().isEmpty else { return }
         guard SwiftTools.areHere() else {
             offerSwiftTools()
             return
@@ -260,14 +326,28 @@ struct ChangeMark {
 
     /// Under the question: what it could be, for someone new, and what you've got, for everyone else.
     /// All of it can be done from here, because nobody goes to Settings to look for it.
+    /// Whatever the bar is waiting on, put off there or not: Change Tiri… is where it can always be found again.
+    private func waitingRows() -> [PaletteModel.Row] {
+        guard let waiting = waitingNow, let main = waiting.actions.first(where: \.isMain) else { return [] }
+        return [PaletteModel.Row(id: "waiting", title: waiting.text, symbol: waiting.symbol,
+                                 button: .init(title: main.title) { [weak model] in
+                                     model?.closePalette()
+                                     main.run()
+                                 }) { [weak model] _ in
+            model?.closePalette()
+            main.run()
+        }]
+    }
+
     private func promptRows() -> [PaletteModel.Row] {
         guard let model else { return [] }
         if hasNeverChanged {
-            return ["Show how long each agent has been working", "Put Changes above Explorer in the sidebar"].map { example in
+            return waitingRows() + ["Show how long each agent has been working", "Put Changes above Explorer in the sidebar"].map { example in
                 PaletteModel.Row(id: example, title: example, symbol: "text.quote") { [weak model] _ in model?.palette?.query = example }
             }
         }
-        var rows = changes.reversed().map { change in
+        var rows = waitingRows()
+        rows += changes.reversed().map { change in
             PaletteModel.Row(id: change.id, title: change.sentence, detail: ready?.change == change.id ? "ready to try" : change.isOn ? "on" : "off",
                              symbol: ready?.change == change.id ? "sparkles" : change.isOn ? "checkmark.circle.fill" : "circle",
                              button: .init(title: change.isOn ? "Turn Off" : "Turn On") { [weak self, weak model] in
@@ -632,12 +712,23 @@ struct ChangeMark {
         current.repairsAllowed = yes
         try? current.save()
         state = current
+        if let updateToast { model?.dismissToast(updateToast) }
+        updateToast = nil
         if yes {
             startRepairIfAllowed()
-            model?.showToast(title: "\(model?.runnableAgentPresets().first?.name ?? "Your agent") is redoing it", detail: "It'll do this by itself at future updates.", symbol: "hammer", tint: .accentColor, duration: 10)
+            model?.showToast(title: "\(agentName) is redoing it", detail: "You'll hear when it's done, and it'll do this by itself at future updates.", symbol: "hammer", tint: .accentColor, duration: 10)
         } else {
             leaveOutIfRepairsAreOff()
         }
+    }
+
+    /// The tab where a change is being redone, if it's still open.
+    private func redoTab(for entry: UpdateStatus.Named) -> ItemID? {
+        let title = "Redo: \(entry.sentence)"
+        return model?.workspaces.flatMap(\.items).first { item in
+            if case .terminal(let spec) = item.content { return spec.title == title }
+            return false
+        }?.id
     }
 
     /// One at a time, in a tab of its own, without coming to the front. Asked once, and never again after that.
@@ -656,7 +747,7 @@ struct ChangeMark {
         let workspace = model.workspaces.first { $0.folders == [folder] }?.id
             ?? model.createWorkspace(name: "Your Tiri", folders: [folder], activating: false, initialTerminal: false).id
         try? Self.leaveNote(UpdateTools.repairPrompt(entry, status: update) + Self.cliNote + "\n", named: Self.repairFile)
-        let asked = "Tiri \(update.version) is out, and my change “\(entry.sentence)” has to be redone to fit it. Everything you need is in \(Self.repairFile), so read that first."
+        let asked = "\(update.name) is out, and my change “\(entry.sentence)” has to be redone to fit it. Everything you need is in \(Self.repairFile), so read that first."
         let command = preset.command + " " + ShellQuote.quote(asked)
         let item = model.newTerminal(command: command, cwd: folder, in: workspace, title: title)
         model.agentAsked[item] = title

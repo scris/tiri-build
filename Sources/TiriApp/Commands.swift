@@ -967,6 +967,7 @@ enum ControlHandler {
                 yours.setChange(change, on: !change.isOn)
             case "update": DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { yours.applyUpdate() }
             case "repairs": yours.answerRepairs(value == "yes")
+            case "later": yours.putOffWaiting()
             case "marking": yours.beginMarking(query: value ?? "")
             case "mark":
                 let numbers = (value ?? "").split(separator: ",").compactMap { Double($0) }
