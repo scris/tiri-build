@@ -771,7 +771,54 @@ static int relay(int server) {
     }
 }
 
+// MARK: What it was started with
+
+// Whatever started this leaves its own files open in it: the app's sockets and pipes, other
+// terminals' masters. Kept, they'd last as long as the agent, and a pipe would never see its end.
+// Everything past 0-2 goes, before anything of this program's own is opened.
+#if defined(__linux__)
+#include <dirent.h>
+#endif
+
+static void close_inherited(void) {
+#if defined(__APPLE__)
+    int room = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, NULL, 0);
+    if (room > 0) {
+        room += 32 * (int)PROC_PIDLISTFD_SIZE;
+        struct proc_fdinfo *found = malloc((size_t)room);
+        int used = found ? proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, found, room) : 0;
+        if (used > 0) {
+            for (int index = 0; index < used / (int)PROC_PIDLISTFD_SIZE; index++) {
+                if (found[index].proc_fd > 2) close(found[index].proc_fd);
+            }
+            free(found);
+            return;
+        }
+        free(found);
+    }
+#elif defined(__linux__)
+    DIR *folder = opendir("/proc/self/fd");
+    if (folder) {
+        int open_fds[4096], count = 0, own = dirfd(folder);
+        struct dirent *entry;
+        while ((entry = readdir(folder)) && count < 4096) {
+            int fd = atoi(entry->d_name);
+            if (fd > 2 && fd != own) open_fds[count++] = fd;
+        }
+        closedir(folder);
+        if (count < 4096) {
+            for (int index = 0; index < count; index++) close(open_fds[index]);
+            return;
+        }
+    }
+#endif
+    int limit = getdtablesize();
+    if (limit < 0 || limit > 65536) limit = 65536;
+    for (int fd = 3; fd < limit; fd++) close(fd);
+}
+
 int main(int argc, char **argv) {
+    close_inherited();
     // tiri-session attach <socket> [--cwd DIR] [--argv0 NAME] -- program args...
     if (argc >= 3 && strcmp(argv[1], "attach") == 0) {
         launch_options options;

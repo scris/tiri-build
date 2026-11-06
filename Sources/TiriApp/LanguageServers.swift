@@ -78,6 +78,10 @@ final class LanguageServerHub {
     private var lookedUp = false
     private var lookup: Task<Void, Never>?
     private var failedStarts: [Key: Int] = [:]
+    /// When each server stopped by itself lately. Five in three minutes and it's left stopped, as
+    /// VS Code's client does: one that crashes on a file would otherwise crash again with every look.
+    private var crashes: [Key: [Date]] = [:]
+    private var gaveUp = Set<Key>()
     /// Programs that stopped before they were ready.
     private var wontStart = Set<String>()
     private var dwell: [String: DispatchWorkItem] = [:]
@@ -154,6 +158,8 @@ final class LanguageServerHub {
         remoteLocated = [:]
         wontStart = []
         failedStarts = [:]
+        crashes = [:]
+        gaveUp = []
         Task { await locateServers() }
     }
 
@@ -236,6 +242,7 @@ final class LanguageServerHub {
             existing.lastUsed = Date()
             return existing
         }
+        guard !gaveUp.contains(key) else { return nil }
         if let connection = RemoteRegistry.shared.connection(forLocal: path) {
             return await remoteSession(key: key, definition: definition, root: root, connection: connection)
         }
@@ -244,7 +251,8 @@ final class LanguageServerHub {
             guard asked, await model.confirmRunningLocalServer(found.executable, language: definition.language) else { return nil }
             guard sessions[key] == nil else { return sessions[key] }
         }
-        let client = LSPClient(launch: .init(executable: found.executable, arguments: found.arguments, directory: root, path: model.userPath))
+        let client = LSPClient(launch: .init(executable: found.executable, arguments: found.arguments, directory: root, path: model.userPath,
+                                             log: Self.logFile(definition.id)))
         let session = Session(key: key, definition: definition, client: client, executable: found.executable)
         client.onNotification = { [weak self] method, params in
             DispatchQueue.main.async {
@@ -310,7 +318,7 @@ final class LanguageServerHub {
         let assignment = servers.path.map { "PATH=\(ShellQuote.quote($0)) " } ?? ""
         let script = "cd \(ShellQuote.quote(remoteRoot)) && \(assignment)exec \(RemoteShell.arguments([executable] + command.dropFirst()))"
         let client = LSPClient(launch: .init(executable: connection.sshExecutable, arguments: connection.commandArguments(script: script),
-                                             directory: root, path: nil, remoteMap: connection.map))
+                                             directory: root, path: nil, remoteMap: connection.map, log: Self.logFile(definition.id)))
         let session = Session(key: key, definition: definition, client: client, executable: executable)
         client.onNotification = { [weak self] method, params in
             DispatchQueue.main.async {
@@ -367,8 +375,32 @@ final class LanguageServerHub {
             failedStarts[key, default: 0] += 1
             wontStart.insert(session.executable)
         }
+        noteCrash(key, definition: session.definition)
         resume(session, ready: false)
         model.languageRevision += 1
+    }
+
+    /// It stopped without being asked to. Five times in three minutes is enough.
+    private func noteCrash(_ key: Key, definition: LanguageServerDefinition, now: Date = Date()) {
+        let recent = (crashes[key] ?? []).filter { now.timeIntervalSince($0) < Self.crashWindow } + [now]
+        crashes[key] = recent
+        guard recent.count >= Self.crashLimit, gaveUp.insert(key).inserted else { return }
+        _ = model.showToast(title: String(localized: "\(L10n.display(definition.language)) server keeps crashing"),
+                            detail: String(localized: "Tiri stopped restarting it."), symbol: "exclamationmark.triangle", tint: .orange)
+    }
+
+    private static let crashLimit = 5
+    private static let crashWindow: TimeInterval = 180
+
+    /// Whether it crashed too often to be started again, for `tiri languages`.
+    func keepsCrashing(_ definition: LanguageServerDefinition) -> Bool {
+        gaveUp.contains { $0.server == definition.id }
+    }
+
+    /// What each server says on stderr, kept short, for when someone asks why it stopped.
+    nonisolated static func logFile(_ id: String) -> URL {
+        let name = id.map { $0.isLetter || $0.isNumber || "-_.".contains($0) ? $0 : "_" }
+        return TiriPaths.supportDirectory.appendingPathComponent("language-logs/\(String(name)).log")
     }
 
     /// Whether it's ready, waiting no longer than this.
@@ -427,8 +459,13 @@ final class LanguageServerHub {
         }
     }
 
-    func stopAll() {
-        for session in sessions.values { session.client.stop() }
+    /// Quitting stops them before the app has gone, rather than asking and leaving.
+    func stopAll(quitting: Bool = false) {
+        if quitting {
+            LSPClient.stopNow(sessions.values.map(\.client))
+        } else {
+            for session in sessions.values { session.client.stop() }
+        }
         sessions = [:]
         idleTimer?.invalidate()
         idleTimer = nil
@@ -447,6 +484,8 @@ final class LanguageServerHub {
     fileprivate func forgetFailures() {
         wontStart = []
         failedStarts = [:]
+        crashes = [:]
+        gaveUp = []
     }
 
     fileprivate func startForOpenFiles() {
@@ -953,7 +992,7 @@ final class LanguageServerInstaller {
         var merged = ProcessInfo.processInfo.environment
         merged.merge(environment) { _, new in new }
         process.environment = merged
-        let errors = Pipe()
+        let errors = Pipe.notInherited()
         process.standardError = errors
         process.standardOutput = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice

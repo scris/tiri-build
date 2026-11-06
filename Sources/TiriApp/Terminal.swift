@@ -1167,8 +1167,12 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         let backend: TerminalBackend = LocalTerminalBackend()
         let launch = backend.launch(command: launchCommand, cwd: currentDirectory, shell: model.settings.terminalShell,
                                     itemID: itemID, workspaceID: workspaceID, socket: model.socketPath)
+        // Nothing of the app's goes into the shell: SwiftTerm's fork keeps whatever isn't close-on-exec.
+        CloseOnExec.markAllOpen()
         terminalView.startProcess(executable: launch.executable, args: launch.args, environment: launch.environment,
                                   execName: launch.execName, currentDirectory: launch.cwd)
+        // This terminal's side of the pty stays out of the next one's shell.
+        CloseOnExec.mark(terminalView.process.childfd)
         throughSession = launch.execName == "tiri-session"
         exited = false
         container.hideExitBar()
@@ -1221,8 +1225,10 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             self.exited = false
             self.container.hideExitBar()
             self.container.showNotice(nil)
+            CloseOnExec.markAllOpen()
             self.terminalView.startProcess(executable: launch.executable, args: launch.args, environment: launch.environment,
                                            execName: launch.execName, currentDirectory: launch.cwd)
+            CloseOnExec.mark(self.terminalView.process.childfd)
             self.sessionUp = true
             if !attach, let prefill = self.prefill {
                 self.prefill = nil

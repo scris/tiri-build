@@ -24,7 +24,10 @@ extension EnvironmentValues {
 final class WorkspaceLive {
     let id: WorkspaceID
     var changes: [ChangedFile] = [] {
-        didSet { fileTree.changesUpdated(changes) }
+        didSet {
+            changedPaths = Set(changes.map(\.path))
+            fileTree.changesUpdated(changes)
+        }
     }
     /// Each repository the workspace's folders are in, for the status bar.
     var repositories: [RepositoryStatus] = []
@@ -42,6 +45,8 @@ final class WorkspaceLive {
     var recentCommits: [CommitSummary] = []
     var otherWork: [WorkLine] = []
     var scopeIsLoading = false
+    /// The list isn't everything there is: too many changes, or git too slow to say.
+    var changesNotice: ChangesNotice?
 
     @ObservationIgnored let fileTree = FileTreeController()
     @ObservationIgnored var treeFolders: [String]?
@@ -55,6 +60,12 @@ final class WorkspaceLive {
     @ObservationIgnored var otherWorkInFlight = false
     @ObservationIgnored var otherWorkAt: Double = 0
     @ObservationIgnored var otherWorkLooked = false
+    @ObservationIgnored var changesQuietUntil: Date?
+    /// Past the limit, files changing don't ask git again: only someone asking does. See ChangesNotice.
+    @ObservationIgnored var changesPaused = false
+    /// The same paths as `changes`, to ask about one without going through ten thousand.
+    @ObservationIgnored var changedPaths: Set<String> = []
+    @ObservationIgnored var changesBackoff: TimeInterval = 0
 
     init(id: WorkspaceID, model: AppModel) {
         self.id = id
@@ -117,7 +128,11 @@ struct WindowModel {
     var scopedTurn: AgentTurn? { app.scopedTurn(in: activeID) }
     var offeredTurns: [AgentTurn] { app.offeredTurns(in: activeID) }
     var emptyChangesText: String { app.emptyChangesText(in: activeID) }
-    func hasChanges(_ path: String) -> Bool { live.changes.contains { $0.path == path } }
+    func hasChanges(_ path: String) -> Bool {
+        // Read for SwiftUI to follow. The set answers.
+        _ = live.changes
+        return live.changedPaths.contains(path)
+    }
 
     /// The same terms as the window in front's, with this one's repositories and server, so the bar doesn't come
     /// and go, resizing every terminal, as windows take turns in front.

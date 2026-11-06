@@ -233,22 +233,54 @@ public struct RepositoryStatus: Sendable, Equatable, Identifiable {
     }
 }
 
+/// What a look at the changes found. Empty and finished is clean. Empty and timed out is unknown.
+public struct ChangesScan: Sendable, Equatable {
+    public var files: [ChangedFile] = []
+    /// There were more than the limit, and these are the first.
+    public var limited = false
+    /// git didn't finish in time, so nothing here says what's changed.
+    public var timedOut = false
+    public init(files: [ChangedFile] = [], limited: Bool = false, timedOut: Bool = false) {
+        self.files = files
+        self.limited = limited
+        self.timedOut = timedOut
+    }
+}
+
 /// Runs git, for the changes view and the status bar. Only `transfer` touches a remote.
 public enum Git {
     static func runGit(_ arguments: [String], in directory: String, environment: [String: String] = [:], timeout: Double = 20) -> (status: Int32, output: Data)? {
         run(arguments, in: directory, timeout: timeout, extraEnvironment: environment)
     }
 
-    /// Spawned and waited for directly. Foundation's Process can wait forever for a child that has
-    /// already exited, which would silently stop the changes list. A hung git gets killed.
     private static func run(_ arguments: [String], in directory: String, timeout: Double = 20,
                             includeErrors: Bool = false, extraEnvironment: [String: String] = [:]) -> (status: Int32, output: Data)? {
+        ran(arguments, in: directory, timeout: timeout, includeErrors: includeErrors, extraEnvironment: extraEnvironment).map { ($0.status, $0.output) }
+    }
+
+    /// How a run went, for the callers that need more than what it printed.
+    struct Ran {
+        var status: Int32
+        var output: Data
+        /// Killed for taking too long. What it printed is only a start.
+        var timedOut = false
+        /// Stopped once it had printed `records` NUL-ended fields.
+        var cut = false
+    }
+
+    /// Spawned and waited for directly. Foundation's Process can wait forever for a child that has
+    /// already exited, which would silently stop the changes list. A hung git gets killed.
+    private static func ran(_ arguments: [String], in directory: String, timeout: Double = 20,
+                            includeErrors: Bool = false, extraEnvironment: [String: String] = [:], records: Int? = nil) -> Ran? {
         if let connection = RemoteRegistry.shared.connection(forLocal: directory) {
             return runRemote(arguments, on: connection, in: directory, timeout: timeout, includeErrors: includeErrors, extraEnvironment: extraEnvironment)
+                .map { Ran(status: $0.status, output: $0.output) }
         }
         var pipes: [Int32] = [0, 0]
         guard pipe(&pipes) == 0 else { return nil }
         let (readEnd, writeEnd) = (pipes[0], pipes[1])
+        // At once: a terminal started on another thread right now would take these along.
+        CloseOnExec.mark(readEnd, writeEnd)
         defer { close(readEnd) }
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
@@ -293,12 +325,16 @@ public enum Git {
         var output = Data()
         var buffer = [UInt8](repeating: 0, count: 65536)
         let deadline = Date().addingTimeInterval(timeout)
+        var timedOut = false
+        var cut = false
+        var fields = 0
         while true {
             var wait = pollfd(fd: readEnd, events: Int16(POLLIN), revents: 0)
             let remaining = Int32(max(deadline.timeIntervalSinceNow, 0) * 1000)
             let ready = poll(&wait, 1, remaining)
             if ready == 0 {
                 kill(pid, SIGKILL)
+                timedOut = true
                 break
             }
             if ready < 0 {
@@ -308,6 +344,15 @@ public enum Git {
             let count = read(readEnd, &buffer, buffer.count)
             if count > 0 {
                 output.append(buffer, count: count)
+                // Enough for anyone to read, so the rest isn't worth the wait or the memory.
+                if let records {
+                    fields += buffer[0..<count].reduce(0) { $1 == 0 ? $0 + 1 : $0 }
+                    if fields >= records {
+                        kill(pid, SIGKILL)
+                        cut = true
+                        break
+                    }
+                }
             } else if count == 0 || errno != EINTR {
                 break
             }
@@ -315,7 +360,7 @@ public enum Git {
         var status: Int32 = 0
         while waitpid(pid, &status, 0) < 0, errno == EINTR {}
         let exited = status & 0x7F == 0
-        return (exited ? (status >> 8) & 0xFF : 128, output)
+        return Ran(status: cut ? 0 : (exited ? (status >> 8) & 0xFF : 128), output: output, timedOut: timedOut, cut: cut)
     }
 
     /// The same command, run where the repository is. What's said in local paths goes out in the
@@ -461,35 +506,62 @@ public enum Git {
     }
 
     /// Changes under a workspace folder, reported by the path that folder is known by.
-    public static func changes(in folder: String) -> [ChangedFile] {
-        guard let root = repositoryRoot(of: folder),
-              let result = run(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."], in: folder),
-              result.status == 0 else { return [] }
-        var found = GitStatusParser.parse(String(decoding: result.output, as: UTF8.self), root: root)
+    public static func changes(in folder: String) -> [ChangedFile] { scanChanges(in: folder).files }
+
+    /// VS Code's git stops at the same number: past it, a list is no use to read, and the rest only costs.
+    public static let changesLimit = 10_000
+
+    /// Changes, and whether they're all of them. A git that took too long hasn't said there are none.
+    public static func scanChanges(in folder: String, limit: Int = changesLimit, timeout: Double = 20) -> ChangesScan {
+        guard let root = repositoryRoot(of: folder) else { return ChangesScan() }
+        // A rename is two fields, so twice as many fields always holds `limit` changes and one more.
+        guard let result = ran(["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."], in: folder, timeout: timeout,
+                               records: 2 * limit + 2) else {
+            return ChangesScan()
+        }
+        if result.timedOut { return ChangesScan(timedOut: true) }
+        guard result.status == 0 else { return ChangesScan() }
+        var output = result.output
+        // A field cut off in the middle isn't a file.
+        if result.cut, let end = output.lastIndex(of: 0) { output = output.prefix(through: end) }
+        var found = GitStatusParser.parse(String(decoding: output, as: UTF8.self), root: root)
+        let limited = result.cut || found.count > limit
+        if found.count > limit { found = Array(found.prefix(limit)) }
         // What a server's git says is what a server says.
         if RemoteRegistry.shared.isRemote(folder) { found.removeAll { RemotePathMap.climbs($0.path) } }
         let realFolder = real(folder)
         // git reports real paths. The workspace may know this folder by a link to it.
-        return found.map { file in
+        return ChangesScan(files: found.map { file in
             var file = file
             if file.path.hasPrefix(realFolder + "/") {
                 file.path = folder + file.path.dropFirst(realFolder.count)
             }
             return file
-        }
+        }, limited: limited)
     }
 
     /// All the changes in a workspace, in the order the explorer would show them.
-    public static func changesAcross(_ folders: [String]) -> [ChangedFile] {
+    public static func changesAcross(_ folders: [String]) -> [ChangedFile] { scanChangesAcross(folders).files }
+
+    /// The same, saying whether it's all of them. One folder that took too long makes the whole look
+    /// untrustworthy, so it says so rather than show the others' as everything.
+    public static func scanChangesAcross(_ folders: [String], limit: Int = changesLimit, timeout: Double = 20) -> ChangesScan {
         var seen = Set<String>()
-        var result: [ChangedFile] = []
+        var scan = ChangesScan()
         for folder in folders {
-            for file in changes(in: folder).sorted(by: { $0.relative.localizedStandardCompare($1.relative) == .orderedAscending })
+            let found = scanChanges(in: folder, limit: limit, timeout: timeout)
+            if found.timedOut { return ChangesScan(timedOut: true) }
+            scan.limited = scan.limited || found.limited
+            for file in found.files.sorted(by: { $0.relative.localizedStandardCompare($1.relative) == .orderedAscending })
             where seen.insert(file.path).inserted {
-                result.append(file)
+                guard scan.files.count < limit else {
+                    scan.limited = true
+                    break
+                }
+                scan.files.append(file)
             }
         }
-        return result
+        return scan
     }
 
     public static func diff(path: String) -> FileDiff {

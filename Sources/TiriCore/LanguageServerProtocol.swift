@@ -477,8 +477,11 @@ public final class LSPClient: @unchecked Sendable {
         /// A server over SSH knows files by their paths there. Everything said to it, and everything
         /// it says, goes through this. Local paths are all Tiri ever sees.
         public var remoteMap: RemotePathMap?
-        public init(executable: String, arguments: [String], directory: String, path: String?, remoteMap: RemotePathMap? = nil) {
+        /// Where what it says on stderr goes, kept short. Nowhere if nil.
+        public var log: URL?
+        public init(executable: String, arguments: [String], directory: String, path: String?, remoteMap: RemotePathMap? = nil, log: URL? = nil) {
             self.remoteMap = remoteMap
+            self.log = log
             self.executable = executable
             self.arguments = arguments
             self.directory = directory
@@ -493,6 +496,9 @@ public final class LSPClient: @unchecked Sendable {
     }
 
     private let queue = DispatchQueue(label: "tiri.lsp")
+    /// Writes wait here. A server that stops reading fills the pipe, and a write then waits for it,
+    /// which mustn't hold up answers, timeouts or stopping it.
+    private let writes = DispatchQueue(label: "tiri.lsp.input")
     private let launch: Launch
     private var process: Process?
     private var input: FileHandle?
@@ -517,11 +523,20 @@ public final class LSPClient: @unchecked Sendable {
         var environment = ProcessInfo.processInfo.environment
         if let path = launch.path { environment["PATH"] = path }
         process.environment = environment
-        let toServer = Pipe()
-        let fromServer = Pipe()
+        let toServer = Pipe.notInherited()
+        let fromServer = Pipe.notInherited()
         process.standardInput = toServer
         process.standardOutput = fromServer
-        process.standardError = FileHandle.nullDevice
+        if let log = launch.log {
+            let errors = Pipe.notInherited()
+            process.standardError = errors
+            errors.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty { handle.readabilityHandler = nil } else { CappedLog.append(data, to: log) }
+            }
+        } else {
+            process.standardError = FileHandle.nullDevice
+        }
         // A server that's gone shouldn't take the app with it when something's written to it.
         _ = fcntl(toServer.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         process.terminationHandler = { [weak self] _ in
@@ -589,7 +604,8 @@ public final class LSPClient: @unchecked Sendable {
     private func write(_ message: JSONValue) {
         guard let input, var body = try? JSONEncoder().encode(message) else { return }
         if let map = launch.remoteMap { body = LSP.toServer(body, map: map) }
-        try? input.write(contentsOf: LSPFramer.frame(body))
+        let framed = LSPFramer.frame(body)
+        writes.async { try? input.write(contentsOf: framed) }
     }
 
     public func notify(_ method: String, _ params: JSONValue) {
@@ -627,16 +643,37 @@ public final class LSPClient: @unchecked Sendable {
         }
     }
 
-    /// Asks it to leave, and insists if it doesn't.
+    /// Asks it to leave, and insists if it doesn't: its whole group is told to stop, and then made to.
     public func stop() {
         request("shutdown", .null, timeout: 2) { [weak self] _ in
             guard let self else { return }
             self.notify("exit", .null)
             self.queue.asyncAfter(deadline: .now() + 1) {
                 self.input = nil
-                if let process = self.process, process.isRunning { process.terminate() }
+                guard let process = self.process, process.isRunning else { return }
+                let pid = process.processIdentifier
+                Self.signal(SIGTERM, group: pid)
+                DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                    if process.isRunning { Self.signal(SIGKILL, group: pid) }
+                }
             }
         }
+    }
+
+    /// For quitting, when there's no later: told now, and made to go if it's still there in a moment.
+    /// Synchronous, so it's done before the app is.
+    public static func stopNow(_ clients: [LSPClient]) {
+        let running = clients.compactMap(\.process).filter(\.isRunning)
+        for process in running { signal(SIGTERM, group: process.processIdentifier) }
+        let deadline = Date().addingTimeInterval(0.2)
+        while Date() < deadline, running.contains(where: \.isRunning) { usleep(10_000) }
+        for process in running where process.isRunning { signal(SIGKILL, group: process.processIdentifier) }
+    }
+
+    /// Process gives each child a group of its own, so whatever the server started goes with it.
+    private static func signal(_ signal: Int32, group pid: Int32) {
+        guard pid > 1 else { return }
+        if killpg(pid, signal) != 0 { kill(pid, signal) }
     }
 
     public var processIdentifier: Int32? { process?.processIdentifier }

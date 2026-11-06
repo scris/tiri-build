@@ -1229,7 +1229,7 @@ final class PluginRunner {
             let tar = Process()
             tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
             tar.arguments = ["-c", "--no-mac-metadata", "--exclude", "./node_modules", "--exclude", "./.git", "--exclude", ".DS_Store", "-C", folder.path, "."]
-            let pipe = Pipe()
+            let pipe = Pipe.notInherited()
             tar.standardOutput = pipe
             tar.standardError = FileHandle.nullDevice
             guard (try? tar.run()) != nil else { return nil }
@@ -1426,8 +1426,8 @@ enum LocalProgram {
             values.merge(environment) { _, new in new }
             process.environment = values
             process.standardInput = FileHandle.nullDevice
-            let output = Pipe()
-            let errors = Pipe()
+            let output = Pipe.notInherited()
+            let errors = Pipe.notInherited()
             process.standardOutput = output
             process.standardError = errors
             let collector = Collector()

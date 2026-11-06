@@ -259,7 +259,7 @@ public enum Tool {
         process.arguments = arguments
         if let directory { process.currentDirectoryURL = directory }
         if !environment.isEmpty { process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new } }
-        let pipe = Pipe()
+        let pipe = Pipe.notInherited()
         process.standardOutput = pipe
         process.standardError = pipe
         process.standardInput = FileHandle.nullDevice

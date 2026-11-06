@@ -64,11 +64,12 @@ struct SidebarView: View {
                 sectionHeader(String(localized: "Changes"), isOpen: $changesOpen) {
                     if !model.needsGit {
                         ChangesScopeMenu()
-                        Text("\(model.visibleChangesCount)")
+                        Text(verbatim: ChangesNotice.count(model))
                             .foregroundStyle(.faint)
                             .font(.caption)
                     }
                 }
+                .onChange(of: changesOpen) { _, open in if open { app.refreshChangesNow(model.activeID) } }
                 if changesOpen, model.needsGit {
                     NeedsGitRow()
                 } else if changesOpen {
@@ -81,6 +82,7 @@ struct SidebarView: View {
                     } else if case .work(let work) = model.changesScope {
                         WorkCaption(work: work)
                     }
+                    if model.changesScope == .sinceCommit, let notice = model.live.changesNotice { ChangesNoticeRow(notice: notice) }
                     if !model.otherWork.isEmpty, model.changesScope != .otherWork {
                         if case .work = model.changesScope {} else { OtherWorkHint() }
                     }

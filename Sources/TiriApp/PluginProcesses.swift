@@ -177,9 +177,9 @@ final class PluginProcesses {
             values.merge(environment) { _, new in new }
             process.environment = values
         }
-        let input = Pipe()
-        let output = Pipe()
-        let errors = Pipe()
+        let input = Pipe.notInherited()
+        let output = Pipe.notInherited()
+        let errors = Pipe.notInherited()
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors

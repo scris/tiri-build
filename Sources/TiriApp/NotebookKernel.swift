@@ -264,8 +264,8 @@ final class NotebookKernel {
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
             process.arguments = ["-c", command]
         }
-        let toProcess = Pipe()
-        let fromProcess = Pipe()
+        let toProcess = Pipe.notInherited()
+        let fromProcess = Pipe.notInherited()
         process.standardInput = toProcess
         process.standardOutput = fromProcess
         process.standardError = FileHandle.nullDevice
@@ -569,34 +569,17 @@ final class NotebookKernels {
             return result.map { ShellResult(succeeded: $0.succeeded, outputText: $0.text, errorText: $0.errorText) }
         }
         let shell = model.settings.terminalShell.isEmpty ? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh" : model.settings.terminalShell
-        return await Task.detached { () -> ShellResult? in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: shell)
-            // Run by sh whatever the login shell is, fish and tcsh included.
-            process.arguments = ["-l", "-i", "-c", "exec /bin/sh -c \"$TIRI_SCRIPT\""]
-            var environment = ProcessInfo.processInfo.environment
-            for key in environment.keys where key.hasPrefix("CLAUDE_CODE") || key == "CLAUDECODE" { environment[key] = nil }
-            environment["TIRI_SCRIPT"] = command
-            process.environment = environment
-            let output = Pipe()
-            let errors = Pipe()
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = output
-            process.standardError = errors
-            do {
-                try process.run()
-            } catch {
-                return nil
-            }
-            nonisolated(unsafe) var errorData = Data()
-            let reader = DispatchWorkItem { errorData = errors.fileHandleForReading.readDataToEndOfFile() }
-            DispatchQueue.global().async(execute: reader)
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            reader.wait()
-            return ShellResult(succeeded: process.terminationStatus == 0, outputText: String(decoding: data, as: UTF8.self),
-                               errorText: String(decoding: errorData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
-        }.value
+        var environment = ProcessInfo.processInfo.environment
+        for key in environment.keys where key.hasPrefix("CLAUDE_CODE") || key == "CLAUDECODE" { environment[key] = nil }
+        environment["TIRI_SCRIPT"] = command
+        // Run by sh whatever the login shell is, fish and tcsh included. As long as a server gets, and
+        // no longer: shell setup that waits on something, or a kernel left holding its output, can't hang this.
+        guard let result = await BoundedRun.run(shell, ["-l", "-i", "-c", "exec /bin/sh -c \"$TIRI_SCRIPT\""], environment: environment, timeout: 120) else {
+            return nil
+        }
+        return ShellResult(succeeded: result.succeeded, outputText: String(decoding: result.output, as: UTF8.self),
+                           errorText: result.timedOut ? String(localized: "It took longer than 2 minutes.")
+                               : String(decoding: result.errors, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     // MARK: Talking to the person

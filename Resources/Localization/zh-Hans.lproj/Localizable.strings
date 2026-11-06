@@ -1664,3 +1664,8 @@
 "They're back to their defaults. The old file is kept." = "已恢复为默认值。旧文件已保留。";
 "Couldn't read which plugins you approved" = "无法读取你批准过哪些插件";
 "Those it couldn't read are off until you turn them on again. The old file is kept." = "无法读取的插件保持停用，直到你再次打开。旧文件已保留。";
+"%@ server keeps crashing" = "%@ 语言服务器反复崩溃";
+"Tiri stopped restarting it." = "Tiri 已不再重启它。";
+"Showing the first %lld changes" = "只显示前 %lld 项更改";
+"Git is taking too long here" = "Git 在这里太慢了";
+"It took longer than 2 minutes." = "超过了 2 分钟。";

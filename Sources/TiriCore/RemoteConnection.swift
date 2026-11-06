@@ -226,9 +226,9 @@ public final class RemoteConnection: @unchecked Sendable {
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         if let environment { process.environment = environment }
-        let errorPipe = Pipe()
+        let errorPipe = Pipe.notInherited()
         process.standardError = errorPipe
-        let outputPipe = Pipe()
+        let outputPipe = Pipe.notInherited()
         var outputHandle: FileHandle?
         if let outputFile {
             FileManager.default.createFile(atPath: outputFile.path, contents: nil)
@@ -237,7 +237,7 @@ public final class RemoteConnection: @unchecked Sendable {
         } else {
             process.standardOutput = outputPipe
         }
-        let inputPipe = Pipe()
+        let inputPipe = Pipe.notInherited()
         process.standardInput = stdin == nil ? FileHandle.nullDevice : inputPipe
         _ = fcntl(inputPipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         let box = OutputBox()
@@ -430,7 +430,7 @@ public final class RemoteConnection: @unchecked Sendable {
         process.environment = environment
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
-        let errorPipe = Pipe()
+        let errorPipe = Pipe.notInherited()
         process.standardError = errorPipe
         masterErrors = Data()
         errorPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
@@ -670,8 +670,8 @@ public final class RemoteConnection: @unchecked Sendable {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: Self.ssh)
         process.arguments = clientArguments(tty: false) + [destination, RemoteShell.wrap(script)]
-        let output = Pipe()
-        let input = Pipe()
+        let output = Pipe.notInherited()
+        let input = Pipe.notInherited()
         process.standardInput = input
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -1061,8 +1061,8 @@ public final class RemoteConnection: @unchecked Sendable {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: Self.ssh)
             process.arguments = clientArguments(tty: false) + [destination, RemoteShell.wrap(script)]
-            let input = Pipe()
-            let output = Pipe()
+            let input = Pipe.notInherited()
+            let output = Pipe.notInherited()
             process.standardInput = input
             process.standardOutput = output
             process.standardError = FileHandle.nullDevice

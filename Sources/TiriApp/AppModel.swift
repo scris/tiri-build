@@ -468,7 +468,7 @@ final class AppModel {
         editorBridge.stop()
         remote.prepareForQuit()
         for controller in controllers.values { controller.teardown() }
-        languageServers.stopAll()
+        languageServers.stopAll(quitting: true)
         plugins.processes.stopAll()
         server?.stop()
     }
@@ -2502,7 +2502,7 @@ final class AppModel {
 
     func scheduleChangesRefresh(_ id: WorkspaceID? = nil) {
         let id = id ?? activeID
-        guard let live = lives[id] else { return }
+        guard let live = lives[id], !live.changesPaused else { return }
         live.changesWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.refreshChanges(id) }
         live.changesWork = work
@@ -2532,11 +2532,21 @@ final class AppModel {
         }
         // Nothing can be asked until it's back, and not knowing isn't the same as no changes.
         if let destination = workspace.remote, !remote.state(of: destination).isReady { return }
+        // git took too long last time. Asking again at once, for every file saved, would keep it busy for nothing.
+        if let until = live.changesQuietUntil, until > Date() {
+            live.changesWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in self?.refreshChanges(workspaceID) }
+            live.changesWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + until.timeIntervalSinceNow, execute: work)
+            return
+        }
         live.changesInFlight = true
         let folders = workspace.folders
         Task.detached(priority: .userInitiated) { [weak self] in
-            let found = Git.changesAcross(folders)
-            let repositories = Git.repositoriesAcross(folders)
+            let scan = Git.scanChangesAcross(folders, timeout: ChangesNotice.timeout)
+            let found = scan.files
+            // It would be just as slow, and the status bar keeps what it had.
+            let repositories = scan.timedOut ? nil : Git.repositoriesAcross(folders)
             let needsGit = DeveloperTools.git == nil && folders.contains(where: Git.looksLikeRepository)
             await MainActor.run {
                 guard let self else { return }
@@ -2548,6 +2558,16 @@ final class AppModel {
                 self.refreshReviewLines(in: workspaceID)
                 self.refreshScopedChanges(workspaceID)
                 self.refreshOtherWork(workspaceID)
+                ChangesNotice.record(scan, in: live)
+                guard let repositories else {
+                    // There's a repository, or git wouldn't have been asked, and Changes is where that's said.
+                    if !live.barHasRepositories { live.barHasRepositories = true }
+                    if live.changesAgain {
+                        live.changesAgain = false
+                        self.refreshChanges(workspaceID)
+                    }
+                    return
+                }
                 live.barHasRepositories = !repositories.isEmpty
                 if live.changes != found { live.changes = found }
                 if live.repositories != repositories {
@@ -2742,7 +2762,9 @@ final class AppModel {
     }
 
     func hasChanges(_ path: String) -> Bool {
-        changes.contains { $0.path == path }
+        guard let live = lives[activeID] else { return false }
+        _ = live.changes
+        return live.changedPaths.contains(path)
     }
 
     // MARK: Agent hooks

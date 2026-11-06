@@ -147,6 +147,14 @@ check "send to a terminal" "$CLI" send "$SHELL_ID" "echo marker-\$((40+2))" --en
 sleep 1
 expect "read a terminal" "marker-42" "$CLI" read "$SHELL_ID" --lines 10
 
+# A shell holds its own terminal and nothing of the app's: no pipe, socket or other terminal of Tiri's.
+FD_ID=$("$CLI" term --cwd "$PROJECT")
+sleep 2
+FD_SHELL="$(cat "/tmp/tiri-$(id -u)-$(printf %s "$TIRI_HOME" | shasum -a 256 | cut -c1-12)/$FD_ID.sock.pid" 2>/dev/null)"
+FD_EXTRA="$(lsof -n -P -a -p "${FD_SHELL:-0}" -d 3-65535 2>/dev/null | awk 'NR>1 && $9 !~ /^\/dev\/ttys/ {print $4, $5, $9}')"
+if [ -n "$FD_SHELL" ] && [ -z "$FD_EXTRA" ]; then passed=$((passed + 1)); echo "ok    a terminal holds nothing of the app's"; else failed=$((failed + 1)); echo "FAIL  a terminal holds nothing of the app's: ${FD_SHELL:-no shell} $FD_EXTRA"; fi
+check "close the fd terminal" "$CLI" close "$FD_ID"
+
 # A path that doesn't exist as written gets searched for, the way a ⌘-click does.
 mkdir -p "$PROJECT/resume" "$WORK/other/resume" "$PROJECT/only"
 printf 'a' > "$PROJECT/only/single.md"

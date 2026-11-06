@@ -137,7 +137,7 @@ public enum PluginTools {
         // A test leaving caches in the folder would turn the plugin off.
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         process.environment = environment
-        let output = Pipe()
+        let output = Pipe.notInherited()
         process.standardOutput = output
         process.standardError = output
         do {
@@ -353,7 +353,7 @@ public enum VSIXImporter {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = arguments
-        let pipe = Pipe()
+        let pipe = Pipe.notInherited()
         process.standardOutput = pipe
         process.standardError = pipe
         guard (try? process.run()) != nil else { return (127, "") }

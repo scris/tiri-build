@@ -248,7 +248,7 @@ public enum PluginPackage {
         process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = arguments
         if let directory { process.currentDirectoryURL = directory }
-        let pipe = Pipe()
+        let pipe = Pipe.notInherited()
         process.standardOutput = pipe
         process.standardError = pipe
         process.standardInput = FileHandle.nullDevice

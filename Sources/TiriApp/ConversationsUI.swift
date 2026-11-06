@@ -16,25 +16,15 @@ extension AppModel {
             guard let connection = remote.existingConnection(destination), connection.state.isReady else { return nil }
             return await Task.detached(priority: .userInitiated) { connection.run(script, timeout: timeout)?.output }.value
         }
-        return await Task.detached(priority: .userInitiated) { () -> Data? in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", script]
-            var environment = ProcessInfo.processInfo.environment
-            // A test copy looks at made-up conversations.
-            if let home = environment["TIRI_CONVERSATIONS_HOME"], !home.isEmpty {
-                environment["HOME"] = home
-                for profile in AgentCatalog.all { if let name = profile.configDirectoryVariable { environment[name] = nil } }
-            }
-            process.environment = environment
-            let output = Pipe()
-            process.standardOutput = output
-            process.standardError = FileHandle.nullDevice
-            do { try process.run() } catch { return nil }
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return data
-        }.value
+        var environment = ProcessInfo.processInfo.environment
+        // A test copy looks at made-up conversations.
+        if let home = environment["TIRI_CONVERSATIONS_HOME"], !home.isEmpty {
+            environment["HOME"] = home
+            for profile in AgentCatalog.all { if let name = profile.configDirectoryVariable { environment[name] = nil } }
+        }
+        // Here too, the time it's given: a disk that's stopped answering shouldn't leave the list waiting forever.
+        guard let result = await BoundedRun.run("/bin/sh", ["-c", script], environment: environment, timeout: timeout), !result.timedOut else { return nil }
+        return result.output
     }
 
     private var conversationIndexFile: String {

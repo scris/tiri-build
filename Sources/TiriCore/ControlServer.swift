@@ -76,6 +76,8 @@ public final class ControlServer: @unchecked Sendable {
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw ControlSocketError.system("socket", errno) }
+        // Not into terminals: a session kept the socket listening long after Tiri had gone.
+        CloseOnExec.mark(fd)
         var address = try makeAddress(path)
         let bound = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
@@ -120,6 +122,7 @@ public final class ControlServer: @unchecked Sendable {
     private func acceptClient() {
         let client = accept(listenFD, nil, nil)
         guard client >= 0 else { return }
+        CloseOnExec.mark(client)
         var noSigPipe: Int32 = 1
         setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         let connection = Connection(fd: client, queue: queue, handler: handler) { [weak self] fd in
@@ -360,6 +363,7 @@ public final class ControlClient {
     public init(path: String, timeout: TimeInterval = 10) throws {
         fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw ControlSocketError.system("socket", errno) }
+        CloseOnExec.mark(fd)
         var noSigPipe: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         var address = try makeAddress(path)

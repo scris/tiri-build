@@ -1386,8 +1386,17 @@ enum ControlHandler {
                     object["state"] = "won't start"
                     object["path"] = .string(path)
                 case .found(let path):
-                    object["state"] = hub.isRunning(definition) ? "running" : (hub.isStarting(definition) ? "starting" : "found")
+                    object["state"] = hub.isRunning(definition) ? "running" : (hub.isStarting(definition) ? "starting" : (hub.keepsCrashing(definition) ? "keeps crashing" : "found"))
                     object["path"] = .string(path)
+                }
+                // Why it stopped, in its own words.
+                if object["state"] == "won't start" || object["state"] == "keeps crashing" {
+                    let file = LanguageServerHub.logFile(definition.id)
+                    let lines = CappedLog.lastLines(of: file)
+                    if !lines.isEmpty {
+                        object["log"] = .array(lines.map(JSONValue.string))
+                        object["logFile"] = .string(file.path)
+                    }
                 }
                 return .object(object)
             })
