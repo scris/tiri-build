@@ -191,6 +191,111 @@ final class TiriTerminalView: LocalProcessTerminalView {
         case web(URL)
     }
 
+    // MARK: VoiceOver
+
+    /// SwiftTerm draws text without telling VoiceOver any of it on a Mac. This is the screen and
+    /// recent history as a text area, the way Terminal shows it: lines to read, and the cursor,
+    /// with new output arriving as SwiftTerm's value-changed notices.
+    private struct SpokenText {
+        var text: NSString
+        var lineStarts: [Int]
+        var rows: [Int]
+        var cursor: Int
+        var liveTopRow: Int
+        var taken: CFTimeInterval
+    }
+    private var spokenText: SpokenText?
+
+    private var spoken: SpokenText {
+        let now = CACurrentMediaTime()
+        // VoiceOver asks a burst of questions at once; one copy of the screen answers them all.
+        if let spokenText, now - spokenText.taken < 0.25 { return spokenText }
+        var lines: [String] = []
+        var rows: [Int] = []
+        var cursorRow = 0, cursorColumn = 0, liveTopRow = 0
+        if let snapshot = terminalContentSnapshot(region: .history(maximumScrollbackRows: 500)) {
+            lines = snapshot.rows.map(\.text)
+            rows = snapshot.rows.map(\.absoluteRow)
+            cursorRow = snapshot.cursorRow
+            cursorColumn = snapshot.cursorColumn
+            liveTopRow = snapshot.liveTopRow
+            // Blank rows under the cursor are empty screen, not lines.
+            while lines.count > 1, let last = rows.last, last > cursorRow, lines.last?.allSatisfy(\.isWhitespace) == true {
+                lines.removeLast()
+                rows.removeLast()
+            }
+        }
+        var starts: [Int] = []
+        var offset = 0
+        for line in lines {
+            starts.append(offset)
+            offset += (line as NSString).length + 1
+        }
+        let text = lines.joined(separator: "\n") as NSString
+        var cursor = text.length
+        if let index = rows.firstIndex(of: cursorRow) {
+            cursor = min(starts[index] + cursorColumn, starts[index] + (lines[index] as NSString).length)
+        }
+        let result = SpokenText(text: text, lineStarts: starts.isEmpty ? [0] : starts, rows: rows, cursor: cursor, liveTopRow: liveTopRow, taken: now)
+        spokenText = result
+        return result
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
+    override func accessibilityRoleDescription() -> String? { "terminal" }
+    override func accessibilityLabel() -> String? {
+        guard let owner, let item = owner.model.anyItem(owner.itemID) else { return "Terminal" }
+        return owner.model.title(for: item)
+    }
+    override func accessibilityValue() -> Any? { spoken.text as String }
+    override func accessibilityNumberOfCharacters() -> Int { spoken.text.length }
+    override func accessibilitySelectedText() -> String? { getSelection() ?? "" }
+    override func accessibilitySelectedTextRange() -> NSRange { NSRange(location: spoken.cursor, length: 0) }
+    override func accessibilityInsertionPointLineNumber() -> Int { accessibilityLine(for: spoken.cursor) }
+    override func accessibilityVisibleCharacterRange() -> NSRange { NSRange(location: 0, length: spoken.text.length) }
+
+    override func accessibilityLine(for index: Int) -> Int {
+        let starts = spoken.lineStarts
+        var low = 0, high = starts.count - 1
+        while low < high {
+            let middle = (low + high + 1) / 2
+            if starts[middle] <= index { low = middle } else { high = middle - 1 }
+        }
+        return low
+    }
+
+    override func accessibilityRange(forLine line: Int) -> NSRange {
+        let current = spoken
+        guard current.lineStarts.indices.contains(line) else { return NSRange(location: NSNotFound, length: 0) }
+        let start = current.lineStarts[line]
+        let end = line + 1 < current.lineStarts.count ? current.lineStarts[line + 1] : current.text.length
+        return NSRange(location: start, length: max(end - start, 0))
+    }
+
+    override func accessibilityString(for range: NSRange) -> String? {
+        let text = spoken.text
+        let clamped = NSIntersectionRange(range, NSRange(location: 0, length: text.length))
+        return text.substring(with: clamped)
+    }
+
+    override func accessibilityAttributedString(for range: NSRange) -> NSAttributedString? {
+        accessibilityString(for: range).map { NSAttributedString(string: $0) }
+    }
+
+    /// Where a line is on screen, so VoiceOver's cursor sits on it. Lines scrolled out of the live screen get the top row.
+    override func accessibilityFrame(for range: NSRange) -> NSRect {
+        let current = spoken
+        let line = accessibilityLine(for: range.location)
+        let size = cellSize
+        guard let window, size.height > 0, current.rows.indices.contains(line) else { return accessibilityFrame() }
+        let screenRow = max(current.rows[line] - current.liveTopRow, 0)
+        let column = range.location - current.lineStarts[line]
+        let local = NSRect(x: CGFloat(column) * size.width, y: bounds.height - CGFloat(screenRow + 1) * size.height,
+                           width: max(CGFloat(max(range.length, 1)) * size.width, size.width), height: size.height)
+        return window.convertToScreen(convert(local, to: nil))
+    }
+
     // MARK: Bell
 
     nonisolated override func bell(source: Terminal) {
@@ -1122,10 +1227,13 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         let size = CGFloat(settings.terminalFontSizeZoomed)
         terminalView.font = TerminalTheme.font(family: family, size: size)
         terminalView.changeScrollback(settings.terminalScrollback)
-        TerminalTheme.apply(to: terminalView, dark: model.effectiveDark, translucent: settings.terminalTranslucent)
+        // Reduce Transparency, or Increase Contrast, which turns it on too, makes it solid whatever the setting says.
+        let translucent = settings.terminalTranslucent && !AccessibilityDisplay.shared.reduceTransparency
+        TerminalTheme.apply(to: terminalView, dark: model.effectiveDark, translucent: translucent)
         let color = TerminalTheme.background(dark: model.effectiveDark)
-        container.setBackground(settings.terminalTranslucent ? .clear : color)
-        container.setTranslucent(settings.terminalTranslucent ? color.withAlphaComponent(TerminalTheme.translucentOpacity) : nil)
+        container.setBackground(translucent ? .clear : color)
+        container.setTranslucent(translucent ? color.withAlphaComponent(TerminalTheme.translucentOpacity) : nil)
+        container.setSolidOverlays(AccessibilityDisplay.shared.reduceTransparency)
     }
 
     // MARK: Cwd and processes
@@ -1562,6 +1670,15 @@ final class TerminalContainer: NSView {
         layer?.backgroundColor = color.cgColor
     }
 
+    /// The exit bar and the connection notice float over the terminal on a material. With Reduce
+    /// Transparency they're solid, which the system does for real and Tiri's own switch has to.
+    private var solidOverlays = false
+
+    func setSolidOverlays(_ solid: Bool) {
+        solidOverlays = solid
+        for case let effect as NSVisualEffectView in [exitBar, notice].compactMap({ $0 }) { effect.setSolid(solid) }
+    }
+
     /// What's behind the window, blurred, with the terminal's own color over it so text stays easy to
     /// read. The system's material, so it goes solid by itself with Reduce Transparency on.
     private var blur: NSVisualEffectView?
@@ -1661,10 +1778,15 @@ final class TerminalContainer: NSView {
             stack.topAnchor.constraint(equalTo: holder.topAnchor),
             stack.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
         ])
+        holder.setSolid(solidOverlays)
         addSubview(holder)
         notice = holder
         needsLayout = true
+        if text != lastNotice { AccessibilityDisplay.shared.announce(text, interrupting: false) }
+        lastNotice = text
     }
+
+    private var lastNotice: String?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -1674,9 +1796,11 @@ final class TerminalContainer: NSView {
     func showExitBar(code: Int32?, resumeFailed: Bool, onRestart: @escaping () -> Void, onResume: @escaping () -> Void, onClose: @escaping () -> Void) {
         hideExitBar()
         let bar = TerminalExitBar(code: code, resumeFailed: resumeFailed, onRestart: onRestart, onResume: onResume, onClose: onClose)
+        bar.setSolid(solidOverlays)
         addSubview(bar)
         exitBar = bar
         needsLayout = true
+        AccessibilityDisplay.shared.announce(bar.message)
     }
 
     func hideExitBar() {
@@ -1686,6 +1810,7 @@ final class TerminalContainer: NSView {
 }
 
 final class TerminalExitBar: NSVisualEffectView {
+    private(set) var message = ""
     private let onRestart: () -> Void
     private let onResume: () -> Void
     private let onClose: () -> Void
@@ -1698,6 +1823,7 @@ final class TerminalExitBar: NSVisualEffectView {
         material = .headerView
         blendingMode = .withinWindow
         let text = resumeFailed ? "Couldn't resume this conversation" : code.map { "Process exited with code \($0)" } ?? "Process exited"
+        message = text
         let label = NSTextField(labelWithString: text)
         label.textColor = .secondaryLabelColor
         label.font = .systemFont(ofSize: 12)
@@ -1727,6 +1853,35 @@ final class TerminalExitBar: NSVisualEffectView {
     @objc private func restartClicked() { onRestart() }
     @objc private func resumeClicked() { onResume() }
     @objc private func closeClicked() { onClose() }
+}
+
+extension NSVisualEffectView {
+    /// An opaque plate under its content, for Reduce Transparency when only Tiri's switch is on.
+    func setSolid(_ solid: Bool) {
+        let existing = subviews.first { $0.identifier == SolidPlate.identifier }
+        if solid, existing == nil {
+            let plate = SolidPlate(frame: bounds)
+            plate.autoresizingMask = [.width, .height]
+            addSubview(plate, positioned: .below, relativeTo: subviews.first)
+        } else if !solid {
+            existing?.removeFromSuperview()
+        }
+    }
+}
+
+private final class SolidPlate: NSBox {
+    static let identifier = NSUserInterfaceItemIdentifier("tiri.solidPlate")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        identifier = Self.identifier
+        boxType = .custom
+        borderWidth = 0
+        titlePosition = .noTitle
+        fillColor = .windowBackgroundColor
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
 }
 
 // MARK: - Theme

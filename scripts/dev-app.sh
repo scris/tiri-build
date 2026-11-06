@@ -8,6 +8,8 @@
 # A copy hides itself as an app, because Stage Manager brings any window back on screen. Only with
 # TIRI_DEV_MAY_TAKE_FOCUS=yes at the start is it visible and clickable. If one reaches the screen, it's stopped.
 # TIRI_DEV_MAC_ACCENT=blue makes it act as if this Mac's accent were blue, to see "Your Mac" against Tiri Pink.
+# TIRI_DEV_A11Y=transparency,contrast,motion makes it act as if Reduce Transparency, Increase Contrast or Reduce
+# Motion were on, without touching this Mac's settings. `cli <name> dev-a11y <list|none>` changes it live.
 #   scripts/dev-app.sh env <name>        prints `export ...` lines; `eval` them to use its CLI
 #   scripts/dev-app.sh cli <name> ...    runs its `tiri`
 # Never run ./build.sh to test while someone's Tiri is open: it deletes the running app.
@@ -55,6 +57,7 @@ launch_in_background() {
     ${TIRI_DEV_MAY_TAKE_FOCUS:+--env TIRI_DEV_VISIBLE=1} \
     ${TIRI_DEV_OPTION:+--env TIRI_DEV_OPTION=1} \
     ${TIRI_DEV_MAC_ACCENT:+--env TIRI_DEV_MAC_ACCENT="$TIRI_DEV_MAC_ACCENT"} \
+    ${TIRI_DEV_A11Y:+--env TIRI_DEV_A11Y="$TIRI_DEV_A11Y"} \
     ${TIRI_SSH_CONFIG:+--env TIRI_SSH_CONFIG="$TIRI_SSH_CONFIG"} \
     ${TIRI_CONVERSATIONS_HOME:+--env TIRI_CONVERSATIONS_HOME="$TIRI_CONVERSATIONS_HOME"} \
     ${CODEX_HOME:+--env CODEX_HOME="$CODEX_HOME"} ${GROK_HOME:+--env GROK_HOME="$GROK_HOME"}

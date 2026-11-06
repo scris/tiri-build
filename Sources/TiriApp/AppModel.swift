@@ -8,6 +8,17 @@ import UserNotifications
 
 enum TerminalStatus: String {
     case idle, working, needsInput = "needs-input", done, exited
+
+    /// What VoiceOver says for it, where the screen shows only an icon or a color.
+    var spoken: String? {
+        switch self {
+        case .idle: nil
+        case .working: "Working"
+        case .needsInput: "Needs input"
+        case .done: "Done"
+        case .exited: "Exited"
+        }
+    }
 }
 
 struct TerminalRuntime: Equatable {
@@ -102,7 +113,12 @@ final class AppModel {
     var agentRows: [AgentOverviewRow] = []
     @ObservationIgnored private var agentRowsPending = false
     var runtimes: [ItemID: TerminalRuntime] = [:] { didSet { scheduleAgentRows() } }
-    var banner: AppBanner?
+    var banner: AppBanner? {
+        didSet {
+            // It appears where the keyboard isn't, so VoiceOver is told.
+            if let banner, banner.message != oldValue?.message { AccessibilityDisplay.shared.announce(banner.message) }
+        }
+    }
     var toasts: [AppToast] = []
     /// What a test copy would have opened in a browser, instead of opening it.
     @ObservationIgnored var sentToBrowser: [String] = []
@@ -1598,12 +1614,12 @@ final class AppModel {
 
     // MARK: Moving between things
 
-    private static var motionIsWelcome: Bool { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private static var motionIsWelcome: Bool { !AccessibilityDisplay.shared.reduceMotion }
 
     func setSidebar(visible: Bool) {
         let wanted: NavigationSplitViewVisibility = visible ? .all : .detailOnly
         guard wanted != sidebarVisibility else { return }
-        withAnimation(Self.motionIsWelcome ? .smooth(duration: 0.22) : nil) { sidebarVisibility = wanted }
+        withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.22))) { sidebarVisibility = wanted }
     }
 
     /// Terminals, editors and pages keep their size while the sidebar moves, and take the new one when
@@ -2941,6 +2957,14 @@ final class AppModel {
                 for controller in self.controllers.values { controller.applySettings() }
             }
         }
+        // Reduce Transparency and Increase Contrast: a translucent terminal goes solid, and back.
+        _ = AccessibilityDisplay.shared
+        NotificationCenter.default.addObserver(forName: AccessibilityDisplay.didChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                for controller in self.controllers.values { controller.applySettings() }
+            }
+        }
         // A new accent, from the Mac or the color setting: terminals hold theirs as fixed colors.
         NotificationCenter.default.addObserver(forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -2989,10 +3013,11 @@ final class AppModel {
     func showToast(title: String, detail: String?, symbol: String, tint: Color,
                    actionTitle: String? = nil, duration: TimeInterval = 6, action: (() -> Void)? = nil) -> UUID {
         let toast = AppToast(title: title, detail: detail, symbol: symbol, tint: tint, actionTitle: actionTitle, action: action)
-        withAnimation(.smooth(duration: 0.25)) {
+        withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.25))) {
             toasts.append(toast)
             if toasts.count > 3 { toasts.removeFirst() }
         }
+        AccessibilityDisplay.shared.announce([title, detail].compactMap { $0 }.joined(separator: ". "))
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self, id = toast.id] in
             self?.dismissToast(id)
         }
@@ -3000,7 +3025,7 @@ final class AppModel {
     }
 
     func dismissToast(_ id: UUID) {
-        withAnimation(.smooth(duration: 0.2)) {
+        withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.2))) {
             toasts.removeAll { $0.id == id }
         }
     }

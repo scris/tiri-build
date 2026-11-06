@@ -40,7 +40,9 @@ struct PeekView: View {
                 .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 14, bottomTrailingRadius: 14))
         }
         // Glass on the frame only: what you're reading stays opaque.
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .tiriGlass(in: .rect(cornerRadius: 16))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Peek")
         .clipShape(.rect(cornerRadius: 16))
         .shadow(color: .black.opacity(0.32), radius: 26, y: 10)
         .reportingFrame { frame in
@@ -86,8 +88,9 @@ struct PeekView: View {
                 } label: {
                     Image(systemName: "rectangle.righthalf.inset.filled")
                 }
-                .buttonStyle(.glass)
+                .tiriGlassButton()
                 .help("Open to the Side (⌥⌘↩)")
+                .accessibilityLabel("Open to the Side")
 
                 Button {
                     model.promotePeek()
@@ -99,7 +102,7 @@ struct PeekView: View {
                         Image(systemName: "plus.rectangle.on.rectangle")
                     }
                 }
-                .buttonStyle(.glassProminent)
+                .tiriGlassButton(prominent: true)
                 .layoutPriority(1)
                 .help("Open as Tab (⌘↩)")
 
@@ -108,8 +111,9 @@ struct PeekView: View {
                 } label: {
                     Image(systemName: "xmark")
                 }
-                .buttonStyle(.glass)
+                .tiriGlassButton()
                 .help(model.peekHasKeyboard ? "Close (esc)" : "Close")
+                .accessibilityLabel("Close Peek")
             }
             .controlSize(.small)
         }
@@ -165,17 +169,20 @@ struct PeekWebControls: View {
             Button { controller.goBack() } label: { Image(systemName: "chevron.left") }
                 .disabled(!controller.canGoBack)
                 .help("Back")
+                .accessibilityLabel("Back")
             Button { controller.goForward() } label: { Image(systemName: "chevron.right") }
                 .disabled(!controller.canGoForward)
                 .help("Forward")
+                .accessibilityLabel("Forward")
             Button {
                 if controller.isLoading { controller.webView.stopLoading() } else { controller.reload() }
             } label: {
                 Image(systemName: controller.isLoading ? "xmark" : "arrow.clockwise")
             }
             .help(controller.isLoading ? "Stop" : "Reload (⌘R)")
+            .accessibilityLabel(controller.isLoading ? "Stop" : "Reload")
             BrowserButton(controller: controller, glass: true)
         }
-        .buttonStyle(.glass)
+        .tiriGlassButton()
     }
 }

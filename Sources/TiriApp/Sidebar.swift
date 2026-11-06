@@ -34,11 +34,14 @@ struct SidebarView: View {
                 if !model.active.folders.isEmpty {
                     Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
                         .help("New File")
+                        .accessibilityLabel("New File")
                     Button { model.fileTree.beginCreating(.folder, in: nil) } label: { Image(systemName: "folder.badge.plus") }
                         .help("New Folder")
+                        .accessibilityLabel("New Folder")
                 }
                 Button { model.addFolderInteractive() } label: { Image(systemName: "plus") }
                     .help("Add Folder to Workspace")
+                    .accessibilityLabel("Add Folder to Workspace")
             }
             if model.active.folders.isEmpty {
                 if explorerOpen {
@@ -58,7 +61,7 @@ struct SidebarView: View {
                 sectionHeader("Changes", isOpen: $changesOpen) {
                     ChangesScopeMenu()
                     Text("\(model.visibleChangesCount)")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.faint)
                         .font(.caption)
                 }
                 if changesOpen {
@@ -111,8 +114,9 @@ struct SidebarView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .help("Past Conversations (⇧⌘H)")
+                    .accessibilityLabel("Past Conversations")
                     Text("\(agents.count)")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.faint)
                         .font(.caption)
                 }
                 if agentsOpen {
@@ -122,7 +126,7 @@ struct SidebarView: View {
             }
             sectionHeader("Open Items", isOpen: $itemsOpen) {
                 Text("\(model.active.items.count)")
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.faint)
                     .font(.caption)
             }
             if itemsOpen {
@@ -164,7 +168,7 @@ struct SidebarView: View {
     private func sectionHeader<Actions: View>(_ title: String, isOpen: Binding<Bool>, @ViewBuilder actions: () -> Actions) -> some View {
         HStack(spacing: 8) {
             Button {
-                withAnimation(.smooth(duration: 0.18)) { isOpen.wrappedValue.toggle() }
+                withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.18))) { isOpen.wrappedValue.toggle() }
             } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
@@ -213,7 +217,7 @@ struct NoFoldersView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Button("Add Folder…") { model.addFolderInteractive() }
-                .buttonStyle(.glass)
+                .tiriGlassButton()
             Button("Import .code-workspace…") { model.importWorkspaceInteractive() }
                 .buttonStyle(.plain)
                 .font(.caption)
@@ -247,6 +251,7 @@ struct WorkspaceSwitcher: View {
                 .foregroundStyle(.secondary)
                 .font(.system(size: 12))
                 .help("New Workspace")
+                .accessibilityLabel("New Workspace")
             }
             .padding(.horizontal, 4)
             .frame(height: 24)
@@ -303,18 +308,17 @@ struct WorkspaceRow: View {
             if hovering, index < 9 {
                 Text("⌃\(index + 1)")
                     .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.faint)
             }
         }
         .padding(.horizontal, 7)
         .frame(height: 28)
-        .background {
-            RoundedRectangle(cornerRadius: 7)
-                .fill(isActive ? Color.primary.opacity(0.1) : (hovering ? Color.primary.opacity(0.05) : .clear))
-        }
+        .currentMark(isActive, hovering: hovering, cornerRadius: 7)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { model.switchWorkspace(workspace.id) }
+        .accessibleRow(workspace.name, value: attentionWords(counts), selected: isActive) { model.switchWorkspace(workspace.id) }
+        .accessibilityAction(named: "Rename") { model.promptRenameWorkspace(workspace.id) }
         .contextMenu {
             Button("Rename…") { model.promptRenameWorkspace(workspace.id) }
             Divider()
@@ -322,6 +326,14 @@ struct WorkspaceRow: View {
         }
         .help(workspace.folders.map { model.prettyPath($0) }.joined(separator: "\n"))
     }
+}
+
+/// What the badges beside a workspace say, in words.
+@MainActor func attentionWords(_ counts: (needsInput: Int, done: Int)) -> String {
+    var parts: [String] = []
+    if counts.needsInput > 0 { parts.append("\(counts.needsInput) need\(counts.needsInput == 1 ? "s" : "") input") }
+    if counts.done > 0 { parts.append("\(counts.done) done") }
+    return parts.joined(separator: ", ")
 }
 
 struct AttentionBadge: View {
@@ -403,6 +415,7 @@ struct OpenItemRow: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .help("Close")
             } else if let statusText {
                 Text(statusText)
                     .font(.system(size: 10.5))
@@ -412,15 +425,17 @@ struct OpenItemRow: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .frame(minHeight: 24)
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isActive ? Color.primary.opacity(0.1) : (hovering ? Color.primary.opacity(0.05) : .clear))
-        }
+        .currentMark(isActive, hovering: hovering, cornerRadius: 6)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .modifier(ClickOrDrag(item: item.id, title: model.title(for: item)) { _ in
             model.focusItem(item.id)
         })
+        // The close button only shows under the mouse, so VoiceOver gets it as an action.
+        .accessibleRow(model.title(for: item), value: [statusText, runtime?.message].compactMap { $0 }.joined(separator: ", "), selected: isActive) {
+            model.focusItem(item.id)
+        }
+        .accessibilityAction(named: "Close") { model.requestClose(item.id) }
     }
 }
 
@@ -497,6 +512,10 @@ struct AgentOverviewRowView: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture {
+            model.crossfade()
+            model.focusItem(row.item)
+        }
+        .accessibleRow(row.name, value: (row.status.spoken.map { $0 + ", " } ?? "") + detail) {
             model.crossfade()
             model.focusItem(row.item)
         }

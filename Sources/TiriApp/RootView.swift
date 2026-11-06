@@ -84,6 +84,7 @@ struct MainToolbar: ToolbarContent {
             }
             .menuIndicator(.hidden)
             .help("New terminal or agent")
+            .accessibilityLabel("New Terminal or Agent")
 
             Button { model.openConversationPicker() } label: {
                 Label("Past Conversations", systemImage: "clock.arrow.circlepath")
@@ -98,12 +99,12 @@ struct MainToolbar: ToolbarContent {
             Button { model.splitActive(.right) } label: {
                 Label("Split Right", systemImage: "rectangle.split.2x1")
             }
-            .help("Split Right (⌘\\)")
+            .help(String("Split Right (⌘\\)"))
 
             Button { model.splitActive(.down) } label: {
                 Label("Split Down", systemImage: "rectangle.split.1x2")
             }
-            .help("Split Down (⌘K ⌘\\)")
+            .help(String("Split Down (⌘K ⌘\\)"))
         }
     }
 }
@@ -128,12 +129,11 @@ struct DetailView: View {
                 .background(Color(nsColor: TerminalTheme.background(dark: model.effectiveDark)))
             if let peek = model.active.peek {
                 PeekView(item: peek)
-                    .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
-                                            removal: .opacity))
+                    .transition(.asymmetric(insertion: AccessibilityDisplay.shared.slide(from: .trailing), removal: .opacity))
                     .id(peek.id)
             }
         }
-        .animation(.smooth(duration: 0.22), value: model.active.peek?.id)
+        .animation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.22)), value: model.active.peek?.id)
     }
 }
 
@@ -423,7 +423,7 @@ struct EmptyGroupView: View {
             Text(title).foregroundStyle(.secondary)
             Spacer()
             Text(model.shortcutSymbol(for: command) ?? "")
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.faint)
                 .font(.system(.body, design: .default).monospacedDigit())
         }
         .frame(width: 240)
@@ -570,12 +570,13 @@ private struct AgentTileLabel: View {
         .frame(width: 112, height: 78)
         .background(Color.primary.opacity(hovering ? 0.1 : 0.05), in: .rect(cornerRadius: 12))
         .overlay {
+            // A faint edge is all that says this is a button, so Increase Contrast draws it clearly.
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.primary.opacity(hovering ? 0.14 : 0.07))
+                .strokeBorder(Color.primary.opacity(AccessibilityDisplay.shared.increaseContrast ? 0.55 : hovering ? 0.14 : 0.07))
         }
         .contentShape(.rect(cornerRadius: 12))
         .onHover { hovering = $0 }
-        .animation(.smooth(duration: 0.12), value: hovering)
+        .animation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.12)), value: hovering)
     }
 }
 
@@ -601,7 +602,7 @@ private struct StartRow: View {
             HStack(spacing: 10) {
                 Image(systemName: symbol)
                     .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.faint)
                     .frame(width: 18)
                 Text(title)
                     .font(.system(size: 13))
@@ -610,7 +611,7 @@ private struct StartRow: View {
                 if let shortcut {
                     Text(shortcut)
                         .font(.system(size: 12).monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.faint)
                 }
             }
             .padding(.horizontal, 10)
@@ -665,7 +666,7 @@ struct DetachedPlaceholder: View {
         VStack(spacing: 12) {
             Image(systemName: "macwindow.on.rectangle")
                 .font(.system(size: 30))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.faint)
             Text("Showing in its own window")
                 .foregroundStyle(.secondary)
             HStack {
@@ -721,7 +722,7 @@ struct FileHeader: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 28)
-        .background(.bar)
+        .tiriBar()
         .overlay(alignment: .bottom) { Divider() }
     }
 }
@@ -742,6 +743,7 @@ struct FileActions: View {
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .help("Add this file or your selection to the agent (⌘L)")
+        .accessibilityLabel("Add to Agent")
         if case .diff = item.content, let diff = model.controller(for: item.id) as? DiffController {
             if diff.diff.additions + diff.diff.deletions > 0 {
                 HStack(spacing: 4) {
@@ -759,6 +761,8 @@ struct FileActions: View {
             .foregroundStyle(diff.isSideBySide ? Color.accentColor : .secondary)
             .disabled(diff.isTooNarrowForTwoColumns)
             .help(diff.isTooNarrowForTwoColumns ? "There isn't room here for side by side" : (diff.isSideBySide ? "Show in one column" : "Show side by side"))
+            .accessibilityLabel("Side by Side")
+            .accessibilityAddTraits(diff.isSideBySide ? .isSelected : [])
             Button {
                 model.toggleChangesForFront()
             } label: {
@@ -790,6 +794,7 @@ struct FileActions: View {
             .buttonStyle(.plain)
             .foregroundStyle(document.forceDarkActive ? Color.accentColor : .secondary)
             .help(document.forceDarkActive ? "Showing dark. Click for true colors" : "Show this document dark")
+            .accessibilityLabel(document.forceDarkActive ? "True Colors" : "Show Dark")
         }
         if model.accessReady, let pdf = (model.controller(for: item.id) as? TextController)?.compiledPDF {
             Button {
@@ -831,6 +836,7 @@ struct FileActions: View {
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .help("Open in External Editor")
+        .accessibilityLabel("Open in External Editor")
     }
 }
 
@@ -846,7 +852,8 @@ struct Breadcrumbs: View {
                     if index > 0 {
                         Image(systemName: "chevron.compact.right")
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.faint)
+                            .accessibilityHidden(true)
                     }
                     Text(part.name)
                         .font(.caption)
@@ -857,6 +864,9 @@ struct Breadcrumbs: View {
                         .onTapGesture {
                             if index < parts.count - 1 { model.revealOrOffer(path: part.path) }
                         }
+                        .accessibilityAddTraits(index < parts.count - 1 ? .isButton : [])
+                        .accessibilityHint(index < parts.count - 1 ? "Reveals it in the explorer" : "")
+                        .accessibilityAction { if index < parts.count - 1 { model.revealOrOffer(path: part.path) } }
                 }
             }
         }
@@ -925,6 +935,8 @@ struct WebHeader: View {
             .frame(width: 24, height: 24)
             .contentShape(Rectangle())
             .help("Pick something on the page and quote it in your agent")
+            .accessibilityLabel("Pick on Page")
+            .accessibilityAddTraits(controller.picking ? .isSelected : [])
             Button {
                 controller.toggleForceDark()
             } label: {
@@ -935,6 +947,7 @@ struct WebHeader: View {
             .frame(width: 24, height: 24)
             .contentShape(Rectangle())
             .help(controller.forceDarkActive ? "Forced dark is on" : "Force dark mode on this page")
+            .accessibilityLabel(controller.forceDarkActive ? "True Colors" : "Show Dark")
             BrowserButton(controller: controller)
             if let filePath {
                 Button { model.openExternally(path: filePath) } label: {
@@ -944,11 +957,12 @@ struct WebHeader: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 24, height: 24)
                 .help("Open in External Editor")
+                .accessibilityLabel("Open in External Editor")
             }
         }
         .padding(.horizontal, 8)
         .frame(height: 34)
-        .background(.bar)
+        .tiriBar()
         .overlay(alignment: .bottom) { Divider() }
     }
 
@@ -959,9 +973,10 @@ struct WebHeader: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(enabled ? .primary : .tertiary)
+        .foregroundStyle(enabled ? .primary : .faint)
         .disabled(!enabled)
         .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -1008,6 +1023,7 @@ struct FindBar: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
                     .help("Replace (\(model.shortcutSymbol(for: "findReplace") ?? "⌥⌘F"))")
+                    .accessibilityLabel(model.find?.showReplace == true ? "Hide Replace" : "Show Replace")
                 } else {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 }
@@ -1071,7 +1087,7 @@ struct FindBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16))
+        .tiriGlass(in: .rect(cornerRadius: 16))
         .onAppear {
             if (model.find?.replaceFocusNonce ?? 0) > 0 { replaceFocused = true } else { focused = true }
         }
@@ -1096,17 +1112,19 @@ struct ChromeOverlays: View {
                         .font(.callout)
                     if banner.opensPrivacySettings {
                         Button("Open Settings") { model.openPrivacySettings() }
-                            .buttonStyle(.glass)
+                            .tiriGlassButton()
                             .controlSize(.small)
                     }
                     Button("Dismiss") { model.banner = nil }
-                        .buttonStyle(.glass)
+                        .tiriGlassButton()
                         .controlSize(.small)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
-                .glassEffect(.regular, in: .rect(cornerRadius: 14))
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .tiriGlass(in: .rect(cornerRadius: 14))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(banner.isError ? "Problem" : "Notice")
+                .transition(AccessibilityDisplay.shared.slide(from: .top))
             }
             if let palette = model.palette {
                 // One palette replacing another is a new one. A text field being typed in keeps
@@ -1132,6 +1150,7 @@ struct ToastStack: View {
                 ForEach(model.toasts) { toast in
                     HStack(spacing: 10) {
                         Image(systemName: toast.symbol).foregroundStyle(toast.tint)
+                            .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(toast.title).font(.callout.weight(.medium)).lineLimit(1)
                             if let detail = toast.detail {
@@ -1144,7 +1163,7 @@ struct ToastStack: View {
                                 toast.action?()
                                 model.dismissToast(toast.id)
                             }
-                            .buttonStyle(.glass)
+                            .tiriGlassButton()
                             .controlSize(.small)
                         }
                         Button { model.dismissToast(toast.id) } label: {
@@ -1152,11 +1171,13 @@ struct ToastStack: View {
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("Dismiss")
                     }
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
-                    .glassEffect(.regular, in: .rect(cornerRadius: 14))
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .tiriGlass(in: .rect(cornerRadius: 14))
+                    .accessibilityElement(children: .contain)
+                    .transition(AccessibilityDisplay.shared.slide(from: .trailing))
                 }
             }
         }
@@ -1187,13 +1208,13 @@ struct TabDragOverlay: View {
                             .stroke(Color.accentColor.opacity(0.6), lineWidth: 1)
                             .frame(width: rect.width, height: rect.height)
                             .offset(x: rect.minX - origin.x, y: rect.minY - origin.y)
-                            .animation(.smooth(duration: 0.12), value: rect)
+                            .animation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.12)), value: rect)
                     }
                     Text(drag.title)
                         .font(.callout)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 5)
-                        .glassEffect(.regular, in: .capsule)
+                        .tiriGlass(in: .capsule)
                         .offset(x: drag.location.x - origin.x + 8, y: drag.location.y - origin.y + 8)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

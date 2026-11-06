@@ -343,12 +343,13 @@ struct CommitCaption: View {
             }
             .buttonStyle(.plain)
             .help("Back to Recent Commits")
+            .accessibilityLabel("Back to Recent Commits")
             VStack(alignment: .leading, spacing: 1) {
                 Text(commit.subject)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(([commit.shortOID, RelativeTime.text(commit.date)] + (commit.isMerge ? ["compared with its first parent"] : [])).joined(separator: " · "))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.faint)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -531,9 +532,10 @@ struct WorkCaption: View {
                 }
                 .buttonStyle(.plain)
                 .help("Back to Other Work")
+                .accessibilityLabel("Back to Other Work")
                 VStack(alignment: .leading, spacing: 1) {
                     Text(work.summary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                    Text(work.subject).foregroundStyle(.tertiary).lineLimit(1)
+                    Text(work.subject).foregroundStyle(.faint).lineLimit(1)
                 }
             }
             Button(work.isUnfinished ? "Ask Agent to Merge" : "Ask Agent to Clean Up") {

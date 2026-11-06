@@ -173,6 +173,15 @@ struct NewPluginSection: View {
                 .buttonStyle(.borderedProminent)
                 .fixedSize()
                 .disabled(trimmed.isEmpty)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Ask \(first.name)")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction(.default) { if !trimmed.isEmpty { ask(first) } }
+                .accessibilityActions {
+                    ForEach(presets.dropFirst()) { preset in
+                        Button("Ask \(preset.name)") { ask(preset) }
+                    }
+                }
             } else {
                 Button("Ask \(first.name)") { ask(first) }
                     .buttonStyle(.borderedProminent)
@@ -194,11 +203,10 @@ struct NewPluginSection: View {
 struct FoldHeading: View {
     let title: String
     @Binding var isOpen: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button {
-            withAnimation(reduceMotion ? nil : .smooth(duration: 0.2)) { isOpen.toggle() }
+            withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.2))) { isOpen.toggle() }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.right")
@@ -490,7 +498,7 @@ struct PluginRow: View {
                     HStack(spacing: 6) {
                         Text(plugin.title)
                         if let version = plugin.manifest?.version {
-                            Text(version).font(.caption).foregroundStyle(.tertiary)
+                            Text(version).font(.caption).foregroundStyle(.faint)
                         }
                     }
                     if let description = plugin.manifest?.description, description != PluginTools.placeholderDescription {
@@ -515,6 +523,7 @@ struct PluginRow: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help(showsDetail ? "Hide" : "What it adds and runs")
+                .accessibilityLabel(showsDetail ? "Hide details of \(plugin.title)" : "What \(plugin.title) adds and runs")
                 Menu {
                     actions
                 } label: {
@@ -540,6 +549,7 @@ struct PluginRow: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .disabled(isBroken)
+                    .accessibilityLabel(plugin.title)
                 }
             }
             if showsDetail, let manifest = plugin.manifest {
@@ -604,7 +614,7 @@ struct PluginSidebarSection: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Button {
-                    withAnimation(.smooth(duration: 0.18)) { isOpen.toggle() }
+                    withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.18))) { isOpen.toggle() }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.right")
@@ -634,6 +644,7 @@ struct PluginSidebarSection: View {
                     .foregroundStyle(.secondary)
                     .font(.system(size: 12))
                     .help(button.title)
+                    .accessibilityLabel(button.title)
                 }
             }
             .padding(.leading, 10)
@@ -659,7 +670,7 @@ struct PluginSidebarSection: View {
         } else if section.state.items.isEmpty {
             Text(section.state.hasLoaded || section.section.provider == nil ? (section.section.emptyText ?? "Nothing here") : "Loading…")
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.faint)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 4)
@@ -723,7 +734,7 @@ struct PluginTreeRow: View {
                 if let detail = item.detail {
                     Text(detail)
                         .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.faint)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
@@ -737,6 +748,7 @@ struct PluginTreeRow: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(item.tooltip ?? item.title)
+        .accessibilityValue(item.children.isEmpty ? (item.detail ?? "") : isExpanded ? "expanded" : "collapsed")
     }
 }
 
@@ -790,6 +802,7 @@ struct PluginFileButtons: View {
                     // More than a couple, and words would push the file's own name out of the bar.
                     if buttons.count > 2 {
                         Image(systemName: symbol)
+                            .accessibilityLabel(entry.button.title)
                     } else {
                         Label(entry.button.title, systemImage: symbol).labelStyle(.titleAndIcon)
                     }
@@ -864,7 +877,7 @@ struct UnknownLanguageStatusItem: View {
             } label: {
                 Text(".\(ext): ask agent to add this language")
                     .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.faint)
             }
             .buttonStyle(.plain)
             .fixedSize()

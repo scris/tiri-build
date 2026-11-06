@@ -170,7 +170,7 @@ struct ChangePanel: View {
                 if yours.hasNeverChanged {
                     Text("Uses your \(agent) account. About 1 GB, the first time")
                         .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.faint)
                 }
             }
         }
@@ -222,6 +222,7 @@ struct YourTiriStatusItem: View {
                     }
                     .buttonStyle(.plain)
                     .help("Later. It's back in a few hours, and in Change Tiri… until then.")
+                    .accessibilityLabel("Later")
                 }
             }
         }
@@ -255,7 +256,7 @@ struct ChangeMarkingOverlay: View {
                         .font(.system(size: 14, weight: .medium))
                         .padding(.horizontal, 16)
                         .padding(.vertical, 9)
-                        .background(.regularMaterial, in: .capsule)
+                        .tiriMaterial(in: .capsule)
                         .padding(.top, 64)
                         .allowsHitTesting(false)
                 }

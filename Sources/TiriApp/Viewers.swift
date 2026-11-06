@@ -873,6 +873,8 @@ final class TextController: NSObject, ItemController, SymbolViewing, NSTextViewD
         quoteButton?.onQuote = { [weak self] in self?.model.addFrontToAgent() }
         let text = textView
         text.editor = self
+        // VoiceOver says "text area" otherwise, with nothing to say which file it is.
+        text.setAccessibilityLabel((path as NSString).lastPathComponent)
         text.isEditable = true
         text.allowsUndo = true
         text.delegate = self
@@ -1618,7 +1620,7 @@ final class LineGutter: NSView {
             }
             if line.isEmpty, length == 0 { line = NSRect(x: 0, y: 0, width: 0, height: font.pointSize + 4) }
             let y = text.convert(NSPoint(x: 0, y: line.minY + text.textContainerInset.height), to: self).y
-            let color: NSColor = index + 1 == selectedLine ? .secondaryLabelColor : .tertiaryLabelColor
+            let color: NSColor = index + 1 == selectedLine ? .secondaryLabelColor : .faintLabel
             let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
             let label = "\(index + 1)" as NSString
             let size = label.size(withAttributes: attributes)

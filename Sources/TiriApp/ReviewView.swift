@@ -328,7 +328,7 @@ struct ReviewCommentEditor: View {
                 Spacer()
                 Text("⇧↩ for a new line")
                     .font(.system(size: 10.5))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.faint)
                 Button(isEditing ? "Save" : "Add Comment") { finish() }
                     .buttonStyle(.borderedProminent)
                     .disabled(trimmed.isEmpty)
@@ -352,7 +352,7 @@ struct ReviewHeaderActions: View {
 
     var body: some View {
         Text("\(model.active.review.count)")
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.faint)
             .font(.caption)
         Button {
             model.sendReview()
@@ -440,6 +440,8 @@ struct ReviewRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { model.openReviewComment(comment) }
+        .accessibleRow(comment.summary, value: location) { model.openReviewComment(comment) }
+        .accessibilityAction(named: "Delete Comment") { model.removeReviewComment(comment.id) }
         .help(comment.text)
         .contextMenu {
             Button("Go to Comment") { model.openReviewComment(comment) }

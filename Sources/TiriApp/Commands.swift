@@ -986,6 +986,17 @@ enum ControlHandler {
                             "plainForNow": .bool(PlainForNow.isOn), "panes": .array(model.settingsPanes.map { .string($0.rawValue) }),
                             "offers": .bool(yours.entriesAreOn), "update": .string(yours.update?.line ?? ""), "version": .string(YourTiriModel.version)])
 
+        case "dev.a11y":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            let display = AccessibilityDisplay.shared
+            if let pretend = request.args["pretend"]?.stringValue { display.pretendForTest(pretend) }
+            if let toast = request.args["toast"]?.stringValue {
+                model.showToast(title: toast.isEmpty ? "Saved" : toast, detail: "A toast from a test", symbol: "checkmark.circle.fill", tint: .green, actionTitle: "Undo", duration: 30) {}
+            }
+            return .object(["pretend": .array(display.pretendedForTest.map(JSONValue.string)),
+                            "reduceTransparency": .bool(display.reduceTransparency), "increaseContrast": .bool(display.increaseContrast),
+                            "reduceMotion": .bool(display.reduceMotion), "spoken": .array(display.spoken.map(JSONValue.string))])
+
         case "dev.settings":
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
             switch request.args["action"]?.stringValue {

@@ -132,6 +132,18 @@ public enum CLIParser {
             }
             return request("dev.settings", payload)
 
+        case "dev-a11y":
+            // What a test copy pretends of Reduce Transparency, Increase Contrast and Reduce Motion, and what it said to VoiceOver.
+            var payload: [String: JSONValue] = [:]
+            if let first = args.first {
+                if first == "toast" {
+                    payload["toast"] = .string(args.dropFirst().joined(separator: " "))
+                } else {
+                    payload["pretend"] = .string(first == "none" ? "" : first)
+                }
+            }
+            return request("dev.a11y", payload)
+
         case "dev-notification":
             guard args.count == 1 else { throw UsageError("usage: tiri dev-notification <item>   (test copies only)") }
             return request("dev.notification", ["item": .string(args[0])])

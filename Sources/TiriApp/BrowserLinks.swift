@@ -105,9 +105,23 @@ struct BrowserButton: View {
                 model.movePageToBrowser(item)
             }
             .help("Open in \(name)")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Open in \(name)")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(.default) { model.movePageToBrowser(item) }
+            .accessibilityActions {
+                if let rule {
+                    Button("Stop Opening \(rule) in \(name)") { model.setOpensInBrowser(rule, false) }
+                } else if let site = BrowserRules.site(of: url) {
+                    Button("Always Open \(site) in \(name)") {
+                        model.setOpensInBrowser(site, true)
+                        model.movePageToBrowser(item)
+                    }
+                }
+            }
             .fixedSize()
             if glass {
-                menu.menuStyle(.button).buttonStyle(.glass)
+                menu.menuStyle(.button).tiriGlassButton()
             } else {
                 menu.menuStyle(.borderlessButton).frame(height: 24)
             }
