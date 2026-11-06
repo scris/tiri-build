@@ -5,7 +5,8 @@ import AppKit
 @MainActor
 enum AboutPanel {
     static let authorName = "Tianrun Qiu"
-    static let authorURL = URL(string: "https://r-q.name")!
+    /// Tagged, since a link opened from an app carries no referrer for the site to see.
+    static let authorURL = URL(string: "https://r-q.name/?ref=tiri-app")!
     static let websiteURL = URL(string: "https://tiri.build")!
     static let sourceURL = URL(string: "https://github.com/tiri-build/tiri")!
 
