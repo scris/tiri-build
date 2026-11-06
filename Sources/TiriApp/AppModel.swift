@@ -257,6 +257,7 @@ final class AppModel {
     @ObservationIgnored private var isNewInstall = false
     /// Some saved state couldn't be read, so what came back is the last good copy of it.
     @ObservationIgnored private var stateWasDamaged = false
+    @ObservationIgnored private var toldNewerFormat = false
     @ObservationIgnored private var checkedPaths: Set<String> = []
     @ObservationIgnored private var tabDragCommitted = false
 
@@ -306,20 +307,25 @@ final class AppModel {
         guard !didFinishLaunching else { return }
         didFinishLaunching = true
         BlockedLinks.install()
-        updateSummarizingAll()
+        if !SafeStart.isOn { updateSummarizingAll() }
         // Another Tiri has these workspaces. Attaching to a terminal takes it from whoever has it, so
         // this one touches nothing, and brings that one forward.
-        if ControlClient.isAlive(path: TiriPaths.socket) {
+        // With the instance lock this is settled already; this is for an older Tiri, from before there was one.
+        if !InstanceLock.isHeld, ControlClient.isAlive(path: TiriPaths.socket) {
             if let other = try? ControlClient(path: TiriPaths.socket, timeout: 2) {
                 _ = try? other.send(ControlRequest(cmd: "activate"))
             }
+            SafeStart.quitOnPurpose()
             exit(0)
         }
         editorBridge.start()
         loadTurns()
         adoptNewAgents()
-        languageServers.prepare()
-        plugins.load()
+        // After two launches that didn't finish, without what most often stops one: see `SafeStart`.
+        if !SafeStart.isOn {
+            languageServers.prepare()
+            plugins.load()
+        }
         yourTiri.finishLaunching()
         // So the first file's colors aren't late, without making launch any longer.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { HighlightEngine.shared.prepare() }
@@ -360,7 +366,7 @@ final class AppModel {
             case .terminal(let spec): paths.append(spec.cwd)
             case .file(let spec): paths.append(spec.path)
             case .diff(let spec): paths.append((spec.path as NSString).deletingLastPathComponent)
-            case .web, .settings, .plugin: break
+            case .web, .settings, .plugin, .unknown: break
             }
         }
         let unchecked = Array(Set(paths).subtracting(checkedPaths))
@@ -516,6 +522,9 @@ final class AppModel {
 
     private func startServer() {
         let path = TiriPaths.socket
+        // Holding the instance lock, no other Tiri has this state. Something still listening there is a terminal that
+        // outlived a crash with the socket an older build passed on, and the path is this one's to take.
+        if InstanceLock.isHeld, ControlClient.socketState(path: path) == .listening { unlink(path) }
         let server = ControlServer(path: path) { request in
             await ControlHandler.handleFromMac(request)
         }
@@ -608,6 +617,11 @@ final class AppModel {
     func saveNow() {
         do {
             try store.save(.init(workspaces: workspaces, activeID: activeID, windows: windowPlacements))
+        } catch let newer as WorkspaceStore.NewerFormat {
+            // Said once a launch: every change would say it again.
+            guard !toldNewerFormat else { return }
+            toldNewerFormat = true
+            showToast(title: String(localized: "Changes to tabs aren't saved"), detail: newer.description, symbol: "exclamationmark.triangle", tint: .orange, duration: 12)
         } catch {
             showBanner(String(localized: "Couldn't save the workspace: \(error.localizedDescription)"), isError: true)
         }
@@ -677,6 +691,9 @@ final class AppModel {
             controller = WebController(itemID: id, url: url, forceDark: spec.forceDark, isFile: false, model: self)
         case .plugin(let spec):
             controller = plugins.makeController(itemID: id, spec: spec)
+        case .unknown:
+            // Kept out of tabs by the store, so nothing asks for one.
+            return nil
         }
         controllers[id] = controller
         return controller
@@ -1344,7 +1361,7 @@ final class AppModel {
                 return active.folder(containing: spec.path) ?? (spec.path as NSString).deletingLastPathComponent
             case .diff(let spec):
                 return active.folder(containing: spec.path) ?? (spec.path as NSString).deletingLastPathComponent
-            case .web, .settings, .plugin:
+            case .web, .settings, .plugin, .unknown:
                 break
             }
         }
@@ -1564,7 +1581,7 @@ final class AppModel {
         case .web:
             if let title = (existingController(for: item.id) as? WebController)?.title, !title.isEmpty { return title }
             return made
-        case .file, .settings, .diff, .plugin:
+        case .file, .settings, .diff, .plugin, .unknown:
             return made
         }
     }
@@ -1682,7 +1699,7 @@ final class AppModel {
             let cwd = (existingController(for: item.id) as? TerminalController)?.currentDirectory ?? spec.cwd
             newTerminal(cwd: cwd, split: direction)
             return
-        case .settings:
+        case .settings, .unknown:
             // One Settings tab per workspace. Beside it, a new terminal is what's useful.
             startTerminal(split: direction)
             return
@@ -2224,6 +2241,9 @@ final class AppModel {
         }
         do {
             try settingsStore.write(key, value: value)
+        } catch let needsFixing as SettingsStore.FileNeedsFixing {
+            showFileNeedsFixing(needsFixing)
+            return needsFixing.why
         } catch {
             showToast(title: String(localized: "Couldn't change that setting"), detail: "\(error)", symbol: "exclamationmark.triangle", tint: .orange)
             return "\(error)"
@@ -2860,10 +2880,10 @@ final class AppModel {
         let answered = { UserDefaults.standard.set(true, forKey: key) }
         showToast(title: String(localized: "Get exact status from \(tool.title)?"), detail: String(localized: "Right now Tiri is estimating when it's working or done."),
                   symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: String(localized: "Set Up"), duration: nil,
-                  other: (String(localized: "Not Now"), answered), closed: answered) { [weak self] in
+                  other: (String(localized: "Not Now"), answered), action: { [weak self] in
             answered()
             self?.confirmHooks(tool, install: true)
-        }
+        }, closed: answered)
     }
 
     // MARK: What's installed
@@ -3002,6 +3022,7 @@ final class AppModel {
         do {
             try settingsStore.writeKeybindings(Keymap.rebound(user: settingsStore.userKeybindings, command: command, key: key))
         } catch {
+            if let needsFixing = error as? SettingsStore.FileNeedsFixing { showFileNeedsFixing(needsFixing) }
             return "\(error)"
         }
         if announcing, let previous {
@@ -3017,7 +3038,17 @@ final class AppModel {
             try settingsStore.writeKeybindings(Keymap.reset(user: settingsStore.userKeybindings, command: command))
             return nil
         } catch {
+            if let needsFixing = error as? SettingsStore.FileNeedsFixing { showFileNeedsFixing(needsFixing) }
             return "\(error)"
+        }
+    }
+
+    /// A change that would have written over a file someone has to fix first. What's wrong, and the file, one click away.
+    func showFileNeedsFixing(_ needsFixing: SettingsStore.FileNeedsFixing) {
+        let file = needsFixing.file
+        showToast(title: String(localized: "Fix \(file.lastPathComponent) first"), detail: needsFixing.why, symbol: "exclamationmark.triangle", tint: .orange,
+                  actionTitle: String(localized: "Open"), duration: 12) { [weak self] in
+            self?.open(path: DurableFile.resolved(file).path, intent: .pinned)
         }
     }
 
@@ -3182,7 +3213,12 @@ final class AppModel {
     }
 
     func setTheme(_ mode: ThemeMode) {
-        settingsStore.writeTheme(mode)
+        do {
+            try settingsStore.writeTheme(mode)
+        } catch {
+            if let needsFixing = error as? SettingsStore.FileNeedsFixing { showFileNeedsFixing(needsFixing) }
+            return
+        }
         settings.theme = mode
         applyTheme()
         // Writing the file won't reach them: by the time it reloads, nothing looks changed.
@@ -3254,7 +3290,7 @@ final class AppModel {
                     case .file(var spec):
                         spec.forceDark = on
                         item.content = .file(spec)
-                    case .terminal, .settings, .diff, .plugin:
+                    case .terminal, .settings, .diff, .plugin, .unknown:
                         break
                     }
                 }
@@ -3274,7 +3310,8 @@ final class AppModel {
     @discardableResult
     func showToast(title: String, detail: String?, symbol: String, tint: Color,
                    actionTitle: String? = nil, duration: TimeInterval? = 6, other: (title: String, action: () -> Void)? = nil,
-                   closed: (() -> Void)? = nil, action: (() -> Void)? = nil) -> UUID {
+                   action: (() -> Void)? = nil, closed: (() -> Void)? = nil) -> UUID {
+        // `action` comes before `closed`: a trailing closure goes to the first closure it can, and is the button's.
         let toast = AppToast(title: title, detail: detail, symbol: symbol, tint: tint, actionTitle: actionTitle, action: action,
                              otherTitle: other?.title, otherAction: other?.action, closed: closed)
         withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.25))) {
@@ -3438,24 +3475,35 @@ final class SettingsStore {
     private var tokens: [FileWatchHub.Token] = []
     private var settingsError: String?
     private var keybindingsError: String?
+    /// Why the file can't be written right now: it can't be read, or isn't JSON. Writing from what's in memory
+    /// would throw away whatever someone has in it, as VS Code also won't.
+    private var settingsBlocked: String?
+    private var keybindingsBlocked: String?
+
+    /// A change that wasn't made because the file it goes in needs fixing first.
+    struct FileNeedsFixing: Error, CustomStringConvertible {
+        let file: URL
+        let why: String
+        var description: String { why }
+    }
 
     func start() {
         ensureFilesExist()
         reload()
-        tokens = [
-            FileWatchHub.shared.watch(path: settingsURL.path) { [weak self] in self?.fileChanged() },
-            FileWatchHub.shared.watch(path: keybindingsURL.path) { [weak self] in self?.fileChanged() },
-        ]
+        // A link into a dotfiles folder changes where it points, so that file is watched too.
+        let paths = Set([settingsURL, keybindingsURL].flatMap { [$0.path, DurableFile.resolved($0).path] })
+        tokens = paths.sorted().map { path in FileWatchHub.shared.watch(path: path) { [weak self] in self?.fileChanged() } }
     }
 
     func ensureFilesExist() {
         let manager = FileManager.default
         try? manager.createDirectory(at: TiriPaths.configDirectory, withIntermediateDirectories: true)
+        // Not `fileExists`, which says no for a link whose file has gone: that file is made, and the link kept.
         if !manager.fileExists(atPath: settingsURL.path) {
-            try? TiriSettings.defaultFileContents.write(to: settingsURL, atomically: true, encoding: .utf8)
+            try? DurableFile.write(TiriSettings.defaultFileContents, to: settingsURL)
         }
         if !manager.fileExists(atPath: keybindingsURL.path) {
-            try? Keymap.defaultFileContents.write(to: keybindingsURL, atomically: true, encoding: .utf8)
+            try? DurableFile.write(Keymap.defaultFileContents, to: keybindingsURL)
         }
     }
 
@@ -3464,46 +3512,82 @@ final class SettingsStore {
         onChange?()
     }
 
+    /// The file's text, or why there isn't any. Missing is empty: there's nothing in it to lose.
+    private static func read(_ url: URL) -> Result<String, FileNeedsFixing> {
+        guard FileManager.default.fileExists(atPath: url.path) else { return .success("") }
+        guard let data = try? Data(contentsOf: url) else {
+            return .failure(FileNeedsFixing(file: url, why: String(localized: "Tiri can't read \(url.lastPathComponent).")))
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            return .failure(FileNeedsFixing(file: url, why: String(localized: "\(url.lastPathComponent) isn't UTF-8 text.")))
+        }
+        return .success(text)
+    }
+
     private func reload() {
         // Any failure keeps the last good values, and the app says so without getting in the way.
-        if let text = try? String(contentsOf: settingsURL, encoding: .utf8) {
+        switch Self.read(settingsURL) {
+        case .success(let text):
             do {
-                settings = try TiriSettings.parse(text)
-                settingsError = nil
+                let parsed = try TiriSettings.parseReporting(text)
+                settings = parsed.settings
+                settingsBlocked = nil
+                settingsError = parsed.problems.isEmpty ? nil
+                    : String(localized: "settings.json: \(parsed.problems.map(\.description).joined(separator: "; ")). Using the default instead.")
             } catch {
+                settingsBlocked = String(describing: error)
                 settingsError = String(localized: "settings.json: \(String(describing: error)). Using the last good settings.")
             }
+        case .failure(let failure):
+            settingsBlocked = failure.why
+            settingsError = failure.why
         }
-        if let text = try? String(contentsOf: keybindingsURL, encoding: .utf8) {
+        switch Self.read(keybindingsURL) {
+        case .success(let text):
             do {
                 userKeybindings = try Keymap.parseUserFile(text)
                 keybindingsError = nil
+                keybindingsBlocked = nil
             } catch {
+                keybindingsBlocked = String(describing: error)
                 keybindingsError = String(localized: "keybindings.json: \(String(describing: error)). Using the last good keybindings.")
             }
+        case .failure(let failure):
+            keybindingsBlocked = failure.why
+            keybindingsError = failure.why
         }
         currentError = settingsError ?? keybindingsError
     }
 
+    /// The settings file as it is now, if it can be changed at all.
+    private func settingsText() throws -> String {
+        ensureFilesExist()
+        reload()
+        if let settingsBlocked { throw FileNeedsFixing(file: settingsURL, why: settingsBlocked) }
+        switch Self.read(settingsURL) {
+        case .success(let text): return text.isEmpty ? TiriSettings.defaultFileContents : text
+        case .failure(let failure): throw failure
+        }
+    }
+
     /// Checks the result parses before saving, so a change can't break the file, then applies it.
     func write(_ key: String, value: JSONValue) throws {
-        ensureFilesExist()
-        let text = (try? String(contentsOf: settingsURL, encoding: .utf8)) ?? TiriSettings.defaultFileContents
-        let updated = SettingsFile.setting(key, toJSON: SettingsSchema.json(value), in: text)
-        _ = try TiriSettings.parse(updated)
-        try updated.write(to: settingsURL, atomically: true, encoding: .utf8)
+        let updated = SettingsFile.setting(key, toJSON: SettingsSchema.json(value), in: try settingsText())
+        if let problem = try TiriSettings.parseReporting(updated).problems.first(where: { $0.key == key }) { throw problem }
+        try DurableFile.write(updated, to: settingsURL)
         fileChanged()
     }
 
     func writeKeybindings(_ list: [(key: String, command: String)]) throws {
         ensureFilesExist()
-        try Keymap.fileContents(user: list).write(to: keybindingsURL, atomically: true, encoding: .utf8)
+        reload()
+        if let keybindingsBlocked { throw FileNeedsFixing(file: keybindingsURL, why: keybindingsBlocked) }
+        try DurableFile.write(Keymap.fileContents(user: list), to: keybindingsURL)
         fileChanged()
     }
 
-    func writeTheme(_ mode: ThemeMode) {
-        let text = (try? String(contentsOf: settingsURL, encoding: .utf8)) ?? TiriSettings.defaultFileContents
-        try? SettingsFile.setting("theme", to: mode.rawValue, in: text).write(to: settingsURL, atomically: true, encoding: .utf8)
+    func writeTheme(_ mode: ThemeMode) throws {
+        try DurableFile.write(SettingsFile.setting("theme", to: mode.rawValue, in: try settingsText()), to: settingsURL)
     }
 }
 

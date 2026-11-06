@@ -147,6 +147,8 @@ public enum ItemContent: Codable, Hashable, Sendable {
     case settings
     case diff(DiffSpec)
     case plugin(PluginPanelSpec)
+    /// A kind this build doesn't know, written by another copy of Tiri. Kept as it came, and written back the same.
+    case unknown(JSONValue)
 
     public var kindName: String {
         switch self {
@@ -156,6 +158,64 @@ public enum ItemContent: Codable, Hashable, Sendable {
         case .settings: "settings"
         case .diff: "changes"
         case .plugin: "plugin"
+        case .unknown(let raw): raw.objectValue.keys.first ?? "unknown"
+        }
+    }
+
+    public var isUnknown: Bool {
+        if case .unknown = self { return true }
+        return false
+    }
+
+    // The same shape Swift's own coding gave it: `{"terminal": {"_0": {…}}}`, `{"settings": {}}`.
+    private struct Key: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(_ string: String) { stringValue = string }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+        static let value = Key("_0")
+    }
+
+    public init(from decoder: Decoder) throws {
+        let raw = try JSONValue(from: decoder)
+        let container = try decoder.container(keyedBy: Key.self)
+        guard container.allKeys.count == 1, let kind = container.allKeys.first else {
+            self = .unknown(raw)
+            return
+        }
+        func spec<T: Decodable>(_ type: T.Type) throws -> T {
+            try container.nestedContainer(keyedBy: Key.self, forKey: kind).decode(type, forKey: .value)
+        }
+        switch kind.stringValue {
+        case "terminal": self = .terminal(try spec(TerminalSpec.self))
+        case "file": self = .file(try spec(FileSpec.self))
+        case "web": self = .web(try spec(WebSpec.self))
+        case "settings": self = .settings
+        case "diff": self = .diff(try spec(DiffSpec.self))
+        case "plugin": self = .plugin(try spec(PluginPanelSpec.self))
+        default: self = .unknown(raw)
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        if case .unknown(let raw) = self {
+            try raw.encode(to: encoder)
+            return
+        }
+        var container = encoder.container(keyedBy: Key.self)
+        func put<T: Encodable>(_ kind: String, _ value: T) throws {
+            var nested = container.nestedContainer(keyedBy: Key.self, forKey: Key(kind))
+            try nested.encode(value, forKey: .value)
+        }
+        switch self {
+        case .terminal(let spec): try put("terminal", spec)
+        case .file(let spec): try put("file", spec)
+        case .web(let spec): try put("web", spec)
+        case .settings: _ = container.nestedContainer(keyedBy: Key.self, forKey: Key("settings"))
+        case .diff(let spec): try put("diff", spec)
+        case .plugin(let spec): try put("plugin", spec)
+        case .unknown: break
         }
     }
 }
@@ -200,6 +260,8 @@ public struct Item: Codable, Hashable, Identifiable, Sendable {
             return (spec.path as NSString).lastPathComponent + " (\(shown ? spec.scopeWord : spec.englishScopeWord))"
         case .plugin(let spec):
             return spec.title ?? spec.panel
+        case .unknown:
+            return content.kindName
         }
     }
 }
@@ -383,6 +445,8 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     public var peek: Item?
     /// Review comments waiting to be sent, oldest first.
     public var review: [ReviewComment] = []
+    /// Tabs another copy of Tiri made that this one can't show. Saved back as they came. See `KeptItem`.
+    public var kept: [KeptItem]?
 
     public init(id: WorkspaceID = TiriID.make("w"), name: String, folders: [String] = []) {
         self.id = id
@@ -712,6 +776,10 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
             let ids = Set(remaining.map(\.id))
             focusedGroup = groupMRU.first(where: ids.contains) ?? remaining[0].id
         }
+    }
+
+    mutating func pruneEmptyGroups() {
+        normalize(preferring: focusedGroup)
     }
 
     public mutating func popClosed() -> Item? {

@@ -11,7 +11,8 @@
 # TIRI_DEV_A11Y=transparency,contrast,motion makes it act as if Reduce Transparency, Increase Contrast or Reduce
 # Motion were on, without touching this Mac's settings. `cli <name> dev-a11y <list|none>` changes it live.
 # TIRI_DEV_LANGUAGE=zh-Hans|zh-Hant|settings: a test copy is in English otherwise, so checks that read words pass on any Mac.
-# TIRI_UPDATE_FEED=http://127.0.0.1:<port>/update.json gives it a release feed on this Mac.
+# TIRI_UPDATE_FEED=http://127.0.0.1:<port>/update.json gives it a release feed on this Mac. TIRI_DEV_APPLICATIONS=<folder> is where
+# Move to Applications puts it: a test copy never moves into the real one.
 # TIRI_DEV_WELCOME=1 shows the first launch's welcome, which test copies otherwise skip. TIRI_DEV_LOOKING=1
 # acts as if someone were looking at its window, which a hidden copy never is, for what waits for that.
 # CLAUDE_CONFIG_DIR, CODEX_HOME, GROK_HOME=<empty folder> make it see an agent with no hooks, as a newcomer's would be.
@@ -71,7 +72,8 @@ launch_in_background() {
     ${TIRI_CONVERSATIONS_HOME:+--env TIRI_CONVERSATIONS_HOME="$TIRI_CONVERSATIONS_HOME"} \
     ${CODEX_HOME:+--env CODEX_HOME="$CODEX_HOME"} ${GROK_HOME:+--env GROK_HOME="$GROK_HOME"} \
     ${CLAUDE_CONFIG_DIR:+--env CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"} \
-    ${TIRI_DEV_WELCOME:+--env TIRI_DEV_WELCOME=1} ${TIRI_DEV_LOOKING:+--env TIRI_DEV_LOOKING=1}
+    ${TIRI_DEV_WELCOME:+--env TIRI_DEV_WELCOME=1} ${TIRI_DEV_LOOKING:+--env TIRI_DEV_LOOKING=1} \
+    ${TIRI_DEV_APPLICATIONS:+--env TIRI_DEV_APPLICATIONS="$TIRI_DEV_APPLICATIONS"}
   for _ in $(seq 1 50); do
     pid="$(pgrep -f "$NAME/TiriDev.app/Contents/MacOS/Tiri" | head -1 || true)"
     [ -n "$pid" ] && break
@@ -158,6 +160,9 @@ start)
   "$CLI" ping
   ;;
 run)
+  # TIRI_DEV_APP_PATH=<a copy of this one elsewhere>, a disk image say, runs that instead, with this copy's state. Its path has to end
+  # in <name>/TiriDev.app, as a volume named <name> does, for stop to find it.
+  if [ -n "${TIRI_DEV_APP_PATH:-}" ]; then APP="$TIRI_DEV_APP_PATH"; fi
   # Always through here: launched by hand, without these variables, it would be using real state.
   kill_recorded -9
   launch_in_background

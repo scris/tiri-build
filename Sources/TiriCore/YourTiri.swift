@@ -86,6 +86,8 @@ public struct CopyState: Codable, Equatable, Sendable {
     public var repairsAllowed: Bool?
     /// Said once after an update, by whichever copy next has a window. Unlike `notice`, it isn't trouble.
     public var news: News?
+    /// A release someone went back from because it wouldn't start. Not offered again; a later one is.
+    public var rolledBack: String?
 
     public struct News: Codable, Equatable, Sendable {
         public var title: String
@@ -104,7 +106,9 @@ public struct CopyState: Codable, Equatable, Sendable {
 
     public static func load(from file: URL = YourTiri.stateFile) -> CopyState? {
         guard let data = try? Data(contentsOf: file) else { return nil }
-        return try? Self.decoder.decode(CopyState.self, from: data)
+        if let state = try? Self.decoder.decode(CopyState.self, from: data) { return state }
+        // Damaged: the copy written beside it last time says which copy runs, rather than nothing at all.
+        return (try? Data(contentsOf: lastGood(file))).flatMap { try? Self.decoder.decode(CopyState.self, from: $0) }
     }
 
     public func save(to file: URL = YourTiri.stateFile) throws {
@@ -112,7 +116,13 @@ public struct CopyState: Codable, Equatable, Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(self).write(to: file, options: .atomic)
+        let data = try encoder.encode(self)
+        try DurableFile.write(data, to: file)
+        try? DurableFile.write(data, to: Self.lastGood(file))
+    }
+
+    static func lastGood(_ file: URL) -> URL {
+        file.deletingPathExtension().appendingPathExtension("last-good.json")
     }
 
     static var decoder: JSONDecoder {

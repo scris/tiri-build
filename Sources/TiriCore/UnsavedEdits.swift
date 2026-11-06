@@ -38,7 +38,7 @@ public enum UnsavedEdits {
         guard isPlain(item) else { return }
         let manager = FileManager.default
         try manager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try JSONEncoder().encode(edit).write(to: url(item, folder), options: [.atomic])
+        try DurableFile.write(JSONEncoder().encode(edit), to: url(item, folder), permissions: 0o600)
         // What someone was typing is nobody else's to read.
         try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url(item, folder).path)
     }

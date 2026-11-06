@@ -141,7 +141,19 @@ import Testing
 
     @Test func staleSocketIsReplaced() throws {
         let path = socketPath()
-        FileManager.default.createFile(atPath: path, contents: Data())
+        // What a crash leaves: a socket nobody listens on.
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+            buffer.copyBytes(from: Array(path.utf8))
+            buffer[path.utf8.count] = 0
+        }
+        _ = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        close(fd)
+        #expect(ControlClient.socketState(path: path) == .stale)
         let server = ControlServer(path: path) { .success(id: $0.id) }
         try server.start()
         defer { server.stop() }

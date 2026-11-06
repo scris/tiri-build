@@ -763,7 +763,7 @@ struct ItemHeader: View {
 
     var body: some View {
         switch item.content {
-        case .terminal, .settings:
+        case .terminal, .settings, .unknown:
             EmptyView()
         case .plugin(let spec):
             if let web = model.controller(for: item.id) as? WebController {

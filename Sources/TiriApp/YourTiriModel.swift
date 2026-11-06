@@ -91,6 +91,7 @@ struct ChangeMark {
                 if let change = try? repo.change(named: id) { try? repo.turnOff(change) }
             }
         }
+        Self.retryUpdateAfterMove(installed: loaded.plainPath)
         let notice = loaded.notice
         let news = loaded.news
         loaded.notice = nil
@@ -696,9 +697,25 @@ struct ChangeMark {
 
     // MARK: Updates
 
+    /// An update that couldn't go in where Tiri was is ready again once Tiri is somewhere it can.
+    private static func retryUpdateAfterMove(installed: String?) {
+        guard let installed, var status = UpdateStatus.load(), status.phase == .failed, let failedAt = status.installFailedAt,
+              failedAt != installed, InstallPlace.problem(appPath: installed) == nil,
+              FileManager.default.isExecutableFile(atPath: status.app + "/Contents/MacOS/Tiri") else { return }
+        status.phase = .ready
+        status.message = nil
+        status.installFailedAt = nil
+        try? status.save()
+    }
+
     /// One click: everything's been done already, beside what's running.
     func applyUpdate() {
-        guard let update, update.phase == .ready, AppDelegate.settleUnsavedFiles() else { return }
+        guard let update, update.phase == .ready else { return }
+        if let problem = MoveToApplications.problem(), let model {
+            MoveToApplications.offer(problem, model: model)
+            return
+        }
+        guard AppDelegate.settleUnsavedFiles() else { return }
         do {
             guard let installed = CopyState.load()?.plainPath else { throw ChangeFailure(String(localized: "Can't find the Tiri that's installed.")) }
             try UpdateTools.checkRelease(URL(fileURLWithPath: update.app), replacing: URL(fileURLWithPath: installed))
@@ -830,6 +847,10 @@ struct ChangeMark {
             model?.showToast(title: String(localized: "This copy doesn't look for updates"), detail: String(localized: "It was built from source. Pull and build to update it."), symbol: "arrow.down.circle", tint: .secondary)
             return
         }
+        if let problem = MoveToApplications.problem(), let model {
+            MoveToApplications.offer(problem, model: model)
+            return
+        }
         let tiri = Bundle.main.resourceURL?.appendingPathComponent("bin/tiri").path ?? "tiri"
         let checking = model?.showToast(title: String(localized: "Looking for a newer Tiri…"), detail: nil, symbol: "arrow.down.circle", tint: .secondary, duration: 60)
         Task { [weak self] in
@@ -853,7 +874,7 @@ struct ChangeMark {
         let tiri = Bundle.main.resourceURL?.appendingPathComponent("bin/tiri").path ?? "tiri"
         let look: @Sendable () -> Void = {
             Task { @MainActor [weak self] in
-                guard let self, self.model?.settings.updatesCheck ?? false, Self.isPluggedIn, Self.isIdle else { return }
+                guard let self, self.model?.settings.updatesCheck ?? false, Self.isPluggedIn, Self.isIdle, MoveToApplications.problem() == nil else { return }
                 _ = await Task.detached { Tool.run(tiri, ["update", "check", "--feed", feed]) }.value
                 self.refresh()
             }

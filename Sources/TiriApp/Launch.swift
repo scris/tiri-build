@@ -23,7 +23,7 @@ enum TiriEntry {
         // No state and not a personal copy is everyone else, and nothing further gets looked at.
         let isPersonal = Bundle.main.object(forInfoDictionaryKey: YourTiri.copyKey) as? String == "personal"
         guard state != nil || isPersonal else {
-            TiriApplication.main()
+            SafeStart.runApp(isPersonal: false)
             return
         }
         // Before anything can go looking for it: the app may have moved, or been updated, while another copy ran.
@@ -43,7 +43,7 @@ enum TiriEntry {
         switch LaunchGate.choose(input) {
         case .runHere:
             if input.optionHeld || input.plainOnce, !isPersonal { PlainForNow.isOn = true }
-            TiriApplication.main()
+            SafeStart.runApp(isPersonal: isPersonal)
         case .openPersonal:
             HandOff.run(to: .personal)
         case .openPlain:
@@ -52,14 +52,14 @@ enum TiriEntry {
             var changed = state ?? CopyState()
             changed.fallBack()
             try? changed.save()
-            if changed.active == .personal { HandOff.run(to: .personal) } else { TiriApplication.main() }
+            if changed.active == .personal { HandOff.run(to: .personal) } else { SafeStart.runApp(isPersonal: false) }
         case .personalMissing:
             var changed = state ?? CopyState()
             changed.active = .plain
             changed.trial = nil
             changed.notice = String(localized: "Your copy of Tiri wasn't there, so this is Plain Tiri. Your changes are kept.")
             try? changed.save()
-            TiriApplication.main()
+            SafeStart.runApp(isPersonal: false)
         }
     }
 
@@ -75,6 +75,36 @@ enum TiriEntry {
 enum UpdateInstall {
     static let flag = "--tiri-install-into"
 
+    /// The new release in place of the old one, in one rename, with the old one kept in `previous`. A rename can't
+    /// cross volumes, so on another volume, an external disk say, the new release is copied beside the old one first.
+    private static func put(_ new: URL, inPlaceOf target: URL, keeping previous: URL) throws {
+        let folder = target.deletingLastPathComponent()
+        guard !InstallPlace.sameVolume(new.path, folder.path) else {
+            try CopyFiles.swap(new, target)
+            // Now `new` is the old release, under the waiting name.
+            try? CopyFiles.move(new, to: previous)
+            return
+        }
+        let staged = folder.appendingPathComponent(".Tiri-update-\(getpid()).app", isDirectory: true)
+        try? FileManager.default.removeItem(at: staged)
+        let copied = Tool.run("/usr/bin/ditto", [new.path, staged.path])
+        guard copied.ok else {
+            try? FileManager.default.removeItem(at: staged)
+            throw ChangeFailure(copied.output.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        do {
+            try CopyFiles.swap(staged, target)
+        } catch {
+            try? FileManager.default.removeItem(at: staged)
+            throw error
+        }
+        // The old release, beside it now, goes to `previous` the long way, and the download it came from goes.
+        try? FileManager.default.removeItem(at: previous)
+        try? FileManager.default.createDirectory(at: previous.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if (try? FileManager.default.moveItem(at: staged, to: previous)) == nil { try? FileManager.default.removeItem(at: staged) }
+        try? FileManager.default.removeItem(at: new)
+    }
+
     static func run(target: String) -> Never {
         let targetURL = URL(fileURLWithPath: target)
         let own = Bundle.main.bundleURL
@@ -82,10 +112,25 @@ enum UpdateInstall {
         // Only ever what state says is installed, and only from where a waiting update sits.
         var allowed = CopyState.load()?.plainPath == target && own.standardizedFileURL.path == YourTiri.updates.appendingPathComponent("waiting/Tiri.app").standardizedFileURL.path
         // Checked here too, since this can be run by hand: only forward, and only from whoever made what's there.
-        if allowed, (try? UpdateTools.checkRelease(own, replacing: targetURL)) == nil { allowed = false }
-        if allowed, (try? CopyFiles.swap(own, targetURL)) != nil {
-            // Now `own` is the old release, under the waiting name.
-            try? CopyFiles.move(own, to: previous)
+        var failure: String?
+        do {
+            if allowed { try UpdateTools.checkRelease(own, replacing: targetURL) }
+        } catch {
+            allowed = false
+            failure = "\(error)"
+        }
+        let oldVersion = NSDictionary(contentsOf: targetURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String
+        var placed = false
+        if allowed {
+            do {
+                try put(own, inPlaceOf: targetURL, keeping: previous)
+                placed = true
+            } catch {
+                failure = "\(error)"
+            }
+        }
+        if placed {
+            LaunchRecord.updated(from: oldVersion, to: NSDictionary(contentsOf: targetURL.appendingPathComponent("Contents/Info.plist"))?["CFBundleShortVersionString"] as? String)
             // Only now the source and the copy move, so that one that couldn't go in place changes nothing.
             do {
                 try UpdateTools.commitToUpdate()
@@ -105,9 +150,19 @@ enum UpdateInstall {
                 state.plainBundleID = installed.bundleIdentifier
                 try? state.save()
             }
-        } else if var state = CopyState.load() {
-            state.notice = String(localized: "Tiri couldn't put the update in place, so nothing changed.")
-            try? state.save()
+        } else {
+            // Said, and the update marked as failed, so Update isn't offered to fail the same way again.
+            let said = [String(localized: "Tiri couldn't put the update in place, so nothing changed."), failure].compactMap { $0 }.joined(separator: " ")
+            if var state = CopyState.load() {
+                state.notice = said
+                try? state.save()
+            }
+            if var status = UpdateStatus.load() {
+                status.phase = .failed
+                status.message = said
+                status.installFailedAt = target
+                try? status.save()
+            }
         }
         // -n, or macOS would call this process, which has the same bundle ID, that app already running.
         var arguments = ["-n"]

@@ -204,12 +204,24 @@ public struct TiriSettings: Equatable, Sendable {
             case .wrongType(let key, let expected): String(localized: "\"\(key)\" must be \(expected)")
             }
         }
+
+        /// The one setting it's about, if it's about one.
+        public var key: String? {
+            if case .wrongType(let key, _) = self { return key }
+            return nil
+        }
     }
 
-    /// Parse the settings file. Any error leaves the caller holding the last good settings.
+    /// Parse the settings file. A file that isn't JSON leaves the caller holding the last good settings. A value of the
+    /// wrong kind is only that one setting at its default: see `parseReporting`.
     public static func parse(_ text: String) throws -> TiriSettings {
+        try parseReporting(text).settings
+    }
+
+    /// What was read, and the settings that couldn't be, each left at its default, as VS Code does with one it can't read.
+    public static func parseReporting(_ text: String) throws -> (settings: TiriSettings, problems: [ParseError]) {
         let stripped = JSONC.strip(text)
-        if stripped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return TiriSettings() }
+        if stripped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return (TiriSettings(), []) }
         let root: Any
         do {
             root = try JSONSerialization.jsonObject(with: Data(stripped.utf8))
@@ -218,114 +230,138 @@ public struct TiriSettings: Equatable, Sendable {
             throw ParseError.invalidJSON(message)
         }
         guard let object = root as? [String: Any] else { throw ParseError.notAnObject }
+        var problems: [ParseError] = []
+        func attempt(_ body: () throws -> Void) {
+            do { try body() } catch let problem as ParseError { problems.append(problem) } catch {}
+        }
 
-        func string(_ key: String, _ apply: (String) -> Void) throws {
-            guard let value = object[key] else { return }
-            guard let text = value as? String else { throw ParseError.wrongType(key: key, expected: String(localized: "a string")) }
-            apply(text)
-        }
-        func number(_ key: String, _ apply: (Double) -> Void) throws {
-            guard let value = object[key] else { return }
-            guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
-                throw ParseError.wrongType(key: key, expected: String(localized: "a number"))
+        func string(_ key: String, _ apply: (String) -> Void) {
+            attempt {
+                guard let value = object[key] else { return }
+                guard let text = value as? String else { throw ParseError.wrongType(key: key, expected: String(localized: "a string")) }
+                apply(text)
             }
-            apply(number.doubleValue)
         }
-        func bool(_ key: String, _ apply: (Bool) -> Void) throws {
-            guard let value = object[key] else { return }
-            guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
-                throw ParseError.wrongType(key: key, expected: String(localized: "true or false"))
+        func number(_ key: String, _ apply: (Double) -> Void) {
+            attempt {
+                guard let value = object[key] else { return }
+                guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+                    throw ParseError.wrongType(key: key, expected: String(localized: "a number"))
+                }
+                apply(number.doubleValue)
             }
-            apply(number.boolValue)
         }
-        func strings(_ key: String, _ apply: ([String]) -> Void) throws {
-            guard let value = object[key] else { return }
-            guard let list = value as? [String] else { throw ParseError.wrongType(key: key, expected: String(localized: "a list of strings")) }
-            apply(list)
+        func bool(_ key: String, _ apply: (Bool) -> Void) {
+            attempt {
+                guard let value = object[key] else { return }
+                guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
+                    throw ParseError.wrongType(key: key, expected: String(localized: "true or false"))
+                }
+                apply(number.boolValue)
+            }
+        }
+        func strings(_ key: String, _ apply: ([String]) -> Void) {
+            attempt {
+                guard let value = object[key] else { return }
+                guard let list = value as? [String] else { throw ParseError.wrongType(key: key, expected: String(localized: "a list of strings")) }
+                apply(list)
+            }
         }
 
         var settings = TiriSettings()
-        if let raw = object["language"] {
-            guard let text = raw as? String, let language = AppLanguage(rawValue: text) else {
-                throw ParseError.wrongType(key: "language", expected: AppLanguage.settingValues)
+        attempt {
+            if let raw = object["language"] {
+                guard let text = raw as? String, let language = AppLanguage(rawValue: text) else {
+                    throw ParseError.wrongType(key: "language", expected: AppLanguage.settingValues)
+                }
+                settings.language = language
             }
-            settings.language = language
         }
-        try string("theme") { _ in }
-        if let raw = object["theme"] as? String {
-            guard let theme = ThemeMode(rawValue: raw) else {
-                throw ParseError.wrongType(key: "theme", expected: String(localized: "\"system\", \"light\" or \"dark\""))
+        string("theme") { _ in }
+        attempt {
+            if let raw = object["theme"] as? String {
+                guard let theme = ThemeMode(rawValue: raw) else {
+                    throw ParseError.wrongType(key: "theme", expected: String(localized: "\"system\", \"light\" or \"dark\""))
+                }
+                settings.theme = theme
             }
-            settings.theme = theme
         }
         // Before themes, "colorTheme": "pink" meant Tiri's pink in place of the Mac's accent.
         if object["colorTheme"] as? String == "pink" {
             settings.darkTheme = Theme.tiriPinkDark.name
             settings.lightTheme = Theme.tiriPinkLight.name
         }
-        try string("theme.dark") { if !$0.isEmpty { settings.darkTheme = $0 } }
-        try string("theme.light") { if !$0.isEmpty { settings.lightTheme = $0 } }
-        try string("theme.highContrastDark") { if !$0.isEmpty { settings.highContrastDarkTheme = $0 } }
-        try string("theme.highContrastLight") { if !$0.isEmpty { settings.highContrastLightTheme = $0 } }
-        try string("terminal.fontFamily") { settings.terminalFontFamily = $0 }
-        try number("terminal.fontSize") { settings.terminalFontSize = min(max($0, 6), 72) }
-        try bool("terminal.translucent") { settings.terminalTranslucent = $0 }
-        try number("terminal.scrollback") { settings.terminalScrollback = max(Int($0), 0) }
-        try string("terminal.shell") { settings.terminalShell = $0 }
-        if let value = object["terminal.presets"] {
-            guard let list = value as? [[String: Any]] else {
-                throw ParseError.wrongType(key: "terminal.presets", expected: String(localized: "a list of { name, command }"))
-            }
-            settings.terminalPresets = try list.map { entry in
-                guard let name = entry["name"] as? String else {
+        string("theme.dark") { if !$0.isEmpty { settings.darkTheme = $0 } }
+        string("theme.light") { if !$0.isEmpty { settings.lightTheme = $0 } }
+        string("theme.highContrastDark") { if !$0.isEmpty { settings.highContrastDarkTheme = $0 } }
+        string("theme.highContrastLight") { if !$0.isEmpty { settings.highContrastLightTheme = $0 } }
+        string("terminal.fontFamily") { settings.terminalFontFamily = $0 }
+        number("terminal.fontSize") { settings.terminalFontSize = min(max($0, 6), 72) }
+        bool("terminal.translucent") { settings.terminalTranslucent = $0 }
+        number("terminal.scrollback") { settings.terminalScrollback = max(Int($0), 0) }
+        string("terminal.shell") { settings.terminalShell = $0 }
+        attempt {
+            if let value = object["terminal.presets"] {
+                guard let list = value as? [[String: Any]] else {
                     throw ParseError.wrongType(key: "terminal.presets", expected: String(localized: "a list of { name, command }"))
                 }
-                return TerminalPreset(name: name, command: entry["command"] as? String ?? "", isEnabled: entry["enabled"] as? Bool ?? true)
+                settings.terminalPresets = try list.map { entry in
+                    guard let name = entry["name"] as? String else {
+                        throw ParseError.wrongType(key: "terminal.presets", expected: String(localized: "a list of { name, command }"))
+                    }
+                    return TerminalPreset(name: name, command: entry["command"] as? String ?? "", isEnabled: entry["enabled"] as? Bool ?? true)
+                }
             }
         }
-        if let value = object["terminal.resume"] {
-            guard let map = value as? [String: String] else {
-                throw ParseError.wrongType(key: "terminal.resume", expected: String(localized: "an object of tool → command"))
+        attempt {
+            if let value = object["terminal.resume"] {
+                guard let map = value as? [String: String] else {
+                    throw ParseError.wrongType(key: "terminal.resume", expected: String(localized: "an object of tool → command"))
+                }
+                settings.terminalResume = map
             }
-            settings.terminalResume = map
         }
-        try bool("terminal.restoreWithResume") { settings.terminalRestoreWithResume = $0 }
-        if let raw = object["terminal.linkOpens"] {
-            guard let text = raw as? String, let target = LinkOpenTarget(rawValue: text) else {
-                throw ParseError.wrongType(key: "terminal.linkOpens", expected: String(localized: "\"peek\", \"tab\" or \"external\""))
+        bool("terminal.restoreWithResume") { settings.terminalRestoreWithResume = $0 }
+        attempt {
+            if let raw = object["terminal.linkOpens"] {
+                guard let text = raw as? String, let target = LinkOpenTarget(rawValue: text) else {
+                    throw ParseError.wrongType(key: "terminal.linkOpens", expected: String(localized: "\"peek\", \"tab\" or \"external\""))
+                }
+                settings.terminalLinkOpens = target
             }
-            settings.terminalLinkOpens = target
         }
-        try string("code.fontFamily") { settings.codeFontFamily = $0 }
-        try number("code.fontSize") { settings.codeFontSize = min(max($0, 6), 72) }
+        string("code.fontFamily") { settings.codeFontFamily = $0 }
+        number("code.fontSize") { settings.codeFontSize = min(max($0, 6), 72) }
         // The older on-or-off setting still counts, until the new one is set.
-        try bool("code.wordWrap") { settings.editorWordWrap = $0 ? .on : .off }
-        if let raw = object["editor.wordWrap"] {
-            guard let text = raw as? String, let wrap = WordWrap(rawValue: text) else {
-                throw ParseError.wrongType(key: "editor.wordWrap", expected: String(localized: "\"off\", \"on\" or \"bounded\""))
+        bool("code.wordWrap") { settings.editorWordWrap = $0 ? .on : .off }
+        attempt {
+            if let raw = object["editor.wordWrap"] {
+                guard let text = raw as? String, let wrap = WordWrap(rawValue: text) else {
+                    throw ParseError.wrongType(key: "editor.wordWrap", expected: String(localized: "\"off\", \"on\" or \"bounded\""))
+                }
+                settings.editorWordWrap = wrap
             }
-            settings.editorWordWrap = wrap
         }
-        try bool("editor.completion") { settings.editorCompletion = $0 }
-        try number("editor.wordWrapColumn") { settings.editorWordWrapColumn = min(max(Int($0), 20), 1_000) }
-        try number("window.zoomLevel") { settings.zoomLevel = min(max(Int($0), Self.zoomRange.lowerBound), Self.zoomRange.upperBound) }
-        try strings("externalEditors") { settings.externalEditors = $0 }
-        try strings("files.exclude") { settings.filesExclude = $0 }
-        try bool("explorer.autoReveal") { settings.explorerAutoReveal = $0 }
-        try bool("explorer.compactFolders") { settings.explorerCompactFolders = $0 }
-        try bool("web.forceDark") { settings.webForceDark = $0 }
-        try strings("web.openInBrowser") { settings.webOpenInBrowser = $0.compactMap(BrowserRules.tidy) }
-        try bool("documents.forceDark") { settings.documentsForceDark = $0 }
-        try bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
-        try bool("change.offer") { settings.changeEntries = $0 }
-        try bool("updates.check") { settings.updatesCheck = $0 }
-        try bool("changes.perTurn") { settings.perTurnDiffs = $0 }
-        try bool("diff.sideBySide") { settings.diffSideBySide = $0 }
-        try bool("conversations.useMacModel") { settings.conversationsUseMacModel = $0 }
-        try bool("conversations.summarizeAll") { settings.conversationsSummarizeAll = $0 }
-        try bool("code.languageServers") { settings.languageServers = $0 }
-        try bool("notifications.enabled") { settings.notificationsEnabled = $0 }
-        return settings
+        bool("editor.completion") { settings.editorCompletion = $0 }
+        number("editor.wordWrapColumn") { settings.editorWordWrapColumn = min(max(Int($0), 20), 1_000) }
+        number("window.zoomLevel") { settings.zoomLevel = min(max(Int($0), Self.zoomRange.lowerBound), Self.zoomRange.upperBound) }
+        strings("externalEditors") { settings.externalEditors = $0 }
+        strings("files.exclude") { settings.filesExclude = $0 }
+        bool("explorer.autoReveal") { settings.explorerAutoReveal = $0 }
+        bool("explorer.compactFolders") { settings.explorerCompactFolders = $0 }
+        bool("web.forceDark") { settings.webForceDark = $0 }
+        strings("web.openInBrowser") { settings.webOpenInBrowser = $0.compactMap(BrowserRules.tidy) }
+        bool("documents.forceDark") { settings.documentsForceDark = $0 }
+        bool("terminal.keepRunning") { settings.terminalKeepRunning = $0 }
+        bool("change.offer") { settings.changeEntries = $0 }
+        bool("updates.check") { settings.updatesCheck = $0 }
+        bool("changes.perTurn") { settings.perTurnDiffs = $0 }
+        bool("diff.sideBySide") { settings.diffSideBySide = $0 }
+        bool("conversations.useMacModel") { settings.conversationsUseMacModel = $0 }
+        bool("conversations.summarizeAll") { settings.conversationsSummarizeAll = $0 }
+        bool("code.languageServers") { settings.languageServers = $0 }
+        bool("notifications.enabled") { settings.notificationsEnabled = $0 }
+        return (settings, problems)
     }
 }
 

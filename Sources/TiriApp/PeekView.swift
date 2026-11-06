@@ -144,7 +144,7 @@ struct PeekView: View {
             let relative = here.active.relativePath(spec.path)
             let directory = (relative as NSString).deletingLastPathComponent
             return directory.isEmpty ? spec.scopeWord : directory + " · " + spec.scopeWord
-        case .terminal, .settings:
+        case .terminal, .settings, .unknown:
             return nil
         case .plugin(let spec):
             return model.plugins.plugin(named: spec.plugin)?.title

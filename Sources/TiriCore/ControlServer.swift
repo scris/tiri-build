@@ -66,12 +66,13 @@ public final class ControlServer: @unchecked Sendable {
     public func start() throws {
         let directory = (path as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-        // Only remove a socket nobody is answering on. A live one belongs to another instance.
-        if FileManager.default.fileExists(atPath: path) {
-            if ControlClient.isAlive(path: path) {
-                throw ControlSocketError.system("bind (another Tiri is running)", EADDRINUSE)
-            }
-            unlink(path)
+        // Only remove a socket nobody is listening on, as tmux decides it. A live one belongs to another instance,
+        // however busy: one that takes a connection and doesn't answer is still running.
+        switch ControlClient.socketState(path: path) {
+        case .missing: break
+        case .stale: unlink(path)
+        case .listening: throw ControlSocketError.system("bind (another Tiri is running)", EADDRINUSE)
+        case .unknown(let code): throw ControlSocketError.system("connect", code)
         }
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -381,12 +382,36 @@ public final class ControlClient {
 
     deinit { close(fd) }
 
-    /// A socket nobody's listening on fails at once. The wait is only for an app that's there but
-    /// busy, such as behind a permission prompt, which shouldn't lose its socket to a second launch.
-    public static func isAlive(path: String) -> Bool {
-        guard let client = try? ControlClient(path: path, timeout: 3) else { return false }
-        return (try? client.send(ControlRequest(cmd: "ping")))?.ok == true
+    public enum SocketState: Equatable, Sendable {
+        case missing
+        /// Nobody is listening: connecting was refused.
+        case stale
+        case listening
+        /// Something else went wrong, and nothing should be assumed about who has it.
+        case unknown(Int32)
     }
+
+    /// Whether anyone is listening, decided by connecting alone, as tmux does. Waiting for an answer would let a Tiri whose
+    /// main thread is busy, behind a permission prompt or a long save, lose its socket to a second launch.
+    public static func socketState(path: String) -> SocketState {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return .unknown(errno) }
+        defer { close(fd) }
+        guard var address = try? makeAddress(path) else { return .unknown(ENAMETOOLONG) }
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        if connected == 0 { return .listening }
+        switch errno {
+        case ECONNREFUSED: return .stale
+        case ENOENT: return .missing
+        default: return .unknown(errno)
+        }
+    }
+
+    public static func isAlive(path: String) -> Bool { socketState(path: path) == .listening }
 
     public func send(_ request: ControlRequest) throws -> ControlResponse {
         let data = try ControlCoding.encodeLine(request)

@@ -18,14 +18,24 @@ public struct WorkspaceStore: Sendable {
     }
 
     struct LayoutFile: Codable {
-        var items: [Item]
+        var items: [SavedItem]
         var layout: PaneNode
         var focusedGroup: GroupID
-        var closed: [Item]
+        var closed: [SavedItem]
         var expandedFolders: [String]?
         var recentFiles: [String]?
         var groupMRU: [GroupID]?
         var review: [ReviewComment]?
+        /// What wrote it. Missing before there was one.
+        var version: Int?
+    }
+
+    /// The shape of what's saved. A copy of Tiri that saves something this one wouldn't keep raises it, and this one
+    /// then reads what it can and writes nothing over it.
+    public static let formatVersion = 1
+
+    public struct NewerFormat: Error, CustomStringConvertible {
+        public var description: String { String(localized: "A newer Tiri saved these workspaces, so this one won't save over them.") }
     }
 
     public struct Snapshot: Equatable, Sendable {
@@ -40,6 +50,7 @@ public struct WorkspaceStore: Sendable {
     }
 
     public let directory: URL
+    private let written = WrittenFiles()
 
     public init(directory: URL = TiriPaths.supportDirectory) {
         self.directory = directory
@@ -137,22 +148,30 @@ public struct WorkspaceStore: Sendable {
         }
     }
 
+    /// The version the saved index says it is, if it can be read at all.
+    public func savedVersion() -> Int? {
+        struct Version: Decodable { var version: Int }
+        return (try? Data(contentsOf: indexURL)).flatMap { try? JSONDecoder().decode(Version.self, from: $0) }?.version
+    }
+
     public func save(_ snapshot: Snapshot) throws {
+        if let saved = savedVersion(), saved > Self.formatVersion { throw NewerFormat() }
         try FileManager.default.createDirectory(at: layoutsURL, withIntermediateDirectories: true)
         let index = Index(
-            version: 1,
+            version: Self.formatVersion,
             activeID: snapshot.activeID,
             workspaces: snapshot.workspaces.map { .init(id: $0.id, name: $0.name, folders: $0.folders, remote: $0.remote) },
             windows: snapshot.windows.isEmpty ? nil : snapshot.windows
         )
         let encoder = Self.encoder()
-        try encoder.encode(index).write(to: indexURL, options: .atomic)
+        try written.write(encoder.encode(index), to: indexURL)
         for workspace in snapshot.workspaces {
-            let layout = LayoutFile(items: workspace.items, layout: workspace.layout,
-                                    focusedGroup: workspace.focusedGroup, closed: workspace.closed,
+            let saved = workspace.savedForm()
+            let layout = LayoutFile(items: saved.items, layout: saved.layout,
+                                    focusedGroup: workspace.focusedGroup, closed: saved.closed,
                                     expandedFolders: workspace.expandedFolders, recentFiles: workspace.recentFiles, groupMRU: workspace.groupMRU,
-                                    review: workspace.review.isEmpty ? nil : workspace.review)
-            try encoder.encode(layout).write(to: layoutURL(workspace.id), options: .atomic)
+                                    review: workspace.review.isEmpty ? nil : workspace.review, version: Self.formatVersion)
+            try written.write(encoder.encode(layout), to: layoutURL(workspace.id))
         }
         if Self.lastGoodDue(lastGoodURL) { keepLastGood() }
         // Drop layouts for workspaces that no longer exist.
@@ -175,10 +194,9 @@ extension WorkspaceStore {
 
 extension Workspace {
     fileprivate mutating func apply(_ layout: WorkspaceStore.LayoutFile) {
-        items = layout.items
         self.layout = layout.layout
         focusedGroup = layout.focusedGroup
-        closed = layout.closed
+        take(items: layout.items, closed: layout.closed)
         expandedFolders = layout.expandedFolders ?? []
         recentFiles = layout.recentFiles ?? []
         groupMRU = layout.groupMRU ?? []

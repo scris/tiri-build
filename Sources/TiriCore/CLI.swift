@@ -318,6 +318,11 @@ public enum CLIParser {
         case "dev-plugin-question":
             return request("dev.plugin-question")
 
+        case "dev-toast":
+            // The toasts showing, or presses one's button: tiri dev-toast [press <words>]   (test copies only)
+            if args.first == "press" { return request("dev.toast", ["press": .string(args.dropFirst().joined(separator: " "))]) }
+            return request("dev.toast")
+
         case "dev-palette":
             // What's asked in the palette, and answering it: text, a row's number, or --cancel.
             var options = Options(args)

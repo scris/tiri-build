@@ -691,10 +691,10 @@ final class RemoteManager {
             let name = SSHConfigFile.displayName(of: destination)
             self.model.showToast(title: String(localized: "Get exact status from \(tool.title)?"), detail: String(localized: "On \(name), Tiri is estimating when it's working or done."),
                                  symbol: "waveform.path.ecg", tint: .accentColor, actionTitle: String(localized: "Set Up"), duration: nil,
-                                 other: (String(localized: "Not Now"), answered), closed: answered) { [weak self] in
+                                 other: (String(localized: "Not Now"), answered), action: { [weak self] in
                 answered()
                 self?.confirmHooks(tool, on: destination)
-            }
+            }, closed: answered)
         }
     }
 

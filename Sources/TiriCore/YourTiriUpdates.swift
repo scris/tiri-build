@@ -38,6 +38,8 @@ public struct UpdateStatus: Codable, Equatable, Sendable {
     public var notes: String?
     /// The same version as the one installed, only built later. It's news, but not a new version, and isn't called one.
     public var sameVersion: Bool?
+    /// Where the installed app was when putting this in place failed. Moved since, it's ready to try again.
+    public var installFailedAt: String?
 
     /// What it's called, to start a sentence.
     public var name: String { sameVersion == true ? "A new build of Tiri" : "Tiri \(version)" }
@@ -66,7 +68,7 @@ public struct UpdateStatus: Codable, Equatable, Sendable {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try encoder.encode(self).write(to: file, options: .atomic)
+        try DurableFile.write(encoder.encode(self), to: file)
     }
 
     /// The line beside the button.
@@ -272,6 +274,9 @@ public enum UpdateTools {
         guard let entry = try? JSONDecoder().decode(ReleaseEntry.self, from: data), isFeedAddress(entry.url),
               !entry.version.isEmpty, entry.version.allSatisfy({ $0.isNumber || $0 == "." }) else { throw ChangeFailure("\(address) isn't a release feed.") }
         let state = try ChangeTools.facts()
+        // Before anything is downloaded: one that could never go in place isn't worth fetching, or offering.
+        if let installed = state.plainPath, let problem = InstallPlace.problem(appPath: installed) { throw ChangeFailure(problem.english) }
+        if let rolledBack = state.rolledBack, entry.version == rolledBack { return "Tiri \(rolledBack) didn't start here, so it isn't offered again.\n" }
         if let running = state.plainVersion, !isNewer(entry.version, than: running) {
             let runningBuild = state.plainPath.flatMap { Bundle(path: $0)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String }
             let newerBuild = entry.version == running && entry.build.map { build in runningBuild.map { isNewer(build, than: $0) } ?? false } == true
@@ -315,6 +320,13 @@ public enum UpdateTools {
         }
         let isNewerBuild = version == currentVersion && isNewer(info["CFBundleVersion"] as? String ?? "0", than: current["CFBundleVersion"] as? String ?? "0")
         guard isNewer(version, than: currentVersion) || isNewerBuild else { throw ChangeFailure(String(localized: "That copy of Tiri \(version) isn't newer than the \(currentVersion) you have.")) }
+        try checkSignature(new, against: installed)
+    }
+
+    /// Signed properly, and by whoever signed the one installed: its team, and its designated requirement, which also
+    /// says what kind of certificate. A team's Apple Development certificate passes the team check alone, and not this.
+    /// A build from source, ad hoc or with a certificate of its own, has no team, and nothing past a sound signature is asked.
+    public static func checkSignature(_ new: URL, against installed: URL) throws {
         guard Tool.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", new.path]).ok else {
             throw ChangeFailure(String(localized: "That copy of Tiri isn't signed properly."))
         }
@@ -324,7 +336,8 @@ public enum UpdateTools {
         // A build from source has no team, and neither does its update. There's no maker to hold it to.
         guard let team, team != "not set" else { return }
         guard team.allSatisfy({ $0.isLetter || $0.isNumber }),
-              Tool.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R=anchor apple generic and certificate leaf[subject.OU] = \"\(team)\"", new.path]).ok else {
+              Tool.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R=anchor apple generic and certificate leaf[subject.OU] = \"\(team)\"", new.path]).ok,
+              SigningCheck.meetsDesignatedRequirement(of: installed, new) else {
             throw ChangeFailure(String(localized: "That copy of Tiri wasn't signed by whoever made the one you have."))
         }
     }
@@ -341,6 +354,7 @@ public enum UpdateTools {
     public static func prepare(release: URL, notes: String?, repo: SourceRepo, context: ChangeTools.Context) throws -> String {
         let state = try ChangeTools.facts()
         guard let installed = state.plainPath else { throw ChangeFailure("Tiri has to be open for this.") }
+        if let problem = InstallPlace.problem(appPath: installed) { throw ChangeFailure(problem.english) }
         let app = try unpackRelease(release, replacing: URL(fileURLWithPath: installed))
         let info = NSDictionary(contentsOf: app.appendingPathComponent("Contents/Info.plist"))
         let version = info?["CFBundleShortVersionString"] as? String ?? ""

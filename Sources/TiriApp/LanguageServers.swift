@@ -99,7 +99,7 @@ final class LanguageServerHub {
         self.model = model
     }
 
-    private var isEnabled: Bool { model.settings.languageServers }
+    private var isEnabled: Bool { model.settings.languageServers && !SafeStart.isOn }
 
     // MARK: Finding servers
 

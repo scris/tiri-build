@@ -88,7 +88,7 @@ public struct ReadyCopy: Codable, Equatable, Sendable {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try encoder.encode(self).write(to: file, options: .atomic)
+        try DurableFile.write(encoder.encode(self), to: file)
     }
 }
 
@@ -423,7 +423,7 @@ public enum ChangeTools {
     private static func save(_ draft: ChangeDraft) throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(draft).write(to: YourTiri.draftFile, options: .atomic)
+        try DurableFile.write(encoder.encode(draft), to: YourTiri.draftFile)
     }
 
     private static func requireRepo(_ repo: SourceRepo) throws {

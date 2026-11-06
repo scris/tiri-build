@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppModel.shared.finishLaunching()
         AppModel.shared.offerCrashReport()
         CopyHealth.startWatching()
+        SafeStart.startWatching()
+        SafeStart.announce(model: AppModel.shared)
         Self.saveOnTerminateSignal()
         // After a crash or a force quit, SwiftUI can start without opening its window. Terminals have
         // reattached by then, but nothing shows until the Dock icon is clicked, so do that for it.
@@ -72,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     CopyHealth.quitOnPurpose()
+                    SafeStart.quitOnPurpose()
                     AppModel.shared.prepareForTermination()
                     exit(0)
                 }
@@ -130,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         CopyHealth.quitOnPurpose()
+        SafeStart.quitOnPurpose()
         AppModel.shared.prepareForTermination()
     }
 

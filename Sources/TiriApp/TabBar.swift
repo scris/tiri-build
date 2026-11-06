@@ -24,6 +24,8 @@ struct ItemIcon: View {
         case .plugin(let spec):
             Image(systemName: model.plugins.enabledPlugin(named: spec.plugin)?.manifest?.panels?.first { $0.id == spec.panel }?.symbol ?? "puzzlepiece.extension")
                 .foregroundStyle(.secondary)
+        case .unknown:
+            Image(systemName: "questionmark.square.dashed").foregroundStyle(.secondary)
         }
     }
 }

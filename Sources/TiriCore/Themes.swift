@@ -622,6 +622,11 @@ public enum ThemeImport {
 
 // MARK: - Themes kept by Tiri
 
+public struct ThemeFileNeedsFixing: Error, CustomStringConvertible {
+    public var file: URL
+    public var description: String { String(localized: "Tiri can't read \(file.lastPathComponent).") }
+}
+
 /// Someone's themes, one JSON file each in `<config>/themes`.
 public struct ThemeLibrary: Sendable {
     public let directory: URL
@@ -654,7 +659,11 @@ public struct ThemeLibrary: Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let url = file(for: theme.name)
-        try encoder.encode(theme).write(to: url, options: .atomic)
+        // One someone is in the middle of fixing by hand isn't replaced from under them.
+        if let data = try? Data(contentsOf: url), (try? JSONDecoder().decode(Theme.self, from: data)) == nil {
+            throw ThemeFileNeedsFixing(file: url)
+        }
+        try DurableFile.write(encoder.encode(theme), to: url)
         return url
     }
 

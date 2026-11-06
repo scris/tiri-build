@@ -499,7 +499,7 @@ enum ControlHandler {
             object["path"] = .string(spec.path)
             if let commit = spec.commit { object["commit"] = .string(commit) }
             if spec.branch == true { object["branch"] = true }
-        case .settings:
+        case .settings, .unknown:
             break
         case .plugin(let spec):
             object["plugin"] = .string(spec.plugin)
@@ -1269,6 +1269,20 @@ enum ControlHandler {
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
             guard model.plugins.answerForTest(yes: request.args["yes"]?.boolValue == true) else { throw ControlFailure("Nothing is being asked.") }
             return .object([:])
+
+        case "dev.toast":
+            // What toasts say, and pressing one's button by its words. In a test copy only, whose window takes no clicks.
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            if let press = request.args["press"]?.stringValue {
+                guard let toast = model.toasts.last(where: { $0.actionTitle == press || $0.otherTitle == press }) else { throw ControlFailure("No toast has \(press).") }
+                if toast.actionTitle == press { toast.action?() } else { toast.otherAction?() }
+                model.dismissToast(toast.id)
+                return .object([:])
+            }
+            return .array(model.toasts.map { toast in
+                .object(["title": .string(toast.title), "detail": toast.detail.map(JSONValue.string) ?? .null,
+                         "buttons": .array([toast.otherTitle, toast.actionTitle].compactMap { $0 }.map(JSONValue.string))])
+            })
 
         case "dev.key":
             // A real key event through the app's own queue, which is as close as a hidden window gets.

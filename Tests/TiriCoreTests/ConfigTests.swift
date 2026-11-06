@@ -455,7 +455,7 @@ import Testing
         // The older setting counts until the new one says otherwise.
         #expect(try TiriSettings.parse("{\"code.wordWrap\": true}").editorWordWrap == .on)
         #expect(try TiriSettings.parse("{\"code.wordWrap\": true, \"editor.wordWrap\": \"bounded\"}").editorWordWrap == .bounded)
-        #expect(throws: TiriSettings.ParseError.self) { try TiriSettings.parse("{\"editor.wordWrap\": \"sometimes\"}") }
+        #expect(try TiriSettings.parseReporting("{\"editor.wordWrap\": \"sometimes\"}").problems.first?.key == "editor.wordWrap")
         #expect(try TiriSettings.parse("{\"editor.wordWrapColumn\": 5}").editorWordWrapColumn == 20)
         #expect(try TiriSettings.parse("{\"window.zoomLevel\": 99}").zoomLevel == TiriSettings.zoomRange.upperBound)
         var zoomed = TiriSettings()
@@ -526,16 +526,28 @@ import Testing
 
     @Test(arguments: [
         #"{ "theme": "dark""#,
-        #"{ "theme": "chartreuse" }"#,
-        #"{ "theme": 3 }"#,
-        #"{ "theme.dark": 3 }"#,
-        #"{ "terminal.fontSize": "big" }"#,
-        #"{ "explorer.autoReveal": 1 }"#,
         #"[1,2]"#,
-        #"{ "terminal.presets": "nope" }"#,
     ])
     func invalidThrows(text: String) {
         #expect(throws: TiriSettings.ParseError.self) { try TiriSettings.parse(text) }
+    }
+
+    /// One value of the wrong kind is that setting at its default, and the rest as written.
+    @Test(arguments: [
+        (#"{ "theme": "chartreuse", "code.fontSize": 17 }"#, "theme"),
+        (#"{ "theme": 3, "code.fontSize": 17 }"#, "theme"),
+        (#"{ "theme.dark": 3, "code.fontSize": 17 }"#, "theme.dark"),
+        (#"{ "terminal.fontSize": "big", "code.fontSize": 17 }"#, "terminal.fontSize"),
+        (#"{ "explorer.autoReveal": 1, "code.fontSize": 17 }"#, "explorer.autoReveal"),
+        (#"{ "terminal.presets": "nope", "code.fontSize": 17 }"#, "terminal.presets"),
+    ])
+    func wrongTypeSkipsOnlyThatKey(text: String, key: String) throws {
+        let parsed = try TiriSettings.parseReporting(text)
+        #expect(parsed.problems.map(\.key) == [key])
+        #expect(parsed.settings.codeFontSize == 17)
+        var expected = TiriSettings()
+        expected.codeFontSize = 17
+        #expect(parsed.settings == expected)
     }
 
     @Test func fontSizeIsClamped() throws {
