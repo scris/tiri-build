@@ -366,7 +366,8 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 .win-peek .peekbox { left: 372px; top: 52px; right: 12px; bottom: 14px; }
 
 /* ---------- change section ---------- */
-.change-copy p { color: var(--dim); font-size: 18px; max-width: 60ch; margin: 22px 0 48px; }
+.change-sec h2 { max-width: 24ch; text-wrap: balance; }
+.change-copy p { color: var(--dim); font-size: 18px; max-width: 64ch; text-wrap: pretty; margin: 22px 0 48px; }
 .demo-under { display: flex; align-items: center; gap: 16px; margin-top: 22px; min-height: 40px; flex-wrap: wrap; }
 .demo-note { margin: 0; color: var(--dim); font-size: 15.5px; }
 .demo-btns { display: none; gap: 10px; }

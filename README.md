@@ -11,13 +11,13 @@
 | An AI editor | Cursor, Windsurf, Zed | **Your agent.** Theirs comes first, and yours gets a drawer under the editor. |
 | The vendor's app | Claude Code desktop, Codex app | **Every other agent,** and the CLI you set up. |
 | An agent manager | Conductor, Superset, Emdash | **Your repo as you use it.** Every job becomes a task in a fresh worktree. |
-| A terminal | cmux, Warp, herdr, Ghostty + tmux | **Everything around the agent.** Files and diffs open in another app, paths in its output lead nowhere, and an agent starts wherever your shell happens to be. |
+| A terminal | cmux, Warp, herdr, Ghostty + tmux | **Everything around the agent.** The terminal comes first and everything else sits on the side, a wrong path in its output leads nowhere, and an agent starts wherever your shell happens to be. |
 
 **Tiri gives up none of these.**
 
 ## Change anything by asking
 
-Not a setting, and not a plugin API: you change the actual source.
+Everyone works differently, so Tiri is yours to change. Not a setting, and not a plugin API: you change the actual source.
 
 1. Choose **Change Tiri…**, point at anything and say what you want instead.
 2. Your own agent edits Tiri's source, on your own subscription.
@@ -39,7 +39,7 @@ Not a setting, and not a plugin API: you change the actual source.
 
 - **Your agent, untouched.** It's the real CLI, with your config, hooks and subscription.
 - **Any agent.** Claude Code, Codex, Grok, or any command you add.
-- **Your muscle memory.** Shortcuts and the explorer work like Cursor and VS Code.
+- **Your muscle memory.** Shortcuts, the explorer and workspaces work like Cursor and VS Code.
 - **Your Git workflow.** Agents work in your repo, and Tiri finds the branches they make.
 - **Your servers.** Connect over your own SSH config, with one 90 KB helper and no root.
 - **Your setup, for good.** No account, no cloud of ours, and an MPL-2.0 license.
