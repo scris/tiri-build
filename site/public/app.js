@@ -3,6 +3,8 @@
 
   const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const narrow = matchMedia("(max-width: 760px)");
+  // A finger, not a pointer: no Return key to press, and a tap rather than a click.
+  const touch = matchMedia("(pointer: coarse)").matches;
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
   const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -36,7 +38,7 @@
     const avail = stage.clientWidth;
     // On a phone the film zooms in and follows the action, instead of shrinking the whole window.
     const zoom = stage.dataset.zoom && avail < 760;
-    const s = zoom ? Math.min(1, avail / +stage.dataset.zoom) : Math.min(1, avail / w);
+    const s = zoom ? Math.min(1, avail / (stage.camZoom ?? +stage.dataset.zoom)) : Math.min(1, avail / w);
     const cx = stage.camX ?? w / 2;
     const cy = stage.camY ?? h / 2;
     const vh = zoom ? Math.min(h * s, avail * 1.05) : h * s;
@@ -48,7 +50,10 @@
   }
   function aim(stage, x0, y0, x1, y1) {
     const avail = stage.clientWidth;
-    const s = Math.min(1, avail / +stage.dataset.zoom);
+    // Out a little further when what it's aimed at is wider, so a sheet isn't cut off at the side.
+    const zoom = +stage.dataset.zoom;
+    stage.camZoom = Math.min(zoom * 1.25, Math.max(zoom, x1 - x0 + 24));
+    const s = Math.min(1, avail / stage.camZoom);
     const vw = avail / s - 16;
     const vh = Math.min(680, (avail * 1.05) / s) - 16;
     stage.camX = x1 - x0 > vw ? x0 + vw / 2 : (x0 + x1) / 2;
@@ -936,10 +941,14 @@
     demoCam();
   };
   const NOTES = {
-    pick: "Pick a change in the window, then press Return.",
-    asked: "Press Return to hand it to Claude Code.",
+    // A narrow screen sends the change as soon as it's picked.
+    get pick() {
+      if (narrow.matches) return "Pick a change in the window.";
+      return touch ? "Pick a change in the window, then tap Return." : "Pick a change in the window, then press Return.";
+    },
+    asked: touch ? "Tap Return to hand it to Claude Code." : "Press Return to hand it to Claude Code.",
     building: "Claude Code is rewriting Tiri, inside Tiri. Minutes in real life, seconds here.",
-    ready: "Built and checked. Press Try It.",
+    ready: touch ? "Built and checked. Tap Try It." : "Built and checked. Press Try It.",
     trying: "Tiri reopened with the change, and your agents kept running. Keep it, or go back.",
     kept: "Kept. It's in the list below, and every update keeps it.",
     back: "Back to how it was. Nothing else changed.",
@@ -1261,6 +1270,7 @@ export function backoffMs(attempt: number) {
   const peekwin = $("[data-peekwin]");
   const box = $("[data-peekbox]");
   const say = $("[data-peek-say]");
+  if (touch) say.textContent = "Tap the paths in the window. One of them is wrong.";
   const sayDefault = say.textContent;
   let opener = null;
   function openPeek(btn, auto = false) {
