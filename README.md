@@ -2,8 +2,6 @@
 
 **A Mac workspace for coding agents, and the only one you can change by asking.**
 
-Run Claude Code, Codex or Grok in their real terminals. Tiri gives you everything around them: files, diffs, pages and review.
-
 ![Keep your agent. Get everything around it. A real Tiri window: four workspaces, Grok asking for you in one, Claude Code in Tiri's own source having opened the features page as a Peek: a workspace for each task, not just code, the Peek, your agent drives Tiri, it improves itself. In the corner, the Change Tiri box.](.github/readme/tiri.png)
 
 ## Why not something else?

@@ -235,7 +235,7 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 .posting ul { margin: 0; padding-left: 16px; }
 .posting li { margin: 2px 0; color: #333; }
 .posting .ph { height: 6px; background: #ececec; border-radius: 3px; margin: 7px 0; }
-.v-page { background: #f6f6f4; color: #1d1d1f; padding: 22px 26px; font: 11.5px/1.5 Georgia, "Times New Roman", serif; }
+.v-page { background: #f6f6f4; color: #1d1d1f; padding: 22px 26px; font: 12px/1.5 var(--body); }
 .v-page h5 { font: 600 22px/1.1 var(--body); margin: 0; letter-spacing: -0.01em; }
 .v-page .role { color: #666; font: 12px var(--body); margin: 3px 0 12px; }
 .v-page h6 { font: 700 10px/1 var(--body); color: #635bff; margin: 12px 0 5px; letter-spacing: 0.06em; text-transform: uppercase; }
@@ -274,7 +274,7 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 .pk-name b { font-size: 13.5px; font-weight: 600; }
 .pk-name small { color: #8e8e93; font-size: 11px; }
 .pk-tab { background: var(--pink); color: #fff; border-radius: 7px; padding: 5px 11px; font: 500 12.5px/1.2 var(--body); white-space: nowrap; }
-.pk-x { border: 0; background: #333336; color: #c7c7cc; border-radius: 7px; width: 30px; height: 26px; font-size: 13px; cursor: pointer; }
+.pk-x { border: 0; background: #333336; color: #c7c7cc; border-radius: 7px; width: 30px; height: 26px; font-size: 13px; line-height: 1; display: grid; place-items: center; flex: none; cursor: pointer; }
 .peekbox .view { border-top: 1px solid #333336; }
 .peekbox pre { margin: 0; padding: 8px 0 12px; font: 12px/1.75 var(--mono); color: #e1e1e6; overflow: hidden; border-top: 1px solid #333336; }
 .peekbox .hl { display: block; background: var(--pink-wash); box-shadow: inset 2px 0 0 var(--pink); }
