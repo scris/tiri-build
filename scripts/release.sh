@@ -63,7 +63,8 @@ ln -s /Applications "$STAGE/Applications"
 hdiutil create -quiet -volname Tiri -srcfolder "$STAGE" -fs APFS -format ULFO -ov "$DMG"
 codesign --force --sign "$IDENTITY" --timestamp "$DMG"
 echo "Sending $(basename "$DMG") to Apple. This usually takes a few minutes."
-SUBMISSION="$(xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --wait --output-format plist)"
+# Not through S3 Transfer Acceleration: from here its uploads stall and time out halfway, and the plain one takes seconds.
+SUBMISSION="$(xcrun notarytool submit "$DMG" --keychain-profile "$PROFILE" --no-s3-acceleration --wait --output-format plist)"
 STATUS="$(/usr/libexec/PlistBuddy -c 'Print status' /dev/stdin <<<"$SUBMISSION")"
 ID="$(/usr/libexec/PlistBuddy -c 'Print id' /dev/stdin <<<"$SUBMISSION")"
 if [ "$STATUS" != "Accepted" ]; then
