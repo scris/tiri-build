@@ -803,12 +803,12 @@ final class DiffPane {
     }
 
     /// Rows are laid out from the top, so a jump far down a long diff would first lay out everything
-    /// above it, about a second at 45,000 rows. That's done ahead instead, a few milliseconds at a
-    /// time while the top is read, and a jump finds it ready.
+    /// above it: 0.2 to 0.3 s at 45,000 rows in a release build. That's done ahead instead, a few
+    /// milliseconds at a time while the top is read, and a jump a second later finds it ready.
     private var layoutPass = 0
     private func layOutAhead() {
         layoutPass += 1
-        guard rows.count > 2_000, !FileManager.default.fileExists(atPath: (ProcessInfo.processInfo.environment["TIRI_HOME"] ?? "") + "/before") else { return }
+        guard rows.count > 2_000 else { return }
         let pass = layoutPass
         func slice() {
             guard pass == layoutPass, let layout = textView.layoutManager else { return }
