@@ -7,6 +7,8 @@
 #   scripts/dev-app.sh focus <name> -- cmd…  takes the keyboard, so needs TIRI_DEV_MAY_TAKE_FOCUS=yes, for this and to start it: for when nobody's using this Mac
 # A copy hides itself as an app, because Stage Manager brings any window back on screen. Only with
 # TIRI_DEV_MAY_TAKE_FOCUS=yes at the start is it visible and clickable. If one reaches the screen, it's stopped.
+# TIRI_DEV_SCREEN=<display name> shows its window on that display, taking no clicks, to measure drawing; if any of it
+# reaches the main display it's stopped.
 # TIRI_DEV_MAC_ACCENT=blue makes it act as if this Mac's accent were blue, to see "Your Mac" against Tiri Pink.
 # TIRI_DEV_A11Y=transparency,contrast,motion makes it act as if Reduce Transparency, Increase Contrast or Reduce
 # Motion were on, without touching this Mac's settings. `cli <name> dev-a11y <list|none>` changes it live.
@@ -62,6 +64,7 @@ launch_in_background() {
   open -g -n -a "$APP" --stdout "$DIR/app.log" --stderr "$DIR/app.log" \
     --env TIRI_HOME="$TIRI_HOME" --env TIRI_CONFIG_HOME="$TIRI_CONFIG_HOME" --env TIRI_SOCKET="$TIRI_SOCKET" --env TIRI_DEV_OFFSCREEN=1 \
     ${TIRI_DEV_MAY_TAKE_FOCUS:+--env TIRI_DEV_VISIBLE=1} \
+    ${TIRI_DEV_SCREEN:+--env TIRI_DEV_SCREEN="$TIRI_DEV_SCREEN"} \
     ${TIRI_DEV_OPTION:+--env TIRI_DEV_OPTION=1} \
     ${TIRI_DEV_MAC_ACCENT:+--env TIRI_DEV_MAC_ACCENT="$TIRI_DEV_MAC_ACCENT"} \
     ${TIRI_DEV_A11Y:+--env TIRI_DEV_A11Y="$TIRI_DEV_A11Y"} \
@@ -80,20 +83,22 @@ launch_in_background() {
     sleep 0.1
   done
   echo "${pid:-}" > "$DIR/pid"
-  if [ -n "${pid:-}" ] && [ "${TIRI_DEV_MAY_TAKE_FOCUS:-}" != "yes" ]; then stop_if_on_screen "$pid"; fi
+  if [ -n "${pid:-}" ] && [ -n "${TIRI_DEV_SCREEN:-}" ]; then stop_if_on_screen "$pid" main
+  elif [ -n "${pid:-}" ] && [ "${TIRI_DEV_MAY_TAKE_FOCUS:-}" != "yes" ]; then stop_if_on_screen "$pid"; fi
 }
 
 # Someone may be using this Mac. A test copy that reaches their screen is stopped, and that's a failure.
+# With `main`, only the main display counts: TIRI_DEV_SCREEN puts the copy on another one, to be seen there.
 stop_if_on_screen() {
   local found
-  sleep 0.4
-  found="$(swift - "$1" <<'SWIFT'
+  if [ -n "${2:-}" ]; then sleep 1.2; else sleep 0.4; fi
+  found="$(swift - "$1" "${2:-}" <<'SWIFT'
 import CoreGraphics
 let pid = Int32(CommandLine.arguments[1])!
 var displays = [CGDirectDisplayID](repeating: 0, count: 16)
 var count: UInt32 = 0
 CGGetActiveDisplayList(16, &displays, &count)
-let screens = displays.prefix(Int(count)).map { CGDisplayBounds($0) }
+let screens = CommandLine.arguments[2] == "main" ? [CGDisplayBounds(CGMainDisplayID())] : displays.prefix(Int(count)).map { CGDisplayBounds($0) }
 let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
 for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid && (w[kCGWindowLayer as String] as? Int) == 0
     && (w[kCGWindowIsOnscreen as String] as? Bool) == true {

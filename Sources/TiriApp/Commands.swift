@@ -1596,7 +1596,8 @@ enum ControlHandler {
             object["terminals"] = .array(model.openTerminals.map { id, terminal in
                 let counts = terminal.terminalView.diagnostics
                 return .object(["item": .string(id), "bytes": .int(counts.bytesFed), "batches": .int(counts.batches),
-                                "frames": .int(counts.frames), "renders": .int(counts.renders), "mainHops": .int(counts.mainHops)])
+                                "frames": .int(counts.frames), "renders": .int(counts.renders), "mainHops": .int(counts.mainHops),
+                                "metal": .bool(terminal.terminalView.isUsingMetalRenderer)])
             })
             return .object(object)
 

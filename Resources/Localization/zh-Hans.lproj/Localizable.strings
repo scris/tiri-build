@@ -323,6 +323,13 @@
 "The text size in terminals." = "终端中的文字大小。";
 "Translucent background" = "半透明背景";
 "Let what's behind the window show through, blurred. Text stays solid." = "让窗口后面的内容模糊地透出来。文字保持不透明。";
+"Drawing" = "绘制";
+"The graphics chip keeps Tiri responsive under heavy output. Automatic uses the CPU where it can't." = "大量输出时，图形芯片让 Tiri 保持流畅。用不了它时，“自动”会改用 CPU。";
+"Automatic" = "自动";
+"Graphics chip" = "图形芯片";
+"CPU" = "CPU";
+"Terminals can't use the graphics chip here" = "终端在这里用不了图形芯片";
+"\"automatic\", \"metal\" or \"cpu\"" = "\"automatic\"、\"metal\" 或 \"cpu\"";
 "Shell" = "Shell";
 "The program new terminals run. Leave it empty to use your login shell." = "新终端运行的程序。留空则使用你的登录 Shell。";
 "Your login shell" = "你的登录 Shell";

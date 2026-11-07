@@ -501,8 +501,20 @@ final class AppModel {
     private static var keepingOutOfSight = false
 
     private func keepOutOfSight(_ window: NSWindow) {
+        let environment = ProcessInfo.processInfo.environment
+        // On a screen nobody's working on, to measure drawing: shown there, and never clicked.
+        if let name = environment["TIRI_DEV_SCREEN"], !name.isEmpty {
+            window.ignoresMouseEvents = true
+            if let screen = NSScreen.screens.first(where: { $0.localizedName.localizedCaseInsensitiveContains(name) }) {
+                let area = screen.visibleFrame
+                let size = NSSize(width: min(window.frame.width, area.width - 40), height: min(window.frame.height, area.height - 40))
+                window.setFrame(NSRect(x: area.midX - size.width / 2, y: area.midY - size.height / 2, width: size.width, height: size.height), display: true)
+                window.orderFrontRegardless()
+                return
+            }
+        }
         // scripts/dev-app.sh focus, for when nobody's using this Mac and a real click is the point.
-        if ProcessInfo.processInfo.environment["TIRI_DEV_VISIBLE"] == "1" { return }
+        if environment["TIRI_DEV_VISIBLE"] == "1" { return }
         window.ignoresMouseEvents = true
         NSApp.hide(nil)
         // One watch for the app, however many windows it has.

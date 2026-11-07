@@ -9,6 +9,12 @@ public enum LinkOpenTarget: String, Codable, Sendable {
     case peek, tab, external
 }
 
+/// How terminals draw. Metal draws on the graphics chip, off the main thread; the CPU is Core Graphics.
+public enum TerminalRenderer: String, Codable, Sendable {
+    /// Metal, and the CPU wherever Metal can't start.
+    case automatic, metal, cpu
+}
+
 public struct TerminalPreset: Codable, Equatable, Sendable, Identifiable {
     public var name: String
     public var command: String
@@ -91,6 +97,7 @@ public struct TiriSettings: Equatable, Sendable {
     public var conversationsSummarizeAll = false
     public var languageServers = true
     public var terminalLinkOpens = LinkOpenTarget.peek
+    public var terminalRenderer = TerminalRenderer.automatic
     public var codeFontFamily = "SF Mono"
     public var codeFontSize = 12.0
     public var editorWordWrap = WordWrap.off
@@ -156,6 +163,8 @@ public struct TiriSettings: Equatable, Sendable {
       "code.languageServers": true,
       // What cmd-clicking a file in a terminal does: "peek", "tab" or "external".
       "terminal.linkOpens": "peek",
+      // How terminals draw: "automatic" (Metal, or the CPU where Metal can't start), "metal" or "cpu".
+      "terminal.renderer": "automatic",
 
       "code.fontFamily": "SF Mono",
       "code.fontSize": 12,
@@ -328,6 +337,14 @@ public struct TiriSettings: Equatable, Sendable {
                     throw ParseError.wrongType(key: "terminal.linkOpens", expected: String(localized: "\"peek\", \"tab\" or \"external\""))
                 }
                 settings.terminalLinkOpens = target
+            }
+        }
+        attempt {
+            if let raw = object["terminal.renderer"] {
+                guard let text = raw as? String, let renderer = TerminalRenderer(rawValue: text) else {
+                    throw ParseError.wrongType(key: "terminal.renderer", expected: String(localized: "\"automatic\", \"metal\" or \"cpu\""))
+                }
+                settings.terminalRenderer = renderer
             }
         }
         string("code.fontFamily") { settings.codeFontFamily = $0 }

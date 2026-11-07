@@ -59,6 +59,8 @@ The **Agents** section of the sidebar lists every running agent in every workspa
 
 If you quit Tiri, update it, force quit it or it crashes, your agents keep working. When Tiri comes back, each terminal reattaches and its screen is redrawn, and one opened moments before a crash comes back as a tab too. Closing a terminal's tab is what ends it. If Tiri's saved layout is ever damaged, its last good copy comes back, and running agents are never ended for it. Restarting your Mac still ends terminals, and then agents resume their conversations. You can turn this off in **Settings → Agents**.
 
+Terminals draw on the Mac's graphics chip with Metal, so heavy output doesn't hold up the rest of Tiri. Where Metal can't start, they draw with the CPU instead. **Settings → Terminal → Drawing** picks one yourself.
+
 ### Give agents lines, files and images
 
 **Selections.** Select something in a file, diff, rendered markdown, HTML file, web page or PDF. A **Quote in Agent** button appears beside it, and ⌘L or right-click do the same. With one agent running, the selection goes straight to it. With several, Tiri asks which one should get it, with the one you used last at the top, and then takes you there.

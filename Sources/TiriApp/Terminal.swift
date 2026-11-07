@@ -1448,7 +1448,25 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         container.setBackground(translucent ? .clear : color)
         container.setTranslucent(translucent ? color.withAlphaComponent(TerminalTheme.translucentOpacity) : nil)
         container.setSolidOverlays(AccessibilityDisplay.shared.reduceTransparency)
+        applyRenderer(settings.terminalRenderer)
     }
+
+    /// Metal unless it's turned off, or can't start here: then the CPU, which always works.
+    private func applyRenderer(_ renderer: TerminalRenderer) {
+        let metal = renderer != .cpu
+        guard metal != terminalView.isUsingMetalRenderer else { return }
+        do {
+            try terminalView.setUseMetal(metal)
+        } catch {
+            // Automatic falls back quietly. Asked for by name, it says why it didn't happen, once.
+            if renderer == .metal, !Self.saidMetalFailed {
+                Self.saidMetalFailed = true
+                model.showToast(title: String(localized: "Terminals can't use the graphics chip here"), detail: error.localizedDescription,
+                                symbol: "cpu", tint: .secondary)
+            }
+        }
+    }
+    private static var saidMetalFailed = false
 
     // MARK: Cwd and processes
 
