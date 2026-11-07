@@ -79,6 +79,7 @@ Not a setting, and not a plugin API: you change the actual source.
 [Download Tiri](https://tiri.build/download/Tiri.dmg), or use Homebrew:
 
 ```sh
+brew tap tiri-build/tap
 brew install --cask tiri-build/tap/tiri
 ```
 

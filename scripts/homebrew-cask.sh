@@ -1,5 +1,6 @@
 #!/bin/bash
-# The Homebrew cask for the release scripts/release.sh made, so `brew install --cask tiri-build/tap/tiri` works.
+# The Homebrew cask for the release scripts/release.sh made, so `brew tap tiri-build/tap` and then
+# `brew install --cask tiri-build/tap/tiri` work. Homebrew 6 won't tap a third-party tap by itself.
 # The cask lives in its own repository, tiri-build/homebrew-tap, because Homebrew finds `tiri-build/tap` there.
 # It downloads from tiri.build, so a brew install is counted like any other (see site/src/worker.js).
 #   scripts/homebrew-cask.sh            prints the cask

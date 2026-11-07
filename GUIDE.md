@@ -527,7 +527,7 @@ It checks every program in the bundle before sending anything to Apple, doesn't 
 
 `scripts/publish-release.sh` then puts that release on tiri.build: the DMG for people, and the zip and `update.json` that every copy's updates read. It checks the DMG is notarized first, and asks before it deploys.
 
-`scripts/homebrew-cask.sh --publish` comes after that. It writes the Homebrew cask for the new version to [tiri-build/homebrew-tap](https://github.com/tiri-build/homebrew-tap), which `brew install --cask tiri-build/tap/tiri` reads. Run it without `--publish` to print the cask.
+`scripts/homebrew-cask.sh --publish` comes after that. It writes the Homebrew cask for the new version to [tiri-build/homebrew-tap](https://github.com/tiri-build/homebrew-tap), which `brew tap tiri-build/tap` and then `brew install --cask tiri-build/tap/tiri` read. Run it without `--publish` to print the cask.
 
 `scripts/release.sh` refuses to release in two cases: if the changes in `Tests/personal-changes` no longer apply (`scripts/replay-corpus.sh`), or if Tiri stops building with the Command Line Tools alone (`scripts/check-free-tools.sh`). The second usually means something depends on an Apple macro whose plugin only ships with Xcode. The Swift-aware merge for Your Tiri is Mergiraf with a Swift profile, built by `scripts/build-merge-tool.sh`. It's optional and goes at `your-tiri/tools/mergiraf`.
 
