@@ -1404,6 +1404,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             runtime.unseen = false
         }
         hookActive = false
+        releaseInputModes()
         // Otherwise it's a fresh run: a resume that failed shouldn't simply fail again.
         if !resuming { launchCommand = spec.command }
         reattaching = false
@@ -1411,6 +1412,16 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         startingAgain = true
         spawn()
         focus()
+    }
+
+    /// A program that ends without turning off what it asked of the terminal, like an agent that's
+    /// killed, leaves mouse and focus reports on. The next one would get every mouse move as typing
+    /// before it's ready for it, and its terminal echoes them as `^[[<35;…M`. Only what keys, the
+    /// mouse and pastes send: what's on screen stays.
+    private func releaseInputModes() {
+        let mouse = [1000, 1002, 1003, 1005, 1006, 1015].map { "\u{1B}[?\($0)l" }.joined()
+        // Focus reports, bracketed paste, application cursor keys and keypad, then kitty keyboard flags.
+        terminalView.feed(text: mouse + "\u{1B}[?1004l\u{1B}[?2004l\u{1B}[?1l\u{1B}>\u{1B}[=0;1u")
     }
 
     /// The tab was closed on purpose, so what's running in it stops too.
@@ -1695,6 +1706,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     }
 
     private func showExit(code: Int32?, resumeFailed: Bool) {
+        // Scrolling an ended terminal scrolls it, rather than reporting to a program that's gone.
+        releaseInputModes()
         model.updateRuntime(itemID) { runtime in
             runtime.status = .exited
             runtime.exitCode = code
