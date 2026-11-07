@@ -1157,10 +1157,10 @@ final class AppModel {
             fileIndex.paths(named: name) + terminalFolderIndex.paths(named: name)
                 + (openFiles + extra).filter { ($0 as NSString).lastPathComponent == name }
         }
-        // The same file reached by two names is one match.
+        // The same file reached by two names is one match. One deleted since the index was read is none.
         var seen = Set<String>()
         return PathSearch.ranked(found, open: Set(openFiles), near: cwd).filter {
-            seen.insert(($0 as NSString).resolvingSymlinksInPath).inserted
+            (workspace.remote != nil || FileManager.default.fileExists(atPath: $0)) && seen.insert(($0 as NSString).resolvingSymlinksInPath).inserted
         }
     }
 
@@ -2117,6 +2117,13 @@ final class AppModel {
         refreshDeletedFiles()
         languageServers.filesChanged(paths)
         for live in lives.values { live.fileTree.filesChanged(paths) }
+        // A deleted file mustn't be offered by quick open or ⌘-click while the index is walked again.
+        // A batch too big to look at one by one is left to that walk.
+        if paths.count <= 2_000 {
+            let gone = paths.filter { !FileManager.default.fileExists(atPath: $0) }
+            fileIndex.forget(gone)
+            terminalFolderIndex.forget(gone)
+        }
         fileIndex.invalidate()
         plugins.editorEvents.filesChanged(paths, host: plugins)
     }
@@ -3635,6 +3642,23 @@ final class FileIndexStore {
     func invalidate() {
         dirty = true
         generation += 1
+    }
+
+    /// Files and folders that are gone leave at once, so nothing offers them while the next walk runs.
+    func forget(_ gone: [String]) {
+        guard !gone.isEmpty, !files.isEmpty else { return }
+        let removed = Set(gone)
+        func isGone(_ path: String) -> Bool {
+            var path = Substring(path)
+            while !path.isEmpty {
+                if removed.contains(String(path)) { return true }
+                guard let slash = path.lastIndex(of: "/"), slash > path.startIndex else { return false }
+                path = path[..<slash]
+            }
+            return false
+        }
+        let kept = files.filter { !isGone($0.path) }
+        if kept.count != files.count { files = kept }
     }
 
     func paths(named name: String) -> [String] {

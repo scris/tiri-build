@@ -325,13 +325,15 @@ public enum CLIParser {
             return request("dev.toast")
 
         case "dev-palette":
-            // What's asked in the palette, and answering it: text, a row's number, or --cancel.
+            // What's asked in the palette, and answering it: text, a row's number, or --cancel. --query types without answering.
             var options = Options(args)
             let cancel = options.flag("--cancel")
             let choose = try options.value("--choose").flatMap(Int.init)
             let text = try options.value("--text")
+            let query = try options.value("--query")
             try options.finish()
             var payload: [String: JSONValue] = [:]
+            if let query { payload["query"] = .string(query) }
             if cancel { payload["cancel"] = .bool(true) }
             if let choose { payload["choose"] = .int(choose) }
             if let text { payload["text"] = .string(text) }

@@ -1326,6 +1326,7 @@ enum ControlHandler {
         case "dev.palette":
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
             guard let palette = model.palette else { throw ControlFailure("No palette is open.") }
+            if let query = request.args["query"]?.stringValue { palette.query = query }
             let shown = JSONValue.object(["heading": .string(palette.heading ?? ""), "placeholder": .string(palette.placeholder), "query": .string(palette.query),
                                           "rows": .array(palette.rows.map { .string($0.title) }), "note": .string(palette.note ?? ""), "loading": .bool(palette.isIndexing)])
             if request.args["cancel"]?.boolValue == true {
