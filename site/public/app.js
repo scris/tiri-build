@@ -151,7 +151,7 @@
     image: () =>
       '<div class="view v-img"><div class="shot"><div class="shot-bar"><i></i><i></i><i></i><span>jobs.acme.example/payments-api</span></div><div class="posting"><div class="logo">acme</div><h5>Software Engineer, Payments API</h5><p class="meta">Engineering · Remote in US or Canada · Full time</p><b>What you\'ll do</b><ul><li>Design the APIs millions of businesses build on</li><li>Own billing and payment flows end to end</li><li>Make retries, webhooks and idempotency boring</li></ul><b>Who you are</b><ul><li>5+ years building backend systems</li><li>You care how an API feels to the person calling it</li></ul></div></div></div>',
     page: (g) =>
-      `<div class="view v-doc"><div class="paper${g && g.reloadAt && Date.now() - g.reloadAt < 700 ? " reload" : ""}"><header><h5>Sam Example</h5><p>Backend engineer, payments and APIs</p><small>sam@example.com &nbsp; Toronto &nbsp; github.com/example</small></header><div class="cols"><div><h6>Experience</h6><div class="job"><b>Example Billing Co.</b><span>Senior Engineer, Billing</span><i>2022 to now</i></div><ul><li>Led the billing API rewrite, now serving 4,000 businesses</li><li>Cut failed payment retries 38% with idempotent webhooks</li>${g && g.v2 ? '<li class="fresh">Designed the public webhooks API and its retry rules</li>' : ""}<li>Built the invoicing service in Go and Postgres</li></ul><div class="job"><b>Sample Shop</b><span>Software Engineer</span><i>2019 to 2022</i></div><ul><li>Designed the public orders API used by 300 partners</li><li>Moved card storage out of PCI scope</li></ul></div><div class="aside"><h6>Skills</h6><p>API design, idempotency, webhooks</p><p>Go, TypeScript, Postgres, Kafka</p><h6>Education</h6><p>BSc Computer Science<br>Example University</p><h6>Open source</h6><p>ratelimit, 2.1k stars</p></div></div></div></div>`,
+      `<div class="view v-doc"><div class="paper${g && g.reloadAt && Date.now() - g.reloadAt < 700 ? " reload" : ""}"><header><h5>Sam Example</h5><p>Backend engineer, payments and APIs</p><small>sam@example.com &nbsp; Toronto &nbsp; github.com/example</small></header><div class="cols"><div><h6>Experience</h6><div class="job"><b>Example Billing Co.</b><span>Senior Engineer, Billing</span><i>2022 to now</i></div><ul><li>Led the billing API rewrite, now serving 4,000 businesses</li><li>Cut failed payment retries 38% with idempotent webhooks</li>${g && g.v2 ? `<li${g.reloadAt && Date.now() - g.reloadAt < 2600 ? ' class="fresh"' : ""}>Designed the public webhooks API and its retry rules</li>` : ""}<li>Built the invoicing service in Go and Postgres</li></ul><div class="job"><b>Sample Shop</b><span>Software Engineer</span><i>2019 to 2022</i></div><ul><li>Designed the public orders API used by 300 partners</li><li>Moved card storage out of PCI scope</li></ul></div><div class="aside"><h6>Skills</h6><p>API design, idempotency, webhooks</p><p>Go, TypeScript, Postgres, Kafka</p><h6>Education</h6><p>BSc Computer Science<br>Example University</p><h6>Open source</h6><p>ratelimit, 2.1k stars</p></div></div></div></div>`,
     opps: () =>
       '<div class="view v-page"><h5>Three roles</h5><div class="role">Compared against your resume</div><table><tr><th>Company</th><th>Role</th><th>Fit</th></tr><tr><td>Acme</td><td>Payments API</td><td>Strong</td></tr><tr><td>Globex</td><td>Sync engine</td><td>Good</td></tr><tr><td>Initech</td><td>Card platform</td><td>Good</td></tr></table><h6>Why Acme first</h6><ul><li>Billing API work maps to the role</li><li>Idempotency and webhooks are named in the posting</li></ul></div>',
     notes: () =>
@@ -579,59 +579,53 @@
       },
     },
     {
-      dur: 11000,
+      dur: 6900,
       async run(my) {
+        // The screenshot it read is already a tab. Notes next, then the page, which reloads as the agent edits it.
         spot('[data-group="R"]', "The job posting the agent read is right there, as an image tab.");
-        await move('[data-group="R"] .view', my, 0.5, 0.5, 700);
-        await tsleep(1700, my);
-        await move('[data-tab="page"]', my, 0.5, 0.5, 650);
+        await move('[data-tab="notes"]', my, 0.5, 0.5, 550);
+        await click(my);
+        showTab(G("R"), "notes");
+        fr();
+        await tsleep(1200, my);
+        await move('[data-tab="page"]', my, 0.5, 0.5, 450);
         await click(my);
         showTab(G("R"), "page");
         fr();
-        spot('[data-group="R"]', "So is the resume it's editing, as a page.");
-        await tsleep(2000, my);
+        await tsleep(500, my);
         G("L").lines.push(["say", 'Update(<span class="cc-a">resume/resume.html</span>)'], ["sub", "Added the webhooks API you designed"]);
         G("R").v2 = true;
         G("R").reloadAt = Date.now();
         fr();
-        spot('[data-group="R"] .view', "When the agent saves the file, the page reloads by itself.");
-        await tsleep(2600, my);
-        await move('[data-tab="notes"]', my, 0.5, 0.5, 600);
-        await click(my);
-        showTab(G("R"), "notes");
-        fr();
-        spot('[data-group="R"]', "Your notes render as notes. Terminals, files and pages are equals.");
-        await tsleep(2200, my);
-        showTab(G("R"), "page");
-        fr();
+        spot(".main", "The agent saves, and the page reloads by itself.");
+        await tsleep(2800, my);
         spot(null, "");
       },
     },
     {
-      dur: 9600,
+      dur: 5400,
       async run(my) {
         after[2]();
         fr();
-        spot('[data-p="wrong"]', "The agent printed a path that's wrong as written. There's no /resume at the top.");
-        await tsleep(2400, my);
-        await move('[data-p="wrong"]', my, 0.55, 0.6, 650);
+        spot('[data-group="L"]', "The agent printed a path that's wrong as written. There's no /resume at the top.");
+        await move('[data-p="wrong"]', my, 0.55, 0.6, 600);
+        // Holding ⌘ underlines every path Tiri can open, the wrong one included.
         key("⌘");
-        $('[data-p="wrong"]', film).classList.add("hover");
-        await tsleep(400, my);
+        $$('[data-group="L"] .cc-a', film).forEach((el) => el.classList.add("hover"));
+        await tsleep(650, my);
         await click(my);
-        F.peek = { icon: "globe", name: "opportunities.html", dir: "resume", view: "opps" };
+        F.peek = { icon: "globe", name: "opportunities.html", dir: "job-hunt/resume", view: "opps" };
         fr();
         key("");
-        spot(".peekbox", "⌘-click opens it anyway. Tiri finds what it meant, floating over the session.");
-        await tsleep(2800, my);
+        spot(".peekbox", "Tiri finds what it meant, floating over the session.");
+        await tsleep(2300, my);
         key("esc");
-        await tsleep(300, my);
+        await tsleep(250, my);
         F.peek = null;
         fr();
-        spot(".main", "Esc puts it away. Nothing in your layout moved.");
-        await tsleep(1800, my);
-        key("");
         spot(null, "");
+        await tsleep(500, my);
+        key("");
       },
     },
     {

@@ -513,7 +513,8 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 .paper .job i { font-style: normal; color: #888; font-size: 9.5px; }
 .paper ul { margin: 0; padding-left: 13px; }
 .paper li { margin: 2px 0; }
-.paper li.fresh { animation: freshLine 2.6s ease-out; }
+.paper li.fresh { animation: freshLine 2.6s ease-out, freshIn 0.45s ease-out; }
+@keyframes freshIn { from { opacity: 0; transform: translateX(-8px); } }
 @keyframes freshLine { 0%, 50% { background: rgba(63, 191, 95, 0.28); } 100% { background: transparent; } }
 
 .shot { width: 94%; border-radius: 9px; overflow: hidden; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); background: #fff; }
