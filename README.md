@@ -74,13 +74,19 @@ Not a setting, and not a plugin API: you change the actual source.
 
 ## Install
 
-You need macOS 26 on Apple silicon, plus the Command Line Tools (`xcode-select --install`) or Xcode 26.
+[Download Tiri](https://tiri.build/download/Tiri.dmg), or use Homebrew:
+
+```sh
+brew install --cask tiri-build/tap/tiri
+```
+
+Tiri needs macOS 26 on Apple silicon. Pick an agent and choose a folder. Say yes when Tiri offers to install hooks.
+
+To build it yourself, you need the Command Line Tools (`xcode-select --install`) or Xcode 26:
 
 ```sh
 ./build.sh && open build/Tiri.app
 ```
-
-Pick an agent and choose a folder. Say yes when Tiri offers to install hooks.
 
 ## More
 
