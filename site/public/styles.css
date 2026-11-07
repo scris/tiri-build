@@ -51,6 +51,7 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 .nav nav a:hover { color: var(--text); }
 .nav nav a.nav-get { color: var(--text); padding: 7px 14px; border-radius: 999px; background: #2c2c2e; }
 .nav nav a.nav-get:hover { background: #3a3a3c; }
+.nav nav a.nav-github { display: inline-flex; align-items: center; gap: 7px; }
 
 .hero, .compare, .peek, .change-sec, .yours, .lists, .get { max-width: 1320px; margin: 0 auto; padding: clamp(80px, 11vw, 150px) var(--gutter) 0; }
 .hero { padding-top: clamp(28px, 4.5vw, 64px); padding-bottom: 20px; }
@@ -443,7 +444,8 @@ h1, h2 { font-family: var(--display); font-weight: 620; letter-spacing: -0.025em
 }
 @media (max-width: 760px) {
   body { font-size: 16px; }
-  .nav nav a:not(.nav-get) { display: none; }
+  .nav nav a:not(.nav-get):not(.nav-github) { display: none; }
+  .nav nav a.nav-github span { display: none; }
   .chapters { grid-template-columns: 1fr 1fr; gap: 16px; }
   .chapters span { display: none; }
   .ch-pause { display: none !important; }
