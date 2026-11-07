@@ -589,8 +589,33 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         let row = outline.row(forItem: head(of: node))
         guard row >= 0 else { return }
         outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        if expand, node.isDirectory { scrollToShowContents(of: row) }
         outline.scrollRowToVisible(row)
         if !quiet { flash(row: row) }
+    }
+
+    /// A folder shown by name is for what's in it: its rows come into view below it, as many as fit
+    /// with the folder still at the top.
+    private func scrollToShowContents(of row: Int) {
+        let level = outline.level(forRow: row)
+        var last = row
+        while last + 1 < outline.numberOfRows, outline.level(forRow: last + 1) > level { last += 1 }
+        guard last > row, let scroll = outline.enclosingScrollView else { return }
+        let visible = scroll.documentVisibleRect
+        let top = outline.rect(ofRow: row).minY, bottom = outline.rect(ofRow: last).maxY
+        guard bottom > visible.maxY else { return }
+        // The clip's origin sits above the document by the scroll view's top inset.
+        let inset = visible.minY - scroll.contentView.bounds.minY
+        scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.minX, y: min(top, bottom - visible.height) - inset))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    /// The rows on screen in the explorer's scroll area, for the tests.
+    func rowsOnScreen() -> [String] {
+        guard let clip = outline.enclosingScrollView?.contentView else { return [] }
+        let range = outline.rows(in: clip.documentVisibleRect)
+        let all = visibleRows()
+        return range.location == NSNotFound ? [] : Array(all[min(range.location, all.count)..<min(range.location + range.length, all.count)])
     }
 
     private func flash(row: Int) {

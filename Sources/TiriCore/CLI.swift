@@ -82,7 +82,8 @@ public enum CLIParser {
             // `tiri perf highlight` measures the highlighter on a fixed 10,000-line text.
             return request("perf", args.first.map { ["measure": JSONValue.string($0)] } ?? [:])
         case "tree":
-            return request("tree")
+            // `--on-screen`, in a test copy, lists only the rows in view.
+            return request("tree", args.first == "--on-screen" ? ["onScreen": .bool(true)] : [:])
 
         case "open":
             var options = Options(args)
