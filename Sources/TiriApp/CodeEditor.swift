@@ -405,6 +405,17 @@ final class CodeTextView: NSTextView {
         commit(result.changes, cursors: result.cursors, primaryIndex: primaryIndex, typing: false)
     }
 
+    /// A line command at every cursor, as one undo step. False with only one cursor, which the
+    /// text view's own selection handles.
+    @discardableResult
+    func applyAtEveryCursor(_ placing: MultiCursor.LineCursors, name: String, edit: (NSRange) -> TextEdit?) -> Bool {
+        guard hasMultipleCursors else { return false }
+        guard let result = MultiCursor.lineEdit(at: allCursors, in: nsText, cursors: placing, edit: edit) else { return true }
+        commit(result.changes, cursors: result.cursors, primaryIndex: min(primaryIndex, result.cursors.count - 1), typing: false)
+        undoManager?.setActionName(name)
+        return true
+    }
+
     /// One text-and-cursors snapshot per undo step: nothing to get wrong about where things moved.
     /// The text view's own undo stays out of it, and the two take turns on one stack.
     private func commit(_ changes: [TextChange], cursors: [TextCursor], primaryIndex: Int, typing: Bool) {
@@ -700,31 +711,34 @@ extension TextController {
             completion.trigger()
             return
         }
-        // These are about lines around the cursor, so they apply to the one that was added last.
-        codeView.dropExtraCursors()
         let text = codeView.nsText
-        let selection = codeView.selectedRange()
-        let edit: TextEdit?
+        let style = self.style
+        let make: (NSRange) -> TextEdit?
+        // Where several cursors go afterwards. Each block of lines with cursors on it is done once.
+        let placing: MultiCursor.LineCursors
         switch command {
         case .toggleLineComment:
             guard let syntax = CommentSyntax.forFile(path) else {
                 model.showToast(title: String(localized: "This kind of file has no comments"), detail: nil, symbol: "text.bubble", tint: .secondary)
                 return
             }
-            edit = TextEditing.toggleLineComment(in: text, selection: selection, syntax: syntax)
-        case .indentLines: edit = TextEditing.indent(in: text, selection: selection, style: style)
-        case .outdentLines: edit = TextEditing.outdent(in: text, selection: selection, style: style)
-        case .moveLinesUp: edit = TextEditing.moveLines(in: text, selection: selection, up: true)
-        case .moveLinesDown: edit = TextEditing.moveLines(in: text, selection: selection, up: false)
-        case .copyLinesUp: edit = TextEditing.copyLines(in: text, selection: selection, up: true)
-        case .copyLinesDown: edit = TextEditing.copyLines(in: text, selection: selection, up: false)
-        case .deleteLine: edit = TextEditing.deleteLines(in: text, selection: selection)
+            (make, placing) = ({ TextEditing.toggleLineComment(in: text, selection: $0, syntax: syntax) }, .follow)
+        case .indentLines: (make, placing) = ({ TextEditing.indent(in: text, selection: $0, style: style) }, .follow)
+        case .outdentLines: (make, placing) = ({ TextEditing.outdent(in: text, selection: $0, style: style) }, .follow)
+        case .moveLinesUp: (make, placing) = ({ TextEditing.moveLines(in: text, selection: $0, up: true) }, .travel)
+        case .moveLinesDown: (make, placing) = ({ TextEditing.moveLines(in: text, selection: $0, up: false) }, .travel)
+        case .copyLinesUp: (make, placing) = ({ TextEditing.copyLines(in: text, selection: $0, up: true) }, .travel)
+        case .copyLinesDown: (make, placing) = ({ TextEditing.copyLines(in: text, selection: $0, up: false) }, .travel)
+        case .deleteLine: (make, placing) = ({ TextEditing.deleteLines(in: text, selection: $0) }, .one)
         case .insertLineBelow:
-            edit = TextEditing.insertLineBelow(in: text, selection: selection, style: style, colonOpensBlock: CommentSyntax.colonOpensBlock(path))
-        case .insertLineAbove: edit = TextEditing.insertLineAbove(in: text, selection: selection)
-        case .addNextOccurrence, .triggerCompletion: edit = nil
+            let colon = CommentSyntax.colonOpensBlock(path)
+            (make, placing) = ({ TextEditing.insertLineBelow(in: text, selection: $0, style: style, colonOpensBlock: colon) }, .one)
+        case .insertLineAbove: (make, placing) = ({ TextEditing.insertLineAbove(in: text, selection: $0) }, .one)
+        case .addNextOccurrence, .triggerCompletion: return
         }
-        if let edit { codeView.apply(edit, name: L10n.display(command.title)) }
+        let name = L10n.display(command.title)
+        if codeView.applyAtEveryCursor(placing, name: name, edit: make) { return }
+        if let edit = make(codeView.selectedRange()) { codeView.apply(edit, name: name) }
     }
 
     func insertNewline() {

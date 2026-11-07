@@ -95,6 +95,90 @@ public enum MultiCursor {
         return (changes, cursors)
     }
 
+    /// Where the cursors go after a line command.
+    public enum LineCursors: Sendable {
+        /// They stay on their text as it changes around them: comments, indenting.
+        case follow
+        /// They go with their lines: moving and copying.
+        case travel
+        /// The lines' cursors become the one the command leaves: deleting, inserting a line.
+        case one
+    }
+
+    /// A line command at every cursor. Cursors whose lines touch are one block, so a line is
+    /// commented, moved or deleted once however many cursors are on it. Each block is worked
+    /// out as if it were the only selection, and nil leaves that block as it was.
+    public static func lineEdit(at cursors: [TextCursor], in text: NSString, cursors placing: LineCursors,
+                                edit: (NSRange) -> TextEdit?) -> (changes: [TextChange], cursors: [TextCursor])? {
+        let sorted = normalized(cursors)
+        guard !sorted.isEmpty else { return nil }
+        // Blocks of whole lines, with the cursors on them.
+        var blocks: [(lines: NSRange, cursors: [TextCursor])] = []
+        for cursor in sorted {
+            let lines = TextEditing.lines(in: text, selection: cursor.range).range
+            if let last = blocks.last, lines.location <= NSMaxRange(last.lines) {
+                let union = NSUnionRange(last.lines, lines)
+                blocks[blocks.count - 1] = (union, last.cursors + [cursor])
+            } else {
+                blocks.append((lines, [cursor]))
+            }
+        }
+        var changes: [TextChange] = []
+        var result: [TextCursor] = []
+        var delta = 0
+        var changed = false
+        for block in blocks {
+            // One cursor's own selection; several, from the first to the end of the block's last line,
+            // so a caret at the start of that line still counts it.
+            let first = block.cursors[0].range.location
+            var end = block.cursors.map { NSMaxRange($0.range) }.max() ?? first
+            if block.cursors.count > 1 {
+                var lastLine = NSMaxRange(block.lines)
+                while lastLine > block.lines.location, lastLine > end, [10, 13].contains(text.character(at: lastLine - 1)) { lastLine -= 1 }
+                end = max(end, lastLine)
+            }
+            let span = NSRange(location: first, length: end - first)
+            guard let made = edit(span) else {
+                result += block.cursors.map { TextCursor(anchor: $0.anchor + delta, head: $0.head + delta) }
+                continue
+            }
+            changed = true
+            let own = made.changes.sorted { $0.range.location < $1.range.location }
+            let placed: [TextCursor]
+            if block.cursors.count == 1 || placing == .one {
+                placed = [TextCursor(made.selection)]
+            } else if placing == .travel {
+                let shift = made.selection.location - span.location
+                placed = block.cursors.map { TextCursor(anchor: $0.anchor + shift, head: $0.head + shift) }
+            } else {
+                placed = block.cursors.map { TextCursor(anchor: position($0.anchor, through: own), head: position($0.head, through: own)) }
+            }
+            result += placed.map { TextCursor(anchor: $0.anchor + delta, head: $0.head + delta) }
+            changes += own
+            for change in own { delta += (change.text as NSString).length - change.range.length }
+        }
+        return changed ? (changes, normalized(result)) : nil
+    }
+
+    /// Where a place in the text ends up once these changes, in order, are made. Text put in
+    /// right where it is goes before it; a place inside what's replaced stays inside the new text.
+    static func position(_ offset: Int, through changes: [TextChange]) -> Int {
+        var shift = 0
+        for change in changes {
+            let length = (change.text as NSString).length
+            if change.range.length == 0 {
+                if change.range.location <= offset { shift += length } else { break }
+            } else if NSMaxRange(change.range) <= offset {
+                shift += length - change.range.length
+            } else if change.range.location < offset {
+                return change.range.location + shift + min(offset - change.range.location, length)
+            } else {
+                break
+            }
+        }
+        return offset + shift
+    }
+
     /// What ⌘D adds: the next place this text appears after `offset`, going round to the top.
     /// A word ⌘D chose by itself matches whole and exact. Nil once they're all selected.
     public static func nextOccurrence(of needle: String, in text: NSString, after offset: Int, existing: [NSRange], wholeWord: Bool) -> NSRange? {

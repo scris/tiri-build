@@ -554,6 +554,93 @@ private struct SeededGenerator: RandomNumberGenerator {
         #expect(MultiCursor.normalized(cursors((0, 2), (2, 4))) == cursors((0, 2), (2, 4)))
     }
 
+    // MARK: Line commands at every cursor
+
+    private func lineCommand(_ text: String, _ at: [TextCursor], _ placing: MultiCursor.LineCursors,
+                             _ edit: (NSString, NSRange) -> TextEdit?) -> (text: String, cursors: [TextCursor])? {
+        let string = text as NSString
+        guard let result = MultiCursor.lineEdit(at: at, in: string, cursors: placing, edit: { edit(string, $0) }) else { return nil }
+        return (applied(text, result.changes), result.cursors)
+    }
+
+    @Test func commentingKeepsEveryCursor() throws {
+        // ⌘D on `x` in three lines, then ⌘/.
+        let text = "let x = 1\nlet y = 2\nlet x = 3\nx()\n"
+        let result = try #require(lineCommand(text, cursors((4, 5), (24, 25), (30, 31)), .follow) {
+            TextEditing.toggleLineComment(in: $0, selection: $1, syntax: CommentSyntax(line: "//"))
+        })
+        #expect(result.text == "// let x = 1\nlet y = 2\n// let x = 3\n// x()\n")
+        #expect(result.cursors == cursors((7, 8), (30, 31), (39, 40)))
+        // And back.
+        let back = try #require(lineCommand(result.text, result.cursors, .follow) {
+            TextEditing.toggleLineComment(in: $0, selection: $1, syntax: CommentSyntax(line: "//"))
+        })
+        #expect(back.text == text)
+        #expect(back.cursors == cursors((4, 5), (24, 25), (30, 31)))
+    }
+
+    @Test func twoCursorsOnOneLineCommentItOnce() throws {
+        let text = "a(x, x)\nb\n"
+        let result = try #require(lineCommand(text, cursors((2, 3), (5, 6)), .follow) {
+            TextEditing.toggleLineComment(in: $0, selection: $1, syntax: CommentSyntax(line: "#"))
+        })
+        #expect(result.text == "# a(x, x)\nb\n")
+        #expect(result.cursors == cursors((4, 5), (7, 8)))
+    }
+
+    @Test func indentingMovesEachCursorWithItsLine() throws {
+        let text = "a\nb\nc\n"
+        let result = try #require(lineCommand(text, cursors((1, 1), (5, 5)), .follow) {
+            TextEditing.indent(in: $0, selection: $1, style: .spaces(2))
+        })
+        #expect(result.text == "  a\nb\n  c\n")
+        #expect(result.cursors == cursors((3, 3), (9, 9)))
+    }
+
+    @Test func movingCarriesEveryCursor() throws {
+        let text = "1\n2\n3\n4\n5\n"
+        // Cursors on lines 2 and 4 move down, each over the line below it.
+        let result = try #require(lineCommand(text, cursors((2, 2), (6, 6)), .travel) {
+            TextEditing.moveLines(in: $0, selection: $1, up: false)
+        })
+        #expect(result.text == "1\n3\n2\n5\n4\n")
+        #expect(result.cursors == cursors((4, 4), (8, 8)))
+        // Lines next to each other move as one block, cursors and all.
+        let block = try #require(lineCommand(text, cursors((2, 3), (4, 4)), .travel) {
+            TextEditing.moveLines(in: $0, selection: $1, up: true)
+        })
+        #expect(block.text == "2\n3\n1\n4\n5\n")
+        #expect(block.cursors == cursors((0, 1), (2, 2)))
+    }
+
+    @Test func copyingDownPutsCursorsOnTheCopies() throws {
+        let text = "a\nb\nc\n"
+        let result = try #require(lineCommand(text, cursors((0, 0), (4, 4)), .travel) {
+            TextEditing.copyLines(in: $0, selection: $1, up: false)
+        })
+        #expect(result.text == "a\na\nb\nc\nc\n")
+        #expect(result.cursors == cursors((2, 2), (8, 8)))
+    }
+
+    @Test func deletingLeavesACursorWhereEachBlockWas() throws {
+        let text = "a\nb\nc\nd\n"
+        let result = try #require(lineCommand(text, cursors((0, 0), (4, 4)), .one) {
+            TextEditing.deleteLines(in: $0, selection: $1)
+        })
+        #expect(result.text == "b\nd\n")
+        #expect(result.cursors == cursors((0, 0), (2, 2)))
+    }
+
+    @Test func aBlockThatCantMoveStaysWhileTheOthersDo() throws {
+        let text = "1\n2\n3\n4\n"
+        let result = try #require(lineCommand(text, cursors((0, 0), (6, 6)), .travel) {
+            TextEditing.moveLines(in: $0, selection: $1, up: true)
+        })
+        #expect(result.text == "1\n2\n4\n3\n")
+        #expect(result.cursors == cursors((0, 0), (4, 4)))
+        #expect(lineCommand("1\n2\n", cursors((0, 0), (0, 1)), .travel) { TextEditing.moveLines(in: $0, selection: $1, up: true) } == nil)
+    }
+
     @Test func aSelectionKnowsItsOwnDirection() {
         #expect(TextCursor(anchor: 5, head: 2).range == NSRange(location: 2, length: 3))
     }
