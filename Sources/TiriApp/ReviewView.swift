@@ -56,6 +56,7 @@ extension AppModel {
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host
         popover.show(relativeTo: position.rect, of: position.view, preferredEdge: .maxY)
+        Self.keepTyping(in: popover)
         reviewPopover = popover
         // Return finishes, as it does in a chat, and Shift+Return makes a new line. Asked of the
         // keys themselves: a box opened on a selection doesn't always become the key window, so
@@ -86,14 +87,31 @@ extension AppModel {
         }
     }
 
+    private static func textView(in view: NSView?) -> NSTextView? {
+        guard let view else { return nil }
+        return view as? NSTextView ?? view.subviews.lazy.compactMap(textView(in:)).first
+    }
+
     /// What's in the box itself: its binding can be a few keys behind what's been typed.
     private static func typedText(in popover: NSPopover) -> String? {
-        func textView(in view: NSView?) -> NSTextView? {
-            guard let view else { return nil }
-            return view as? NSTextView ?? view.subviews.lazy.compactMap(textView(in:)).first
-        }
         let typed = textView(in: popover.contentViewController?.view)?.string.trimmingCharacters(in: .whitespacesAndNewlines)
         return typed?.isEmpty == false ? typed : nil
+    }
+
+    /// A comment is about code, so the Mac mustn't rewrite what's typed: no corrected names,
+    /// curly quotes or dashes in place of `--`. SwiftUI's box turns these on, and has no switch for them.
+    private static func keepTyping(in popover: NSPopover) {
+        func apply() {
+            guard let text = textView(in: popover.contentViewController?.view) else { return }
+            text.isAutomaticSpellingCorrectionEnabled = false
+            text.isAutomaticTextReplacementEnabled = false
+            text.isAutomaticQuoteSubstitutionEnabled = false
+            text.isAutomaticDashSubstitutionEnabled = false
+            text.isAutomaticTextCompletionEnabled = false
+        }
+        apply()
+        // The box can be made a moment after the popover shows.
+        DispatchQueue.main.async { apply() }
     }
 
     func addReviewComment(_ comment: ReviewComment, in workspaceID: WorkspaceID? = nil) {
