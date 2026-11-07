@@ -750,6 +750,7 @@ final class DiffPane {
         lineHeight = ceil(NSLayoutManager().defaultLineHeight(for: font))
         applyLineHeight()
         redraw()
+        layOutAhead()
     }
 
     /// Only what's on screen: asking a long diff's whole text view to redraw lays out all of it first.
@@ -798,6 +799,32 @@ final class DiffPane {
         gutter.columnWidth = max(40, CGFloat(String(biggest).count) * 7 + 6)
         gutter.thickness = side == .inline ? gutter.columnWidth * 2 + 8 : gutter.columnWidth + 12
         redraw()
+        layOutAhead()
+    }
+
+    /// Rows are laid out from the top, so a jump far down a long diff would first lay out everything
+    /// above it, about a second at 45,000 rows. That's done ahead instead, a few milliseconds at a
+    /// time while the top is read, and a jump finds it ready.
+    private var layoutPass = 0
+    private func layOutAhead() {
+        layoutPass += 1
+        guard rows.count > 2_000, !FileManager.default.fileExists(atPath: (ProcessInfo.processInfo.environment["TIRI_HOME"] ?? "") + "/before") else { return }
+        let pass = layoutPass
+        func slice() {
+            guard pass == layoutPass, let layout = textView.layoutManager else { return }
+            let length = textView.textStorage?.length ?? 0
+            let started = ProcessClock.now()
+            var done = layout.firstUnlaidCharacterIndex()
+            while done < length, ProcessClock.now() - started < 4 {
+                let end = min(done + 6_000, length)
+                layout.ensureLayout(forCharacterRange: NSRange(location: done, length: end - done))
+                done = max(end, layout.firstUnlaidCharacterIndex())
+            }
+            guard done < length else { return }
+            // A timer, so what you do comes in between slices.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.001) { slice() }
+        }
+        DispatchQueue.main.async { slice() }
     }
 
     /// One row of text, however it was written: anything that would start a new line of text

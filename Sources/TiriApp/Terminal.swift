@@ -638,24 +638,30 @@ final class TiriTerminalView: LocalProcessTerminalView {
         if let soft = Self.build(rows: rows, indexes: Array(start...end), hitRow: rowIndex, hitColumn: column) {
             variants.append(soft)
         }
-        // A row that reaches the right margin may continue on the next one.
+        // A row that reaches the right margin may continue on the next one, and an agent wraps a
+        // long path over as many rows as it takes, indenting each: Claude Code's took four at 62 columns.
         func nearlyFull(_ index: Int) -> Bool {
             let trimmed = rows[index].text.reversed().drop { $0 == " " }.count
             return trimmed >= cols - 8
         }
-        if end + 1 < rows.count, nearlyFull(end),
-           let joined = Self.build(rows: rows, indexes: Array(start...(end + 1)), hitRow: rowIndex, hitColumn: column, trimIndentOf: end + 1) {
-            variants.append(joined)
-        }
-        if start > 0, nearlyFull(start - 1),
-           let joined = Self.build(rows: rows, indexes: Array((start - 1)...end), hitRow: rowIndex, hitColumn: column, trimIndentOf: start) {
-            variants.append(joined)
+        var top = start
+        while top > 0, start - top < 12, nearlyFull(top - 1) { top -= 1 }
+        var bottom = end
+        while bottom + 1 < rows.count, bottom - end < 12, nearlyFull(bottom) { bottom += 1 }
+        // The whole run first, then what's below, then what's above, in case the rest isn't the same path.
+        var tried: Set<ClosedRange<Int>> = [start...end]
+        for span in [top...bottom, start...bottom, top...end] where tried.insert(span).inserted {
+            // Rows SwiftTerm wrapped carry on exactly. A row after a real newline loses its indent.
+            let indented = Set(span.dropFirst().filter { !rows[$0].isWrapped })
+            if let joined = Self.build(rows: rows, indexes: Array(span), hitRow: rowIndex, hitColumn: column, trimIndentOf: indented) {
+                variants.append(joined)
+            }
         }
         return variants.map { (line: $0.0, column: $0.1) }
     }
 
     private static func build(rows: [TerminalVisibleRowSnapshot], indexes: [Int], hitRow: Int, hitColumn: Int,
-                              trimIndentOf: Int? = nil) -> (LogicalLine, Int)? {
+                              trimIndentOf: Set<Int> = []) -> (LogicalLine, Int)? {
         var text = ""
         var cells: [(row: Int, col: Int, width: Int)] = []
         var hitCharacter = -1
@@ -663,14 +669,14 @@ final class TiriTerminalView: LocalProcessTerminalView {
             let row = rows[index]
             var cursor = 0
             var characters = Array(row.text)
-            if index == trimIndentOf {
+            if trimIndentOf.contains(index) {
                 while characters.first == " " {
                     characters.removeFirst()
                     cursor += 1
                 }
             }
             // A hard-wrapped row's trailing spaces aren't part of the path.
-            if trimIndentOf != nil, index != indexes.last {
+            if trimIndentOf.contains(index + 1) {
                 while characters.last == " " { characters.removeLast() }
             }
             for character in characters {
