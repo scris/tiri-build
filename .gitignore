@@ -71,3 +71,6 @@ scripts/grammars/node_modules/
 site/public/download/
 site/public/update.json
 site/public/_redirects
+
+# Local test log, not part of the repo
+PROGRESS.md

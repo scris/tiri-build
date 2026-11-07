@@ -28,6 +28,13 @@ Not a setting, and not a plugin API: you change the actual source.
 - **It lasts:** every update keeps your changes. If Tiri ships the same thing, your change retires itself.
 - **It's safe:** your agent can build a change, but only you can switch to it. Plain Tiri is always one click away.
 
+## Any path an agent prints opens in place
+
+- **⌘-click a path in agent output,** and the file floats over the session without moving your layout. This is the Peek.
+- **Even a wrong path opens.** Tiri finds what the agent meant, or lets you choose.
+- **Your agent can open things too.** `tiri open report.md` floats what it made for you to read, and your keyboard stays in the session.
+- **Undo or Ask on any change** goes to the agent that made it, typed into its input and waiting for your Return.
+
 ## What you keep
 
 - **Your agent, untouched.** It's the real CLI, with your config, hooks and subscription.
@@ -39,16 +46,13 @@ Not a setting, and not a plugin API: you change the actual source.
 
 ## What you get
 
+- **Every agent at a glance:** what each one is doing, and which one needs you.
 - **Files, diffs and pages are tabs**, equal to terminals. There's no terminal drawer.
-- **The Peek:** ⌘-click a path in agent output, and the file floats over the session without moving your layout.
-- **No dead ends:** a path that doesn't exist as written still opens, because Tiri finds what the agent meant.
+- **Agents outlive the app.** Quitting, crashing or a dropped server connection doesn't stop them.
 - **Folder first:** nothing starts until you say where, so an agent never works in the wrong place.
 - **Per-turn diffs** show what one prompt changed.
 - **Batched review:** comment across many files, then send everything as one message.
-- **Undo or Ask** on any change goes to the agent that made it.
 - **⌘L** quotes a selection to your agent, as a real mention in Claude Code.
-- **Agents outlive the app.** Quitting, crashing or a dropped server connection doesn't stop them.
-- **Every agent at a glance:** what each one is doing, and which one needs you.
 
 ## What Tiri believes
 
@@ -84,6 +88,5 @@ Pick an agent and choose a folder. Say yes when Tiri offers to install hooks.
 - [GUIDE.md](GUIDE.md) covers every feature, plus signing and notarized builds.
 - `tiri --skill` prints a guide written for agents.
 - [CHANGING.md](CHANGING.md) maps the source.
-- [PROGRESS.md](PROGRESS.md) records what has been tested.
 
 Made by [Tianrun Qiu](https://r-q.name). Tiri is licensed under the [Mozilla Public License 2.0](LICENSE).
