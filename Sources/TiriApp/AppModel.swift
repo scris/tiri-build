@@ -1147,19 +1147,32 @@ final class AppModel {
         }
     }
 
-    func linkMatches(for path: String, from item: ItemID) -> [String] {
+    func linkMatches(for path: String, from item: ItemID, also extra: [String] = []) -> [String] {
         guard let workspace = workspace(containing: item) else { return [] }
         let openFiles = workspace.items.compactMap(\.filePath)
         let cwd = (existingController(for: item) as? TerminalController)?.currentDirectory
         let found = PathSearch.matches(for: path) { name in
             fileIndex.paths(named: name) + terminalFolderIndex.paths(named: name)
-                + openFiles.filter { ($0 as NSString).lastPathComponent == name }
+                + (openFiles + extra).filter { ($0 as NSString).lastPathComponent == name }
         }
         // The same file reached by two names is one match.
         var seen = Set<String>()
         return PathSearch.ranked(found, open: Set(openFiles), near: cwd).filter {
             seen.insert(($0 as NSString).resolvingSymlinksInPath).inserted
         }
+    }
+
+    /// The index holds what git counts as the project, but agents print paths to what it ignores
+    /// too: screenshots, build output, logs. Asked only once nothing else matched, so it walks
+    /// for that one name, and gives up after a few seconds.
+    func ignoredLinkFiles(named name: String, from item: ItemID) async -> [String] {
+        guard let workspace = workspace(containing: item), workspace.remote == nil, !name.isEmpty else { return [] }
+        let roots = workspace.folders + extraLinkRoots(for: workspace)
+        let excludes = ExcludeMatcher(patterns: settings.filesExclude)
+        return await Task.detached(priority: .userInitiated) {
+            let deadline = Date().addingTimeInterval(3)
+            return FileIndexer.walk(roots: roots, excludes: excludes, limit: 500, named: name) { Date() > deadline }.map(\.path)
+        }.value
     }
 
     func openWebFromTerminal(_ url: URL, forceTab: Bool, from destination: String) {

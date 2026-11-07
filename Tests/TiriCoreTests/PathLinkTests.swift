@@ -225,6 +225,20 @@ struct LinkCase: Sendable, CustomTestStringConvertible {
         #expect(found.map(\.path) == ["/w/site/resume/opportunities.html"])
     }
 
+    @Test func aSearchNeverOpensAnotherFileOnTheLine() {
+        // The index knows app.ts but not shot.png. A click on shot.png must not land on app.ts.
+        let resolver = PathResolver(cwd: "/p", workspaceFolders: [], probe: { $0 == "/p/src/app.ts" ? false : nil },
+                                    search: { path in path.hasSuffix("app.ts") ? ["/p/src/app.ts"] : [] })
+        #expect(resolver.resolveAll(atColumn: 8, in: "Saved shot.png and src/app.ts").isEmpty)
+        #expect(resolver.resolveAll(atColumn: 22, in: "Saved shot.png and src/app.ts").map(\.path) == ["/p/src/app.ts"])
+    }
+
+    @Test func aSearchStillFindsANameWithSpaces() {
+        let resolver = PathResolver(cwd: "/p", workspaceFolders: [], probe: { $0 == "/w/My Notes.md" ? false : nil },
+                                    search: { path in path == "My Notes.md" ? ["/w/My Notes.md"] : [] })
+        #expect(resolver.resolveAll(atColumn: 9, in: "Wrote My Notes.md").map(\.path) == ["/w/My Notes.md"])
+    }
+
     @Test func aFileWithBracketsInItsNameStillOpens() {
         let resolver = PathResolver(cwd: "/p", workspaceFolders: [], probe: { $0 == "/p/report(final).pdf" ? false : nil })
         #expect(resolver.resolve(atColumn: 9, in: "report(final).pdf")?.path == "/p/report(final).pdf")

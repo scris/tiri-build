@@ -820,6 +820,12 @@ import Testing
         #expect(Set(files.map(\.relative)) == ["file10.txt", "file2.txt", "src/a.swift", "src/deep/b.swift"])
     }
 
+    @Test func indexerWalksForOneName() throws {
+        let root = try fixture()
+        #expect(FileIndexer.walk(roots: [root], excludes: excludes, named: "b.swift").map(\.relative) == ["src/deep/b.swift"])
+        #expect(FileIndexer.walk(roots: [root], excludes: excludes, named: "missing.txt").isEmpty)
+    }
+
     @Test func indexerRespectsLimit() throws {
         let root = try fixture()
         #expect(FileIndexer.walk(roots: [root], excludes: excludes, limit: 1).count <= 2)

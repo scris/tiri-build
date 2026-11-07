@@ -95,7 +95,8 @@ public struct IndexedFile: Sendable, Equatable {
 public enum FileIndexer {
     /// Walk folders without following symlinks. Stops at `limit` files so opening a huge
     /// folder (a home directory, say) can't run away.
-    public static func walk(roots: [String], excludes: ExcludeMatcher, limit: Int = 200_000,
+    /// With `named`, only files of that name are kept, and the walk still visits every folder.
+    public static func walk(roots: [String], excludes: ExcludeMatcher, limit: Int = 200_000, named: String? = nil,
                             isCancelled: () -> Bool = { false }) -> [IndexedFile] {
         var files: [IndexedFile] = []
         files.reserveCapacity(4096)
@@ -118,6 +119,7 @@ public enum FileIndexer {
                     case DT_DIR:
                         stack.append(path)
                     case DT_REG, DT_LNK:
+                        if let named, name != named { continue }
                         let relative = String(path.dropFirst(root.count + 1))
                         files.append(IndexedFile(path: path, root: root, relative: relative, name: name))
                     default:

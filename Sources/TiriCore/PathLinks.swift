@@ -523,6 +523,9 @@ public struct PathResolver: Sendable {
             if let exact = resolveExactly(candidate) { return [exact] }
         }
         for candidate in candidates {
+            // A stretch with spaces is there for names with spaces. Searched for when only its folders have them,
+            // `Saved shot.png and src/app.ts` would open app.ts for a click on shot.png.
+            if candidate.path.contains(" "), !(candidate.path as NSString).lastPathComponent.contains(" ") { continue }
             let matches = searchMatches(candidate)
             if !matches.isEmpty { return matches }
         }

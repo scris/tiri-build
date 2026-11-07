@@ -405,7 +405,7 @@ final class TiriTerminalView: LocalProcessTerminalView {
             let candidate = PathCandidate(path: link, range: 0..<0)
             let found = pathResolver()?.resolveAll(candidate) ?? []
             if found.isEmpty {
-                searchAgain(for: link, forceTab: forceTab) { [weak self] in self?.pathResolver()?.resolveAll(candidate) ?? [] }
+                searchAgain(for: link, forceTab: forceTab) { [weak self] extra in self?.pathResolver(also: extra)?.resolveAll(candidate) ?? [] }
             } else {
                 model.chooseFromTerminal(found, forceTab: forceTab)
             }
@@ -444,8 +444,8 @@ final class TiriTerminalView: LocalProcessTerminalView {
         // A bare word isn't a path, and nor is a sentence with a path in it, like an error message.
         // It may be the label of a real hyperlink.
         guard let shown = candidates.first(where: { !$0.path.contains(" ") && ($0.path.contains("/") || $0.path.contains(".")) })?.path else { return false }
-        searchAgain(for: shown, forceTab: forceTab) { [weak self] in
-            guard let resolver = self?.pathResolver() else { return [] }
+        searchAgain(for: shown, forceTab: forceTab) { [weak self] extra in
+            guard let resolver = self?.pathResolver(also: extra) else { return [] }
             for variant in variants {
                 let matches = resolver.resolveAll(atColumn: variant.column, in: variant.line.text)
                 if !matches.isEmpty { return matches }
@@ -455,7 +455,8 @@ final class TiriTerminalView: LocalProcessTerminalView {
         return true
     }
 
-    private func searchAgain(for shown: String, forceTab: Bool, find: @escaping () -> [ResolvedPath]) {
+    /// `find` is given files to search beyond the index, which only the last look passes.
+    private func searchAgain(for shown: String, forceTab: Bool, find: @escaping ([String]) -> [ResolvedPath]) {
         guard let owner else { return }
         // On a server the copy only holds the workspace's folders. It may be anywhere else there.
         if !alreadyAskedServer, let destination = owner.remoteDestination, let connection = owner.model.remote.existingConnection(destination),
@@ -467,7 +468,7 @@ final class TiriTerminalView: LocalProcessTerminalView {
                 }.value
                 guard let self else { return }
                 if known {
-                    let matches = find()
+                    let matches = find([])
                     if !matches.isEmpty {
                         owner.model.chooseFromTerminal(matches, forceTab: forceTab)
                         return
@@ -479,16 +480,27 @@ final class TiriTerminalView: LocalProcessTerminalView {
             }
             return
         }
-        owner.model.rebuildLinkIndexes(for: owner.itemID) { [weak self] in
+        let item = owner.itemID
+        owner.model.rebuildLinkIndexes(for: item) { [weak self] in
             guard let model = self?.owner?.model else { return }
-            let matches = find()
+            let matches = find([])
             if !matches.isEmpty {
                 model.chooseFromTerminal(matches, forceTab: forceTab)
                 return
             }
-            model.showToast(title: String(localized: "No file matches \(shown)"),
-                            detail: String(localized: "Searched this workspace's folders, terminals and open files."),
-                            symbol: "magnifyingglass", tint: .secondary)
+            Task { [weak self] in
+                // Last, what git ignores. Searched for this name alone, so it's quick.
+                let ignored = await model.ignoredLinkFiles(named: (shown as NSString).lastPathComponent, from: item)
+                guard self != nil else { return }
+                let matches = ignored.isEmpty ? [] : find(ignored)
+                if !matches.isEmpty {
+                    model.chooseFromTerminal(matches, forceTab: forceTab)
+                    return
+                }
+                model.showToast(title: String(localized: "No file matches \(shown)"),
+                                detail: String(localized: "Searched this workspace's folders, terminals and open files."),
+                                symbol: "magnifyingglass", tint: .secondary)
+            }
         }
     }
 
@@ -683,12 +695,12 @@ final class TiriTerminalView: LocalProcessTerminalView {
         return (matches.count == 1 ? .path(first) : .choice(matches), first.range)
     }
 
-    private func pathResolver() -> PathResolver? {
+    private func pathResolver(also extra: [String] = []) -> PathResolver? {
         guard let owner else { return nil }
         let model = owner.model
         let itemID = owner.itemID
         var resolver = PathResolver(cwd: owner.currentDirectory, workspaceFolders: model.workspace(containing: itemID)?.folders ?? [], search: { path in
-            MainActor.assumeIsolated { model.linkMatches(for: path, from: itemID) }
+            MainActor.assumeIsolated { model.linkMatches(for: path, from: itemID, also: extra) }
         })
         // An absolute path printed on a server is a path on that server.
         if let destination = owner.remoteDestination, let connection = model.remote.existingConnection(destination) {
