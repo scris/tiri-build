@@ -372,9 +372,20 @@ public enum CLIParser {
             let numbers = args.first.map { $0.split(separator: ",").compactMap { Double($0) } } ?? []
             guard args.count == 1, numbers.count == 4 else { throw UsageError("usage: tiri dev-drag x1,y1,x2,y2   (test copies only)") }
             return request("dev.drag", ["from": .array([.double(numbers[0]), .double(numbers[1])]), "to": .array([.double(numbers[2]), .double(numbers[3])])])
+        case "dev-drop":
+            // Drops what's on the test pasteboard on the explorer row of a path, or below the rows with none.
+            guard args.count <= 1 else { throw UsageError("usage: tiri dev-drop [<path>]   (test copies only)") }
+            return request("dev.drop", args.first.map { ["path": .string(Self.absolute($0, environment))] } ?? [:])
+
         case "dev-key":
-            guard args.count == 1, let code = Int(args[0]) else { throw UsageError("usage: tiri dev-key <key code>   (test copies only)") }
-            return request("dev.key", ["code": .int(code)])
+            // `tiri dev-key 9 cmd v` is ⌘V: modifiers joined by commas, then the character the key types.
+            guard (1...3).contains(args.count), let code = Int(args[0]) else {
+                throw UsageError("usage: tiri dev-key <key code> [cmd,shift,option,control] [character]   (test copies only)")
+            }
+            var payload: [String: JSONValue] = ["code": .int(code)]
+            if args.count > 1 { payload["modifiers"] = .string(args[1]) }
+            if args.count > 2 { payload["characters"] = .string(args[2]) }
+            return request("dev.key", payload)
 
         case "dev-blocked-link":
             guard args.count >= 2 else { throw UsageError("usage: tiri dev-blocked-link <item-id> <target> [<reason>]   (test copies only)") }

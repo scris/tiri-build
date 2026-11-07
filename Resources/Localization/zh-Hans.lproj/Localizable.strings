@@ -1571,6 +1571,15 @@
 "Couldn't rename %@" = "无法重命名 %@";
 "%@ already exists" = "%@ 已存在";
 "Couldn't create %@" = "无法创建 %@";
+"Paste" = "粘贴";
+"Copy" = "复制";
+"Couldn't copy that here" = "无法复制到这里";
+"It's on another server." = "它在另一台服务器上。";
+"It couldn't be read." = "无法读取它。";
+"The connection dropped, or the server said no." = "连接断开了，或服务器拒绝了。";
+"Not connected." = "未连接。";
+"Couldn't copy %lld of those here" = "其中 %lld 个无法复制到这里";
+"%@ can't go inside itself." = "%@ 不能放进它自己里面。";
 "New File…" = "新建文件…";
 "New Folder…" = "新建文件夹…";
 "Open in Integrated Terminal" = "在集成终端中打开";

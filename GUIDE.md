@@ -411,6 +411,8 @@ The sidebar's sections (Explorer, Changes, Agents, Review, Open Items) each fold
 
 In the explorer, a single click previews a file and a double-click keeps it open. Enter renames, Space previews, ⌘↓ opens and ⌘⌫ moves to the Trash. Drag a file into a terminal to insert its shell-quoted path.
 
+Files copied in Finder paste into the explorer: select a folder and press ⌘V, or drop them on it. Dropped on a file, they go in beside it. They're copies, and a name that's taken gets “copy”, as in Finder. ⌘C copies the selected files themselves, for Finder or another folder here. A folder on a server takes them too: they're sent over your connection, and what's already on that server is copied there.
+
 The bar along the bottom shows each repository's branch and what the language server says about the file in front. When there's nothing to show, it disappears.
 
 ### Shortcuts

@@ -1287,12 +1287,43 @@ enum ControlHandler {
         case "dev.key":
             // A real key event through the app's own queue, which is as close as a hidden window gets.
             guard AppModel.isTestCopy, let code = request.args["code"]?.intValue, let window = model.window else { throw ControlFailure("Only for a test copy.") }
+            var flags: NSEvent.ModifierFlags = []
+            for name in (request.args["modifiers"]?.stringValue ?? "").split(separator: ",") {
+                switch name {
+                case "cmd": flags.insert(.command)
+                case "shift": flags.insert(.shift)
+                case "option": flags.insert(.option)
+                case "control": flags.insert(.control)
+                default: throw ControlFailure("No modifier \(name). It's cmd, shift, option or control.")
+                }
+            }
+            let characters = request.args["characters"]?.stringValue ?? " "
             for type in [NSEvent.EventType.keyDown, .keyUp] {
-                guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                                                   context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: false, keyCode: UInt16(code)) else { continue }
+                guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                   context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: UInt16(code)) else { continue }
+                // A hidden window is never the key window, so a ⌘ key would find no one to go to. It goes where a
+                // key window's would: the menus first, then what has the keyboard.
+                if flags.contains(.command), type == .keyDown {
+                    func item(in menu: NSMenu?) -> NSMenuItem? {
+                        for entry in menu?.items ?? [] {
+                            if let found = item(in: entry.submenu) { return found }
+                            if entry.keyEquivalent == characters, entry.keyEquivalentModifierMask == flags, entry.action != nil { return entry }
+                        }
+                        return nil
+                    }
+                    // An item with no target of its own goes along the responder chain from what has the keyboard.
+                    if let entry = item(in: NSApp.mainMenu), entry.target == nil, let action = entry.action,
+                       window.firstResponder?.tryToPerform(action, with: entry) == true { continue }
+                    if NSApp.mainMenu?.performKeyEquivalent(with: event) != true { window.sendEvent(event) }
+                    continue
+                }
                 NSApp.postEvent(event, atStart: false)
             }
             return .object([:])
+
+        case "dev.drop":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
+            return .object(["result": .string(model.fileTree.dropForTest(on: request.args["path"]?.stringValue.map { model.aliasedPath($0) }))])
 
         case "dev.browser":
             // What a test copy would have opened in a browser: it never opens one.

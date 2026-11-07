@@ -133,8 +133,25 @@ final class TreeOutlineView: NSOutlineView {
             tree?.openSelected(pin: false)
         case 51 where flags == .command:
             tree?.trashSelected()
+        // The Edit menu takes these first. Here for when it doesn't reach this view.
+        case 8 where flags == .command:
+            copy(nil)
+        case 9 where flags == .command:
+            paste(nil)
         default:
             super.keyDown(with: event)
+        }
+    }
+
+    /// ⌘C and ⌘V, through the Edit menu: the files themselves, to and from Finder or another folder here.
+    @objc func copy(_ sender: Any?) { tree?.copySelectedFiles() }
+    @objc func paste(_ sender: Any?) { tree?.pasteFiles(into: tree?.selectedNodes().first) }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        case #selector(copy(_:)): !selectedRowIndexes.isEmpty
+        case #selector(paste(_:)): tree?.hasFilesToPaste == true
+        default: super.validateUserInterfaceItem(item)
         }
     }
 
@@ -156,7 +173,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     weak var model: AppModel?
     let scrollView = NSScrollView()
     let outline = TreeOutlineView()
-    private var roots: [FileNode] = []
+    private(set) var roots: [FileNode] = []
     private var workspaceID: WorkspaceID?
     private var expanded: Set<String> = []
     private var excludes = ExcludeMatcher(patterns: [])
@@ -191,6 +208,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         outline.doubleAction = #selector(rowDoubleClicked)
         outline.setDraggingSourceOperationMask(.copy, forLocal: false)
         outline.setDraggingSourceOperationMask([.copy], forLocal: true)
+        // Files from Finder land in the folder they're dropped on.
+        outline.registerForDraggedTypes([.fileURL])
         // Growing it to fit an expanded row scrolled the whole tree sideways.
         outline.autoresizesOutlineColumn = false
         outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
@@ -340,7 +359,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     /// The deepest folder on this node's row.
-    private func tail(of node: FileNode) -> FileNode {
+    func tail(of node: FileNode) -> FileNode {
         guard compacts, node.isDirectory, !node.isRoot, node.pendingCreation == nil else { return node }
         var current = node
         // Links can loop, and a run has to end somewhere.
@@ -352,7 +371,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     /// The row this node is on.
-    private func head(of node: FileNode) -> FileNode {
+    func head(of node: FileNode) -> FileNode {
         guard compacts, node.isDirectory else { return node }
         var current = node
         for _ in 0..<64 {
@@ -465,7 +484,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     /// Read again here and now, for a change made from the tree itself.
-    private func refreshNow(_ node: FileNode) {
+    func refreshNow(_ node: FileNode) {
         guard editingNode == nil else { return }
         guard FileManager.default.fileExists(atPath: node.path) else { return }
         apply((try? fileSystem.list(directory: node.path, excludes: excludes)) ?? [], to: node)
@@ -549,13 +568,13 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     // MARK: Selection and reveal
 
     /// What selected rows act on: on a compact row, its deepest folder.
-    private func selectedNodes() -> [FileNode] {
+    func selectedNodes() -> [FileNode] {
         outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? FileNode).map(tail) }
     }
 
     private func selectedPaths() -> [String] { selectedNodes().map(\.path) }
 
-    private func select(paths: [String]) {
+    func select(paths: [String]) {
         var rows = IndexSet()
         for path in paths {
             if let node = findLoaded(path) {
@@ -729,7 +748,7 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
 
     // MARK: Inline editing
 
-    private func targetDirectory(for node: FileNode?) -> FileNode? {
+    func targetDirectory(for node: FileNode?) -> FileNode? {
         guard let node else { return roots.first }
         return node.isDirectory ? node : (node.parent ?? roots.first)
     }
@@ -909,6 +928,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         }
         add(String(localized: "New File…"), #selector(menuNewFile))
         add(String(localized: "New Folder…"), #selector(menuNewFolder))
+        if hasFilesToPaste { add(String(localized: "Paste"), #selector(menuPaste), key: "v", modifiers: [.command]) }
+        if node != nil, node?.isRoot == false { add(String(localized: "Copy"), #selector(menuCopy), key: "c", modifiers: [.command]) }
         if node != nil {
             menu.addItem(.separator())
             add(String(localized: "Reveal in Finder"), #selector(menuRevealInFinder))
@@ -977,6 +998,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
     }
 
     @objc private func menuDelete(_ sender: NSMenuItem) { trashSelected() }
+    @objc private func menuPaste(_ sender: NSMenuItem) { pasteFiles(into: menuNode(sender)) }
+    @objc private func menuCopy(_ sender: NSMenuItem) { copySelectedFiles() }
     @objc private func menuAddFolder(_ sender: NSMenuItem) { model?.addFolderInteractive() }
 
     @objc private func menuRemoveFolder(_ sender: NSMenuItem) {
