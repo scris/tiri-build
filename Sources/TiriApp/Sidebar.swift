@@ -33,18 +33,23 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             WorkspaceSwitcher()
             sectionHeader(String(localized: "Explorer"), isOpen: $explorerOpen) {
-                // With no folder there's nowhere to put one.
-                if !model.active.folders.isEmpty {
-                    Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
-                        .help("New File")
-                        .accessibilityLabel("New File")
-                    Button { model.fileTree.beginCreating(.folder, in: nil) } label: { Image(systemName: "folder.badge.plus") }
-                        .help("New Folder")
-                        .accessibilityLabel("New Folder")
+                // One + like the Workspaces one above, so the two line up; what it makes is in its menu.
+                Menu {
+                    // With no folder there's nowhere to put one.
+                    if !model.active.folders.isEmpty {
+                        Button("New File…") { model.fileTree.beginCreating(.file, in: nil) }
+                        Button("New Folder…") { model.fileTree.beginCreating(.folder, in: nil) }
+                        Divider()
+                    }
+                    Button("Add Folder to Workspace…") { model.addFolderInteractive() }
+                } label: {
+                    Image(systemName: "plus")
                 }
-                Button { model.addFolderInteractive() } label: { Image(systemName: "plus") }
-                    .help("Add Folder to Workspace")
-                    .accessibilityLabel("Add Folder to Workspace")
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Add")
+                .accessibilityLabel("Add")
             }
             if model.active.folders.isEmpty {
                 if explorerOpen {
