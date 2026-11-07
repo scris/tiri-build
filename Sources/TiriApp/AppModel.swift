@@ -162,6 +162,8 @@ final class AppModel {
     @ObservationIgnored lazy var editorBridge = EditorBridge(model: self)
     @ObservationIgnored var lastAgentTerminal: ItemID?
     var turns: [AgentTurn] = []
+    /// Each terminal's files when an agent was first seen in it, for an agent whose hooks only say when it stops.
+    @ObservationIgnored var turnBaselines: [ItemID: (started: Date, trees: [String: String])] = [:]
     @ObservationIgnored var conversationsLoaded: [ConversationSummary]?
     @ObservationIgnored var conversationsLoading = false
     @ObservationIgnored var conversationIndex: ConversationIndex?

@@ -57,8 +57,21 @@ extension AppModel {
         }
     }
 
-    /// An agent stopped. With no turn open, like Codex's first, this at least gives the next one
-    /// something to start from, and a later one starts where the last ended.
+    /// An agent appeared in a terminal. What's there now is where its first turn starts, if its hooks
+    /// never say when a turn begins: Codex's `notify`, or its hooks before they're trusted.
+    func agentAppeared(item: ItemID) {
+        // Later turns start where the one before ended, so only a terminal's first needs this.
+        guard settings.perTurnDiffs, !turns.contains(where: { $0.item == item }), let (_, folders) = turnRoots(for: item) else { return }
+        let started = Date()
+        let snapshots = self.snapshots
+        Task.detached(priority: .utility) { [weak self] in
+            let trees = snapshots.snapshotAll(roots: folders.compactMap(Git.repositoryRoot(of:)))
+            await MainActor.run { self?.turnBaselines[item] = (started, trees) }
+        }
+    }
+
+    /// An agent stopped. With no turn open, a turn starts where the last one ended, or where the
+    /// agent appeared if that's later, as for Codex's first.
     func turnEnded(item: ItemID) {
         guard settings.perTurnDiffs, let (workspace, folders) = turnRoots(for: item), let source = anyItem(item) else { return }
         if let last = turns.last(where: { $0.item == item }), let ended = last.ended, Date().timeIntervalSince(ended) < 3 { return }
@@ -75,8 +88,14 @@ extension AppModel {
                     self.turns[index].ended = Date()
                     self.turns[index].endTrees = trees
                 } else {
-                    self.turns.append(AgentTurn(workspace: workspace.id, item: item, title: name, started: last?.ended ?? Date(), ended: Date(),
-                                                startTrees: last?.endTrees ?? trees, endTrees: trees))
+                    var started = last?.ended ?? Date()
+                    var startTrees = last?.endTrees ?? trees
+                    if let baseline = self.turnBaselines.removeValue(forKey: item), last?.ended.map({ baseline.started > $0 }) ?? true {
+                        started = baseline.started
+                        startTrees = baseline.trees
+                    }
+                    self.turns.append(AgentTurn(workspace: workspace.id, item: item, title: name, started: started, ended: Date(),
+                                                startTrees: startTrees, endTrees: trees))
                 }
                 self.trimTurns(roots: roots)
                 self.saveTurns()

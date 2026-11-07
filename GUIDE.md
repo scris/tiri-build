@@ -136,7 +136,7 @@ When a workspace folder is in a Git repository, the sidebar's **Changes** sectio
 
 The menu in the section's header narrows or widens what you see:
 
-- **Latest Turn** or a particular prompt shows what one agent turn changed. Tiri snapshots the files when an agent takes your prompt and again when it stops. Snapshots stay in Tiri's own folder for a week, and nothing in your repository changes: no branch, stash, staged change or new object. If two agents work in one repository at once, a turn can include the other's edits, and Tiri says so. Codex only reports when it stops, so its turns show from the second one on.
+- **Latest Turn** or a particular prompt shows what one agent turn changed. Tiri snapshots the files when an agent takes your prompt and again when it stops. Snapshots stay in Tiri's own folder for a week, and nothing in your repository changes: no branch, stash, staged change or new object. If two agents work in one repository at once, a turn can include the other's edits, and Tiri says so. An agent whose hooks only report when it stops, like Codex before you trust its hooks, has its first turn start when it came up in the terminal.
 - **This Branch** shows everything since the branch left its base, uncommitted work included. It compares with origin's default branch, or else `main` or `master`, and says which.
 - **Recent Commits** lists the last 30 commits. Choose one to see its files. A merge shows what it brought in compared with its first parent.
 

@@ -1079,6 +1079,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     // Status heuristics. Agent hooks, when installed, are authoritative.
     private var hookActive = false
     private var lastTypedAgent: String?
+    private var lastSeenAgent: AgentReference.Agent?
     private var lastHookWorkingAt: Double = 0
     private var foregroundBusySince: Double?
     private var sawAgentOutputBurst = false
@@ -1553,6 +1554,12 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         if typed != lastTypedAgent {
             lastTypedAgent = typed
             model.terminalTypedAgentChanged(item: itemID, agent: typed)
+        }
+        // Typed or started as the terminal's command, an agent that's just come up is where its first turn starts.
+        let agent = runningAgent(commandLine: commandLine)
+        if agent != lastSeenAgent {
+            lastSeenAgent = agent
+            if agent != nil, !hooksReportStarts { model.agentAppeared(item: itemID) }
         }
         let now = ProcessClock.now()
         let quietFor = now - activity.lastOutput

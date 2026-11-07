@@ -19,6 +19,9 @@ extension AppModel {
             for (root, tree) in turn.startTrees { keep[root, default: []].insert(tree) }
             for (root, tree) in turn.endTrees { keep[root, default: []].insert(tree) }
         }
+        for baseline in turnBaselines.values {
+            for (root, tree) in baseline.trees { keep[root, default: []].insert(tree) }
+        }
         let wanted = roots ?? Set(keep.keys)
         let snapshots = self.snapshots
         Task.detached(priority: .background) {
