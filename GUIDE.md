@@ -88,10 +88,10 @@ In a plain shell, these insert shell-quoted paths instead.
 The clock in the toolbar lists your Claude Code, Codex and Grok conversations, with this workspace's first. ⇧⌘H, **Past Conversations…** in the + menu and the clock in the Agents section open the same list.
 
 - **Click or press Return** to go back into a conversation: in a new terminal in its folder, or in the terminal where it's already running.
-- **Read**, or ⌘↩, shows the conversation as a document, with one line for each thing said or done. Tiri also shows this if the conversation can't be resumed because its folder is gone.
+- **Read**, or ⌘↩, shows the conversation laid out as one: what you said in a bubble on the right, the agent's words beneath, and what it did in a line each. Text you pasted is folded up, and the notes agents add to your messages are left out. **Source** shows the markdown file behind it, which is what an agent reads. Tiri also shows this if the conversation can't be resumed because its folder is gone.
 - **Hand To** asks another agent to read the conversation and carry on.
 
-Each conversation has a short title, with your first prompt beneath it. Your Mac's own model writes titles as they scroll into view and keeps them. To title everything in advance, turn on **Title every conversation in advance** in **Settings → Agents**. That only runs while your Mac is plugged in. Without Apple Intelligence, and on servers, titles come from your first prompt. Titles are good guesses, so check before relying on one.
+Each conversation has a short title, with your first prompt beneath it. Your Mac's own model writes titles as they scroll into view and keeps them. To title everything in advance, turn on **Title every conversation in advance** in **Settings → Agents**. That only runs while your Mac is plugged in. Without Apple Intelligence, and on servers, titles come from your first prompt: what you typed, without the files or chats Codex lists ahead of it. Titles are good guesses, so check before relying on one.
 
 **Search** by describing what you remember. Results appear as you type, each with the text around the match.
 

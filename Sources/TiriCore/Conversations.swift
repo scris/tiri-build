@@ -178,20 +178,65 @@ public enum Conversations {
         return texts.isEmpty ? nil : texts.joined(separator: "\n")
     }
 
-    /// What the person typed. Agents put their own notes in as user messages, in tags.
+    /// What the person typed. Agents put their own notes in as user messages, in tags, and add notes of
+    /// their own after what was typed.
     private static func realPrompt(_ text: String?) -> String? {
-        guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        guard var trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
         // Grok wraps what was typed along with what it adds.
         if let open = trimmed.range(of: "<user_query>"), let close = trimmed.range(of: "</user_query>", range: open.upperBound..<trimmed.endIndex) {
             let query = trimmed[open.upperBound..<close.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
             return query.isEmpty ? nil : query
         }
+        // Claude Code keeps what was pasted apart from what was typed, and puts reminders of its own after
+        // both. Codex names an image after the words about it.
+        let pasted = pastedContent(&trimmed)
+        trimmed = trimmed.replacing(/<system-reminder>.*?<\/system-reminder>/.dotMatchesNewlines(), with: "")
+            .replacing(/<image name=\[[^\]]*\] path="[^"]*">\s*(?:<\/image>)?/, with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("<") || trimmed.hasPrefix("Caveat:") || trimmed.hasPrefix("# AGENTS.md") { return nil }
-        return trimmed
+        // Stopping the agent is recorded as something said, and isn't.
+        if trimmed.wholeMatch(of: /\[Request interrupted by user[^\]]*\]/) != nil { return nil }
+        let typed = codexRequest(trimmed) ?? trimmed
+        if typed.isEmpty { return pasted.isEmpty ? nil : "[Pasted text]" + pasted }
+        return typed + pasted
+    }
+
+    /// Takes the `<pasted_content>` blocks out of a Claude Code prompt and gives them back folded up, the
+    /// way the agent shows them, so the typed words come first: they're what was asked. One HTML block
+    /// each, with nothing the markdown parser would split it on, so a page keeps it whole: a blank line
+    /// would end the block, so an empty line holds a no-break space, which reads as nothing.
+    private static func pastedContent(_ text: inout String) -> String {
+        let pattern = /<pasted_content id="[^"]*">(.*?)<\/pasted_content(?: id="[^"]*")?>/.dotMatchesNewlines()
+        var folded = ""
+        for match in text.matches(of: pattern) {
+            let content = String(match.1).trimmingCharacters(in: .newlines)
+            let lines = content.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+            let shown = lines.map { $0.allSatisfy(\.isWhitespace) ? "\u{A0}" : MarkdownRenderer.escapeText(String($0)) }.joined(separator: "\n")
+            folded += "\n\n<details><summary>Pasted text, \(lines.count) lines</summary>\n<pre><code>\(shown)</code></pre>\n</details>"
+        }
+        if !folded.isEmpty { text = text.replacing(pattern, with: "") }
+        return folded
+    }
+
+    /// Codex puts what was typed under "My request:" when files or other chats came with it, after what it
+    /// says about them. The request is what was asked, and what came with it is named in a line.
+    static func codexRequest(_ text: String) -> String? {
+        guard text.hasPrefix("# Files ") || text.hasPrefix("## Referenced chats with Codex:"),
+              let marker = text.range(of: "## My request:") else { return nil }
+        // A chat is referred to by a link, and its name is what reads.
+        let request = text[marker.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacing(/\[([^\]]*)\]\(thread:\/\/[^)]*\)/) { String($0.1) }
+        let files = text[..<marker.lowerBound].split(whereSeparator: \.isNewline).compactMap { line -> String? in
+            guard line.hasPrefix("## "), let colon = line.range(of: ": /", options: .backwards) else { return nil }
+            return (String(line[line.index(after: colon.lowerBound)...]).trimmingCharacters(in: .whitespaces) as NSString).lastPathComponent
+        }
+        let attached = files.isEmpty ? "" : "*Attached: " + files.joined(separator: ", ") + "*"
+        return [request, attached].filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
 
     private static func claudePrompt(_ object: [String: Any]) -> String? {
-        guard object["type"] as? String == "user", object["isMeta"] as? Bool != true, object["isSidechain"] as? Bool != true else { return nil }
+        guard object["type"] as? String == "user", object["isMeta"] as? Bool != true, object["isSidechain"] as? Bool != true,
+              object["isCompactSummary"] as? Bool != true else { return nil }
         return realPrompt(contentText((object["message"] as? [String: Any])?["content"]))
     }
 
@@ -217,6 +262,14 @@ public enum Conversations {
         }
     }
 
+    /// The first line of a conversation written out. A document starting with it is laid out as a conversation
+    /// (see `ConversationPage.swift`), and the other marks say where each turn begins. They're HTML comments,
+    /// so a page shows nothing for them and an agent reading the file passes over them.
+    public static let documentMark = "<!-- tiri:conversation -->"
+    static let youMark = "<!-- tiri:you -->"
+    static let agentMark = "<!-- tiri:agent -->"
+    static let didMark = "<!-- tiri:did -->"
+
     /// The whole of it as a document: what was said, and what was done in a line each. Tool output is left
     /// out: it's most of the file and little of the conversation.
     public static func markdown(_ data: Data, summary: ConversationSummary, limit: Int = 1_500_000) -> String {
@@ -229,29 +282,31 @@ public enum Conversations {
         for piece in pieces {
             switch piece {
             case .you(let text):
-                body += "\n\n## You\n\n" + text
+                body += "\n\n" + youMark + "\n## You\n\n" + text
                 last = "you"
             case .agent(let text):
-                if last != "agent" { body += "\n\n## " + profile.title + "\n" }
-                body += "\n" + text + "\n"
+                // One turn of the agent's, whatever it did along the way.
+                if last != "agent" && last != "did" { body += "\n\n" + agentMark + "\n## " + profile.title }
+                body += "\n\n" + text
                 last = "agent"
             case .did(let text):
-                if last != "agent" && last != "did" { body += "\n\n## " + profile.title + "\n" }
-                // In code style, so a command can't be taken for formatting.
-                body += "\n- `" + text.replacingOccurrences(of: "`", with: "'") + "`"
+                if last != "agent" && last != "did" { body += "\n\n" + agentMark + "\n## " + profile.title }
+                // In code style, so a command can't be taken for formatting. Several in a row are one list.
+                body += (last == "did" ? "\n" : "\n\n" + didMark + "\n") + "- `" + text.replacingOccurrences(of: "`", with: "'") + "`"
                 last = "did"
             }
         }
         var note = ""
         if body.utf8.count > limit {
             body = String(decoding: Array(body.utf8.suffix(limit)), as: UTF8.self)
-            if let start = body.range(of: "\n\n## ") { body = String(body[start.lowerBound...]) }
+            // From the start of a turn, so that the layout holds.
+            if let start = [youMark, agentMark].compactMap({ body.range(of: "\n\n" + $0)?.lowerBound }).min() { body = String(body[start...]) }
             note = "\n\n*This is a long one, so only its end is here.*"
         }
         let place = summary.cwd.map { " · `" + $0 + "`" } ?? ""
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withFullDate]
-        return "# " + (AgentHookEvent.promptLine(summary.title) ?? "Conversation") + "\n\n*" + profile.title + "*" + place + " · " + formatter.string(from: summary.date) + note + body + "\n"
+        return documentMark + "\n# " + (AgentHookEvent.promptLine(summary.title) ?? "Conversation") + "\n\n*" + profile.title + "*" + place + " · " + formatter.string(from: summary.date) + note + body + "\n"
     }
 
     private static func describeCall(name: String?, input: [String: Any]?) -> Piece? {
@@ -286,9 +341,38 @@ public enum Conversations {
             guard payload["role"] as? String == "assistant", let text = contentText(payload["content"]) else { return [] }
             return [.agent(text)]
         case "function_call", "custom_tool_call":
-            return describeCall(name: payload["name"] as? String, input: parsedArguments(payload["arguments"])).map { [$0] } ?? []
+            // Newer Codex runs commands from a script it writes, and a script can run several.
+            if let script = (payload["input"] ?? payload["arguments"]) as? String, !script.hasPrefix("{") {
+                let commands = scriptedCommands(script)
+                if !commands.isEmpty { return commands.compactMap { describeCall(name: "shell", input: ["command": $0]) } }
+            }
+            return describeCall(name: payload["name"] as? String, input: parsedArguments(payload["arguments"] ?? payload["input"])).map { [$0] } ?? []
         default:
             return []
+        }
+    }
+
+    /// The commands in a Codex tool script: `text(await tools.exec_command({cmd:"ls -la", ...}))`, as
+    /// many as it has, each read back out of its JavaScript string.
+    static func scriptedCommands(_ script: String) -> [String] {
+        script.matches(of: /cmd:\s*"((?:[^"\\]|\\.)*)"/).map { match in
+            var command = ""
+            var escaped = false
+            for character in match.1 {
+                if escaped {
+                    switch character {
+                    case "n": command.append("\n")
+                    case "t": command.append("\t")
+                    default: command.append(character)
+                    }
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else {
+                    command.append(character)
+                }
+            }
+            return command
         }
     }
 

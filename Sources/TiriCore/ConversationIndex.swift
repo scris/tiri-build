@@ -298,7 +298,13 @@ extension Conversations {
         let asked = (AgentHookEvent.promptLine(prompt) ?? prompt)
         let line = asked.replacingOccurrences(of: attachment, with: "", options: [.regularExpression, .caseInsensitive])
             .trimmingCharacters(in: .whitespaces)
-        if line.isEmpty, !asked.isEmpty { return asked.lowercased().contains("image") ? String(localized: "Shared an image") : String(localized: "Pasted something") }
+        if line.isEmpty, !asked.isEmpty {
+            // Something pasted and nothing typed: the first line of the paste says more than that there was one.
+            if let pasted = prompt.firstMatch(of: /<pre><code>(.*?)(?:<\/code><\/pre>|\n)/).map({ String($0.1) }), !pasted.isEmpty {
+                return readableTitle(pasted.replacingOccurrences(of: "&lt;", with: "<").replacingOccurrences(of: "&gt;", with: ">").replacingOccurrences(of: "&amp;", with: "&"))
+            }
+            return asked.lowercased().contains("image") ? String(localized: "Shared an image") : String(localized: "Pasted something")
+        }
         let words = line.split(whereSeparator: \.isWhitespace).map { word -> String in
             let bare = word.trimmingCharacters(in: CharacterSet(charactersIn: "'\"`‘’“”,()[]<>"))
             if bare.hasPrefix("http://") || bare.hasPrefix("https://"), let url = URL(string: bare), let host = url.host() {
