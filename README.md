@@ -49,6 +49,7 @@ Everyone works differently, so Tiri is yours to change. Not a setting, and not a
 - **Every agent at a glance:** what each one is doing, and which one needs you.
 - **Files, diffs and pages are tabs**, equal to terminals. There's no terminal drawer.
 - **Agents outlive the app.** Quitting, crashing or a dropped server connection doesn't stop them.
+- **Your dev servers in one place.** ▶ Start runs each workspace's servers and start scripts, and every agent uses the same ones, so none starts a second copy.
 - **Folder first:** nothing starts until you say where, so an agent never works in the wrong place.
 - **Per-turn diffs** show what one prompt changed.
 - **Batched review:** comment across many files, then send everything as one message.
