@@ -142,10 +142,15 @@ struct WindowModel {
 
     /// The same terms as the window in front's, with this one's repositories and server, so the bar doesn't come
     /// and go, resizing every terminal, as windows take turns in front.
+    /// Once it has, for as long as Tiri's open. What it says can change; whether it's there doesn't.
     var statusBarHasContent: Bool {
         _ = app.controllerRevision
-        return app.yourTiri.waiting != nil || live.barHasRepositories || app.languageHasNews || active.remote != nil
-            || !app.plugins.statusItems.isEmpty || app.unknownLanguageExtension != nil
+        if app.workspacesWithBar.contains(activeID) { return true }
+        // The file in front is the front window's, so it only counts for that window's own workspace.
+        let now = app.yourTiri.waiting != nil || live.barHasRepositories || active.remote != nil || !app.plugins.statusItems.isEmpty
+            || isCurrent && (app.languageHasNews || app.unknownLanguageExtension != nil)
+        if now { app.workspacesWithBar.insert(activeID) }
+        return now
     }
 
     // What the sidebar asks for. A click in a window brings it in front first, so these act on its workspace.

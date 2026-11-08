@@ -237,6 +237,10 @@ final class AppModel {
         set { livesStorage = newValue }
     }
     @ObservationIgnored var livesStorage: [WorkspaceID: WorkspaceLive] = [:]
+    /// Workspaces whose status bar has shown. It stays, for as long as Tiri's open: a bar that comes and goes as the
+    /// keyboard moves between a file and a terminal makes the window jump. Kept apart from `lives`, which a workspace
+    /// switch lets go of. Added to while the bar draws, when it's already showing, so it isn't observed.
+    @ObservationIgnored var workspacesWithBar: Set<WorkspaceID> = []
     var livesRevision = 0
     @ObservationIgnored var windowOrder: [String] = []
     @ObservationIgnored var workspaceWindows: [String: NSWindow] = [:]
