@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// One thing someone asked to be different, which is one commit on top of a release.
@@ -121,8 +122,12 @@ public struct SourceRepo: Sendable {
     public var isClean: Bool { (try? text(["status", "--porcelain"]))?.isEmpty == true }
 
     /// From the archive inside the app. It takes about a second, and the agent can start reading straight after.
-    public func prepare(archive: URL, version: String) throws {
-        guard !exists else { return }
+    /// `changeUnderway` is a change being made in the folder right now, which keeps it as it is.
+    public func prepare(archive: URL, version: String, changeUnderway: Bool = false) throws {
+        if exists {
+            guard try isStale(archive: archive), !changeUnderway else { return }
+            try FileManager.default.removeItem(at: folder)
+        }
         guard FileManager.default.fileExists(atPath: archive.path) else { throw ChangeFailure(String(localized: "This copy of Tiri doesn't carry its source, so it can't be changed.")) }
         let manager = FileManager.default
         try manager.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -133,6 +138,22 @@ public struct SourceRepo: Sendable {
         try git(["add", "-A"], check: true)
         try git(["commit", "-q", "-m", "Tiri \(version)"], check: true)
         try git(["branch", "release"], check: true)
+        if let digest = Self.digest(of: archive) { try git(["config", Self.archiveKey, digest], check: true) }
+    }
+
+    private static let archiveKey = "tiri.archive"
+
+    private static func digest(of archive: URL) -> String? {
+        guard let data = try? Data(contentsOf: archive, options: .mappedIfSafe) else { return nil }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Unpacked from another Tiri than the one running, as after an update when nothing of theirs was kept. A change
+    /// made on it would build a copy of that older Tiri, undoing the update. Only replaced when there's nothing of
+    /// theirs in it: no changes, on or off, and nothing edited. With changes, an update carries them over instead.
+    func isStale(archive: URL) throws -> Bool {
+        guard let digest = Self.digest(of: archive), (try? text(["config", Self.archiveKey])) != digest else { return false }
+        return try changes().isEmpty && isClean
     }
 
     /// Whatever someone has set up for their own repositories doesn't apply in here.
@@ -287,7 +308,8 @@ public enum ChangeTools {
             let state = try facts()
             try requireNoUpdateUnderway(repo)
             let app = URL(fileURLWithPath: state.plainPath ?? "")
-            try repo.prepare(archive: app.appendingPathComponent("Contents/Resources").appendingPathComponent(YourTiri.sourceArchive), version: state.plainVersion ?? "")
+            try repo.prepare(archive: app.appendingPathComponent("Contents/Resources").appendingPathComponent(YourTiri.sourceArchive), version: state.plainVersion ?? "",
+                             changeUnderway: loadDraft() != nil)
             if let draft = loadDraft() {
                 if draft.sentence == sentence { return startText(draft, repo: repo) }
                 throw ChangeFailure("Another change is being made: “\(draft.sentence)”. Finish it with tiri change ready, or give it up with tiri change drop.")

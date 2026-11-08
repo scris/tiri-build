@@ -172,6 +172,55 @@ import Testing
         #expect(throws: ChangeFailure.self) { try repo.prepare(archive: URL(fileURLWithPath: "/nonexistent/source.tar.gz"), version: "1") }
     }
 
+    /// Another Tiri's source, as the app carries it after an update.
+    private func newerArchive(beside repo: SourceRepo) throws -> URL {
+        let root = repo.folder.deletingLastPathComponent()
+        let tree = root.appendingPathComponent("newer", isDirectory: true)
+        try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
+        try "line one\nline two\nline three\nline four\nline five\nline six\n".write(to: tree.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+        let archive = root.appendingPathComponent("newer.tar.gz")
+        #expect(Tool.run("/usr/bin/tar", ["-czf", archive.path, "-C", tree.path, "."]).ok)
+        return archive
+    }
+
+    private func notes(_ repo: SourceRepo) throws -> String {
+        try String(contentsOf: repo.folder.appendingPathComponent("notes.txt"), encoding: .utf8)
+    }
+
+    @Test func anUpdatedTiriBringsItsOwnSourceWhenNothingWasKept() throws {
+        let repo = try repository()
+        try repo.prepare(archive: try newerArchive(beside: repo), version: "2.0")
+        #expect(try notes(repo).contains("line six"))
+        #expect(try repo.text(["log", "-1", "--format=%s", "release"]) == "Tiri 2.0")
+        #expect(try repo.changes().isEmpty)
+    }
+
+    @Test func theSameTiriKeepsItsFolder() throws {
+        let repo = try repository()
+        let before = try repo.releaseCommit()
+        try repo.prepare(archive: repo.folder.deletingLastPathComponent().appendingPathComponent("source.tar.gz"), version: "1.0")
+        #expect(try repo.releaseCommit() == before)
+    }
+
+    @Test func keptChangesAreNeverUnpackedOver() throws {
+        let repo = try repository()
+        try commit(repo, "c1", "First") { $0.replacingOccurrences(of: "line one", with: "ONE") }
+        try repo.turnOff(try repo.change(named: "c1"))
+        try repo.prepare(archive: try newerArchive(beside: repo), version: "2.0")
+        #expect(try repo.change(named: "c1").sentence == "First")
+        #expect(try !notes(repo).contains("line six"))
+    }
+
+    @Test func aChangeBeingMadeOrAnEditIsNeverUnpackedOver() throws {
+        let repo = try repository()
+        let newer = try newerArchive(beside: repo)
+        try repo.prepare(archive: newer, version: "2.0", changeUnderway: true)
+        #expect(try !notes(repo).contains("line six"))
+        try "edited\n".write(to: repo.folder.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+        try repo.prepare(archive: newer, version: "2.0")
+        #expect(try notes(repo) == "edited\n")
+    }
+
     @Test func theSentenceAndTheCountsComeFromTheCommit() throws {
         let repo = try repository()
         try commit(repo, "c1", "Say it louder") { $0.replacingOccurrences(of: "line one", with: "LINE ONE") }
