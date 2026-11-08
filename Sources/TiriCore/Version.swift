@@ -1,1 +1,1 @@
-public enum TiriCoreVersion { public static let string = "0.2.1" }
+public enum TiriCoreVersion { public static let string = "0.3.0" }
