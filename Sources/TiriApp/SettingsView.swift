@@ -36,6 +36,9 @@ final class SettingsController: ItemController {
     var currentSection: String?
     /// A test copy pretending about Apple Intelligence, which the screen has to notice.
     var macModelChanges = 0
+    /// Titles and search with someone's own key, where there's no Apple Intelligence.
+    var showsAPIKeySheet = false
+    let apiKey = APIKeyDraft()
     /// A jump's own scrolling shouldn't move the marker it just set.
     @ObservationIgnored var markerHeldUntil = Date.distantPast
 
@@ -118,6 +121,9 @@ struct SettingsView: View {
             .environment(\.settingsIsTight, tight)
         }
         .background(Color(nsColor: .textBackgroundColor))
+        .sheet(isPresented: Binding(get: { model.settingsUI.showsAPIKeySheet }, set: { model.settingsUI.showsAPIKeySheet = $0 })) {
+            APIKeySheet().environment(model)
+        }
         .onDisappear {
             model.cancelRecordingShortcut()
             model.cancelFindingShortcutKey()
@@ -673,12 +679,19 @@ struct SettingRow: View {
         return ConversationAssistant.state
     }
 
-    /// The row that can't do anything without Apple Intelligence: it says why, instead of a switch.
-    private var isBlockedModelRow: Bool { definition.key == "conversations.useMacModel" && macModelState != .ready }
+    /// Someone's own key, when it's what titles and search use.
+    private var keyed: KeyedModel? {
+        _ = model.settingsUI.macModelChanges
+        return ConversationAssistant.keyed
+    }
+
+    private var isModelRow: Bool { definition.key == "conversations.useMacModel" }
+    /// The row that can't do anything without Apple Intelligence or a key: it says why, instead of a switch.
+    private var isBlockedModelRow: Bool { isModelRow && macModelState != .ready && keyed == nil }
     private var needsModel: Bool { definition.key == "conversations.summarizeAll" }
 
     private var applies: Bool {
-        if needsModel, macModelState != .ready { return false }
+        if needsModel, macModelState != .ready, keyed == nil { return false }
         return definition.applies?(model.settings) ?? true
     }
 
@@ -688,7 +701,7 @@ struct SettingRow: View {
     private var waitingLine: String? {
         guard needsModel, !applies else { return nil }
         if model.settings.conversationsSummarizeAll { return String(localized: "On, and waiting for Apple Intelligence.") }
-        return macModelState == .ready ? String(localized: "Needs Titles and search with Apple Intelligence, above.") : String(localized: "Needs Apple Intelligence.")
+        return macModelState == .ready || keyed != nil ? String(localized: "Needs Titles and search with Apple Intelligence, above.") : String(localized: "Needs Apple Intelligence.")
     }
 
     var body: some View {
@@ -713,7 +726,10 @@ struct SettingRow: View {
     }
 
     /// The title on screen. The definition's own stays English for `tiri settings`.
-    private var title: String { L10n.display(definition.title) }
+    private var title: String {
+        if isModelRow, let keyed { return String(localized: "Titles and search with \(keyed.providerName)") }
+        return L10n.display(definition.title)
+    }
 
     private var words: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -734,6 +750,8 @@ struct SettingRow: View {
             }
             if isBlockedModelRow, let message = macModelState.message {
                 caption(L10n.display(message))
+            } else if isModelRow, let keyed {
+                caption(String(localized: "Gives each conversation a short title, and lets search try related words, with \(keyed.model). Excerpts go to \(keyed.providerName)."))
             } else if !definition.titleIsEnough {
                 caption(L10n.display(definition.explanation))
             }
@@ -793,24 +811,30 @@ struct SettingRow: View {
 
     @ViewBuilder private var rowControl: some View {
         if isBlockedModelRow {
-            switch macModelState {
-            case .turnedOff:
-                Button("Open System Settings…") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension") { NSWorkspace.shared.open(url) }
-                }
-                .fixedSize()
-                .help("Apple Intelligence & Siri is where it's turned on")
-            case .gettingReady:
-                HStack(spacing: 6) {
+            HStack(spacing: 8) {
+                switch macModelState {
+                case .turnedOff:
+                    Button("Open System Settings…") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension") { NSWorkspace.shared.open(url) }
+                    }
+                    .help("Apple Intelligence & Siri is where it's turned on")
+                case .gettingReady:
                     ProgressView().controlSize(.small)
                     Text("Getting Ready").foregroundStyle(.secondary)
+                default:
+                    EmptyView()
                 }
-                .fixedSize()
-            default:
-                Text("Not Available")
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
+                Button("Use an API Key…") { model.openAPIKeySheet() }
+                    .help("Titles and search with a model you have a key for")
             }
+            .fixedSize()
+        } else if isModelRow, keyed != nil {
+            HStack(spacing: 10) {
+                Button("Change Key…") { model.openAPIKeySheet() }
+                    .controlSize(.small)
+                control.disabled(!canChange)
+            }
+            .fixedSize()
         } else {
             control.disabled(!canChange)
         }

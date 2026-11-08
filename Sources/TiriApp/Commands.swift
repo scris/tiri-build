@@ -939,7 +939,7 @@ enum ControlHandler {
             let settings = model.settings
             // An agent asked about these should say what's really going on, as the screen does.
             func explanation(of definition: SettingDefinition) -> String {
-                guard definition.key.hasPrefix("conversations."), let why = ConversationAssistant.state.message else { return definition.fullExplanation }
+                guard definition.key.hasPrefix("conversations."), let why = ConversationAssistant.blockedMessage else { return definition.fullExplanation }
                 return why + " " + definition.fullExplanation
             }
             func entry(_ definition: SettingDefinition) -> JSONValue {
@@ -1086,6 +1086,21 @@ enum ControlHandler {
                 ConversationAssistant.pretending = MacModelState(rawValue: try string(request, "value"))
                 model.settingsUI.macModelChanges += 1
                 model.updateSummarizingAll()
+            case "api-key-open": model.openAPIKeySheet()
+            case "api-key-draft":
+                // provider|model|address|key, for a test copy that can't type into a sheet.
+                let parts = try string(request, "value").components(separatedBy: "|")
+                guard parts.count == 4, let provider = KeyedModel.Provider(rawValue: parts[0]) else { throw ControlFailure("provider|model|address|key") }
+                let draft = model.settingsUI.apiKey
+                draft.choose(provider)
+                (draft.model, draft.baseURL, draft.key) = (parts[1], parts[2], parts[3])
+            case "api-key-save": model.saveAPIKey()
+            case "api-key-remove": model.removeAPIKey()
+            case "api-key-state":
+                let draft = model.settingsUI.apiKey
+                return .object(["open": .bool(model.settingsUI.showsAPIKeySheet), "checking": .bool(draft.isChecking),
+                                "problem": draft.problem.map(JSONValue.string) ?? .null,
+                                "using": ConversationAssistant.keyed.map { .string($0.providerName + " " + $0.model) } ?? .null])
             case "expand": model.settingsUI.expandedAgent = try string(request, "value")
             case "plugin-request": model.settingsUI.newPluginRequest = try string(request, "value")
             case "plugin-ask":

@@ -825,6 +825,8 @@ struct ChangeMark {
             model.showToast(title: String(localized: "Tiri can't find the app it came from"), detail: String(localized: "Open Tiri from where you've put it, and it'll know."), symbol: "exclamationmark.triangle", tint: .orange, duration: 12)
             return
         }
+        // The other Tiri reads the API key without asking for the Mac's password only if it's on the key's list.
+        ModelKeyStore.shareWithOtherCopies()
         guard model.relaunch(app: app, arguments: arguments) else {
             model.showToast(title: String(localized: "Couldn't restart Tiri"), detail: nil, symbol: "exclamationmark.triangle", tint: .orange)
             return
