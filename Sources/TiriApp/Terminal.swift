@@ -998,13 +998,13 @@ final class TiriTerminalView: LocalProcessTerminalView {
         guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
                                                                options: [.urlReadingFileURLsOnly: true]) as? [URL],
               !urls.isEmpty else { return false }
-        insertFiles(urls.map(\.path))
+        insertFiles(urls.map(\.path), from: sender.draggingPasteboard)
         window?.makeFirstResponder(self)
         return true
     }
 
     /// An agent gets mentions and images. A shell gets quoted paths.
-    private func insertFiles(_ paths: [String]) {
+    private func insertFiles(_ paths: [String], from board: NSPasteboard? = nil) {
         if let owner, owner.runningAgent == nil, let destination = owner.remoteDestination {
             owner.model.remote.serverPaths(for: paths, on: destination) { [weak self] mapped in
                 self?.send(txt: ShellQuote.join(mapped) + " ")
@@ -1012,7 +1012,7 @@ final class TiriTerminalView: LocalProcessTerminalView {
             return
         }
         if let owner, let agent = owner.runningAgent {
-            owner.model.insert(paths, into: owner, agent: agent)
+            owner.model.insert(board.map { owner.model.pasteableImagePaths(paths, from: $0) } ?? paths, into: owner, agent: agent)
         } else {
             send(txt: ShellQuote.join(paths) + " ")
         }
@@ -1020,9 +1020,10 @@ final class TiriTerminalView: LocalProcessTerminalView {
 
     /// A picture on the clipboard reaches an agent as a picture, and a copied file as that file.
     override func paste(_ sender: Any) {
-        let board = NSPasteboard.general
+        // A test copy's checks paste from a pasteboard of their own, not what someone copied.
+        let board = FileTreeController.pasteboard
         if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            insertFiles(urls.map(\.path))
+            insertFiles(urls.map(\.path), from: board)
             return
         }
         let hasText = board.string(forType: .string)?.isEmpty == false

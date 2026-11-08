@@ -56,6 +56,11 @@ public enum AgentReference {
         imageExtensions.contains((path as NSString).pathExtension.lowercased())
     }
 
+    /// The kinds a pasted path becomes a picture in Claude Code, which is choosier than the others.
+    public static func isImageEveryAgentTakes(path: String) -> Bool {
+        ["png", "jpg", "jpeg", "gif", "webp"].contains((path as NSString).pathExtension.lowercased())
+    }
+
     /// Selected text from something without lines of its own, like a web page or a PDF.
     public static func quotation(from source: String, text: String) -> String {
         let lines = text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: .newlines)

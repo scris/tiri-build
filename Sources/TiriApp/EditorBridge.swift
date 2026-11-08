@@ -507,6 +507,7 @@ extension AppModel {
 
     /// Images go in as a paste, which agents take as the image. Other files become mentions.
     func insert(_ paths: [String], into terminal: TerminalController, agent: AgentReference.Agent) {
+        let paths = paths.map(imageAgentsTake)
         if let destination = terminal.remoteDestination, paths.contains(where: { remote.existingConnection(destination)?.map.contains($0) != true || !$0.hasPrefix("/") }) {
             remote.serverPaths(for: paths, on: destination) { [weak self] mapped in self?.insertOnServer(mapped, into: terminal, agent: agent) }
             return
@@ -557,6 +558,29 @@ extension AppModel {
                 self?.addFilesToAgent(panel.urls.map(\.path))
             }
         }
+    }
+
+    /// Agents take a pasted image's path as the image only if they can read it and know its kind. Claude
+    /// Code knows PNG, JPEG, GIF and WebP, so a HEIC or TIFF goes in as a PNG copy instead of as words.
+    func imageAgentsTake(_ path: String) -> String {
+        guard AgentReference.isImage(path: path), !AgentReference.isImageEveryAgentTakes(path: path),
+              let image = NSImage(contentsOfFile: path), let copy = savePastedImage(image) else { return path }
+        return copy
+    }
+
+    /// Copied from WeChat or another sandboxed app, a picture comes as a file in that app's own folder,
+    /// which macOS keeps an agent from reading: its path would go in as words. The picture itself is on
+    /// the clipboard too, so that goes in. Nothing in the folder is touched, so macOS asks nothing.
+    func pasteableImagePaths(_ paths: [String], from board: NSPasteboard) -> [String] {
+        guard paths.count == 1, let path = paths.first, AgentReference.isImage(path: path), Self.isInAnotherAppsFolder(path),
+              let data = board.data(forType: .png) ?? board.data(forType: .tiff), let image = NSImage(data: data),
+              let copy = savePastedImage(image) else { return paths }
+        return [copy]
+    }
+
+    static func isInAnotherAppsFolder(_ path: String) -> Bool {
+        let library = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library").path
+        return path.hasPrefix(library + "/Containers/") || path.hasPrefix(library + "/Group Containers/")
     }
 
     /// A picture on the clipboard has no path of its own, so it gets one.

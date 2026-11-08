@@ -60,6 +60,9 @@ import Testing
     @Test func imagesAreKnown() {
         #expect(AgentReference.isImage(path: "/a/shot.PNG"))
         #expect(!AgentReference.isImage(path: "/a/doc.pdf"))
+        // Claude Code leaves any other kind's path as words, so those go in as a PNG copy.
+        #expect(AgentReference.isImageEveryAgentTakes(path: "/a/shot.JPEG"))
+        #expect(AgentReference.isImage(path: "/a/photo.heic") && !AgentReference.isImageEveryAgentTakes(path: "/a/photo.heic"))
     }
 
     @Test func aSelectionEndingAtALineStartStopsBeforeIt() {
