@@ -33,6 +33,8 @@ public enum CLIParser {
         /// In a terminal on a server: where its absolute paths really are, and its home folder.
         public var translate: (@Sendable (String) -> String)?
         public var home: String?
+        /// `TIRI_PLUGIN_NAME`: run by one of Tiri's plugins, which is inside Tiri even with no terminal.
+        public var plugin: String?
         public init(cwd: String, itemID: String?, workspace: String? = nil, claudeEntrypoint: String? = nil,
                     ancestors: @escaping @Sendable () -> [[String]] = { [] },
                     fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
@@ -91,7 +93,9 @@ public enum CLIParser {
             let pin = options.flag("--pin")
             let peek = options.flag("--peek")
             let tab = options.flag("--tab")
-            guard let raw = options.positional() else { throw UsageError("usage: tiri open <path>[:line] [--peek | --tab | --split right|down] [--pin]") }
+            let wait = options.flag("--wait")
+            let front = options.flag("--front")
+            guard let raw = options.positional() else { throw UsageError("usage: tiri open <path>[:line] [--peek | --tab | --split right|down] [--pin] [--wait]") }
             try options.finish()
             let location = parseLocation(raw, environment: environment)
             var payload: [String: JSONValue] = ["path": .string(location.path)]
@@ -101,8 +105,12 @@ public enum CLIParser {
             if pin { payload["pin"] = true }
             if peek { payload["mode"] = "peek" }
             if tab { payload["mode"] = "tab" }
+            if wait { payload["wait"] = true }
+            if front { payload["front"] = true }
             // Sent from a Tiri terminal: the app floats it as a Peek rather than adding a tab.
             if let item = environment.itemID { payload["source"] = .string(item) }
+            // A plugin opens things in the workspace in front, as it always has: it's not someone outside Tiri.
+            if environment.plugin != nil { payload["plugin"] = true }
             return request("open", payload)
 
         case "askpass":
@@ -974,7 +982,8 @@ public enum CLIParser {
     public static let usage = """
     tiri — control a running Tiri
 
-      tiri open <path>[:line] [--peek | --tab | --split right|down] [--pin]
+      tiri open <path>[:line] [--peek | --tab | --split right|down] [--pin] [--wait]
+                                   (--wait: returns once it's closed, so `tiri open --wait` can be an EDITOR)
       tiri reveal <path>
       tiri preview <url-or-path> [--split right]
       tiri term [--cwd DIR] [--cmd "claude"] [--split right]
@@ -1216,7 +1225,13 @@ public enum AgentGuide {
     From a Tiri terminal, a plain `tiri open` shows a Peek: a floating viewer that doesn't take
     the keyboard away from your session, and one the user can promote to a tab with one button.
     Prefer it for "here's what I made"; use `--split` or `--tab` only when the user asked to
-    keep something open. Outside a Tiri terminal, `open` makes a tab; `--peek` forces a Peek.
+    keep something open. Outside a Tiri terminal, `open` makes a tab in the workspace whose folder has
+    the file; `--peek` forces a Peek.
+
+    `--wait` returns only once the user closes the file, after saving what they typed. Tiri's terminals
+    set `EDITOR=tiri-edit`, which is the same, so `git commit` and Claude Code's Ctrl-G open a Peek over
+    the session (unless your shell sets EDITOR itself). Never use `--wait` for something you're showing:
+    you'd stop until they close it.
 
     Files that are already open get focused instead of opened twice, unless you pass `--split`.
     Open viewers update themselves when the file changes on disk, so don't reopen after editing.

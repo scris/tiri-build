@@ -236,6 +236,8 @@ final class LanguageServerHub {
         guard isEnabled, let definition = LanguageServerCatalog.definition(for: path) else { return nil }
         await locateServers()
         let real = Git.real(path)
+        // Only by asking, for a file a link opened outside your workspaces. See `AppModel.openLink`.
+        if !asked, model.linkOnlyFiles.contains(real), !folders().contains(where: { real == $0 || real.hasPrefix($0 + "/") }) { return nil }
         let root = LanguageServerCatalog.root(for: real, definition: definition, folders: folders())
         let key = Key(server: definition.id, root: root)
         if let existing = sessions[key] {

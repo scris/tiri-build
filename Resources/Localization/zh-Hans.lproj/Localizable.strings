@@ -1634,6 +1634,13 @@
 "Open to the Side" = "在旁边打开";
 "Open as Tab" = "作为标签页打开";
 "Open as Tab (⌘↩)" = "作为标签页打开（⌘↩）";
+"Done (⌘↩)" = "完成（⌘↩）";
+"Tiri can't open this link" = "Tiri 无法打开这个链接";
+"Links open files, not folders" = "链接只能打开文件，不能打开文件夹";
+"Waiting for you to finish %@" = "等你写完 %@";
+"Edit in Tiri" = "在 Tiri 中编辑";
+"When a program asks for an editor, like git commit or Claude Code's Ctrl-G, the file opens here." = "程序需要编辑器时（例如 git commit 或 Claude Code 的 Ctrl-G），文件会在这里打开。";
+"If your shell sets EDITOR, that wins. Takes effect in new terminals." = "如果你的 Shell 设置了 EDITOR，则以它为准。对新终端生效。";
 "Close (esc)" = "关闭（esc）";
 "Close Peek" = "关闭速览";
 "Reload (⌘R)" = "重新载入（⌘R）";

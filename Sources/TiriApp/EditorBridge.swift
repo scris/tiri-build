@@ -526,7 +526,7 @@ extension AppModel {
 
     func focusAgent(_ terminal: TerminalController) {
         lastAgentTerminal = terminal.itemID
-        if active.peek != nil { dismissPeek(restoreFocus: false) }
+        if active.peek != nil, active.peek?.id != active.heldPeek { dismissPeek(restoreFocus: false) }
         focusItem(terminal.itemID)
     }
 

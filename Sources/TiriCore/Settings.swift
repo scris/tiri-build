@@ -97,6 +97,7 @@ public struct TiriSettings: Equatable, Sendable {
     public var conversationsSummarizeAll = false
     public var languageServers = true
     public var terminalLinkOpens = LinkOpenTarget.peek
+    public var terminalEditor = true
     public var terminalRenderer = TerminalRenderer.automatic
     public var codeFontFamily = "SF Mono"
     public var codeFontSize = 12.0
@@ -163,6 +164,9 @@ public struct TiriSettings: Equatable, Sendable {
       "code.languageServers": true,
       // What cmd-clicking a file in a terminal does: "peek", "tab" or "external".
       "terminal.linkOpens": "peek",
+      // Programs in terminals that ask for an editor (git commit, Claude Code's Ctrl-G, a dev server's
+      // "open in editor") get Tiri, unless your shell sets EDITOR itself.
+      "terminal.editor": true,
       // How terminals draw: "automatic" (Metal, or the CPU where Metal can't start), "metal" or "cpu".
       "terminal.renderer": "automatic",
 
@@ -331,6 +335,7 @@ public struct TiriSettings: Equatable, Sendable {
             }
         }
         bool("terminal.restoreWithResume") { settings.terminalRestoreWithResume = $0 }
+        bool("terminal.editor") { settings.terminalEditor = $0 }
         attempt {
             if let raw = object["terminal.linkOpens"] {
                 guard let text = raw as? String, let target = LinkOpenTarget(rawValue: text) else {

@@ -134,6 +134,15 @@ struct LocalTerminalBackend: TerminalBackend {
         // `tiri` works in every Tiri terminal, wherever the CLI was installed.
         if let helpers = Bundle.main.resourceURL?.appendingPathComponent("bin").path {
             environment["PATH"] = helpers + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
+            // A program asking for an editor gets Tiri: git commit and Claude Code's Ctrl-G a Peek to type in,
+            // a dev server's "open in editor" the file at its line. Whatever someone set is kept, and their shell
+            // setting EDITOR still wins. Not VISUAL, which git and Claude Code would put ahead of their EDITOR.
+            if AppModel.shared.settings.terminalEditor {
+                if environment["EDITOR"] == nil, environment["VISUAL"] == nil { environment["EDITOR"] = EditorNames.edit }
+                // Started directly, not through a shell, so spaces in the path are fine.
+                environment["LAUNCH_EDITOR"] = environment["LAUNCH_EDITOR"] ?? helpers + "/" + EditorNames.open
+                environment["REACT_EDITOR"] = environment["REACT_EDITOR"] ?? EditorNames.open
+            }
         }
         let list = environment.map { "\($0.key)=\($0.value)" }
         let directory = FileManager.default.fileExists(atPath: cwd) ? cwd : NSHomeDirectory()

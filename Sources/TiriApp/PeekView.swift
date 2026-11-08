@@ -92,28 +92,44 @@ struct PeekView: View {
                 .font(.system(size: 13))
                 .controlSize(.regular)
                 .padding(.trailing, 6)
-                Button {
-                    model.promotePeek(split: .right)
-                } label: {
-                    Image(systemName: "rectangle.righthalf.inset.filled")
-                }
-                .tiriGlassButton()
-                .help("Open to the Side (⌥⌘↩)")
-                .accessibilityLabel("Open to the Side")
-
-                Button {
-                    model.promotePeek()
-                } label: {
-                    // The main action of the Peek keeps its words until there's truly no room.
-                    ViewThatFits(in: .horizontal) {
-                        Label("Open as Tab", systemImage: "plus.rectangle.on.rectangle")
-                            .fixedSize()
-                        Image(systemName: "plus.rectangle.on.rectangle")
+                if model.waitingFor.contains(item.id) {
+                    // Something is waiting for this file back, like git or Claude Code's Ctrl-G. Keeping it isn't the point.
+                    Button {
+                        model.finishWaiting(item.id)
+                    } label: {
+                        ViewThatFits(in: .horizontal) {
+                            Label("Done", systemImage: "checkmark")
+                                .fixedSize()
+                            Image(systemName: "checkmark")
+                        }
                     }
+                    .tiriGlassButton(prominent: true)
+                    .layoutPriority(1)
+                    .help("Done (⌘↩)")
+                } else {
+                    Button {
+                        model.promotePeek(split: .right)
+                    } label: {
+                        Image(systemName: "rectangle.righthalf.inset.filled")
+                    }
+                    .tiriGlassButton()
+                    .help("Open to the Side (⌥⌘↩)")
+                    .accessibilityLabel("Open to the Side")
+
+                    Button {
+                        model.promotePeek()
+                    } label: {
+                        // The main action of the Peek keeps its words until there's truly no room.
+                        ViewThatFits(in: .horizontal) {
+                            Label("Open as Tab", systemImage: "plus.rectangle.on.rectangle")
+                                .fixedSize()
+                            Image(systemName: "plus.rectangle.on.rectangle")
+                        }
+                    }
+                    .tiriGlassButton(prominent: true)
+                    .layoutPriority(1)
+                    .help("Open as Tab (⌘↩)")
                 }
-                .tiriGlassButton(prominent: true)
-                .layoutPriority(1)
-                .help("Open as Tab (⌘↩)")
 
                 Button {
                     model.dismissPeek()

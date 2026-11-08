@@ -443,6 +443,9 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     /// The floating Peek: an item that isn't in any tab group until it's promoted.
     /// Deliberately not persisted, since a Peek is a glance, not part of the session.
     public var peek: Item?
+    /// The Peek a program is waiting on, like the editor `git commit` asks for. Nothing replaces or drops it:
+    /// whatever would makes it a tab first, so what's typed in it is never lost. Only `closePeek` ends it.
+    public var heldPeek: ItemID?
     /// Review comments waiting to be sent, oldest first.
     public var review: [ReviewComment] = []
     /// Tabs another copy of Tiri made that this one can't show. Saved back as they came. See `KeptItem`.
@@ -476,9 +479,12 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     @discardableResult
     public mutating func peekFile(path: String, line: Int? = nil, col: Int? = nil,
                                   revealExisting: Bool = true) -> PeekResult {
+        // The held Peek already shows it: that's the one, not a second copy beside a tab.
+        if let current = peek, current.id == heldPeek, current.filePath == path { return .peeking(current.id, replaced: nil) }
         if revealExisting, let existing = fileItem(path: path) {
             setFileLocation(existing.id, line: line, col: col)
             activate(existing.id)
+            keepHeldPeek()
             peek = nil
             return .revealedExisting(existing.id)
         }
@@ -495,6 +501,7 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     }
 
     private mutating func setPeek(_ item: Item) -> PeekResult {
+        keepHeldPeek()
         let replaced = peek?.id
         peek = item
         return .peeking(item.id, replaced: replaced)
@@ -506,15 +513,35 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     public mutating func promotePeek(split: SplitDirection? = nil) -> ItemID? {
         guard var item = peek else { return nil }
         peek = nil
+        heldPeek = nil
         item.isPreview = false
         addItem(item, split: split)
         return item.id
     }
 
+    /// The Peek goes, unless it's held, which becomes a tab instead.
     @discardableResult
     public mutating func dismissPeek() -> ItemID? {
+        keepHeldPeek()
         defer { peek = nil }
         return peek?.id
+    }
+
+    /// The Peek goes, held or not: someone closed it on purpose.
+    @discardableResult
+    public mutating func closePeek() -> ItemID? {
+        heldPeek = nil
+        defer { peek = nil }
+        return peek?.id
+    }
+
+    /// A held Peek about to be replaced or dropped moves into a tab, keeping its id and what's typed in it.
+    public mutating func keepHeldPeek() {
+        guard let held = heldPeek, var item = peek, item.id == held else { return }
+        heldPeek = nil
+        peek = nil
+        item.isPreview = false
+        addItem(item, split: nil)
     }
 
     /// The first terminal a new workspace opens with: cwd = first folder.
@@ -586,6 +613,7 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
 
     @discardableResult
     public mutating func peekDiff(_ spec: DiffSpec) -> ItemID {
+        keepHeldPeek()
         let item = Item(content: .diff(spec))
         peek = item
         return item.id

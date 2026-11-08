@@ -146,11 +146,22 @@ start)
   rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/bin" "$TIRI_HOME" "$TIRI_CONFIG_HOME"
   cp "$BIN/TiriApp" "$APP/Contents/MacOS/Tiri"
   cp "$BIN/tiri" "$BIN/tiri-session" "$APP/Contents/Resources/bin/"
+  ln -sf tiri "$APP/Contents/Resources/bin/tiri-edit"; ln -sf tiri "$APP/Contents/Resources/bin/tiri-open"
   cp Resources/AppIcon.icns Resources/Assets.car "$APP/Contents/Resources/"
   for extra in Resources/remote Resources/web Resources/textmate Resources/grammars Resources/language-servers; do [ -e "$extra" ] && cp -R "$extra" "$APP/Contents/Resources/"; done
   cp -R Resources/Localization/*.lproj "$APP/Contents/Resources/"
   sed "s/dev.tiri.app/dev.tiri.test.$NAME/" Resources/Info.plist > "$APP/Contents/Info.plist"
   scripts/stamp-bundle.sh "$APP" "$APP/Contents/Info.plist" >/dev/null
+  # Launching registers a copy with macOS, and one claiming tiri:// links or code files could take them from the
+  # real Tiri, or crowd Open With. `open -a` still hands it anything. TIRI_DEV_OPEN_WITH=1 keeps the claims.
+  if [ -z "${TIRI_DEV_OPEN_WITH:-}" ]; then
+    /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$APP/Contents/Info.plist" >/dev/null 2>&1 || true
+    for index in 9 8 7 6 5 4 3 2 1 0; do
+      if [[ "$(/usr/libexec/PlistBuddy -c "Print :CFBundleDocumentTypes:$index:CFBundleTypeName" "$APP/Contents/Info.plist" 2>/dev/null)" == "Code and text"* ]]; then
+        /usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes:$index" "$APP/Contents/Info.plist"
+      fi
+    done
+  fi
   # TIRI_DEV_SIGN_IDENTITY tries it as a release runs: signed, under the hardened runtime.
   if [ -n "${TIRI_DEV_SIGN_IDENTITY:-}" ]; then
     for program in "$APP/Contents/Resources/bin/tiri" "$APP/Contents/Resources/bin/tiri-session" "$APP"/Contents/Resources/remote/tiri-remote-darwin-*; do

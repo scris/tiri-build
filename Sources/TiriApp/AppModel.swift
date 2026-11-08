@@ -147,6 +147,11 @@ final class AppModel {
     @ObservationIgnored var lastSwitchMilliseconds: Double?
     @ObservationIgnored private var itemSizesHeld = 0
     var peekHasKeyboard = false
+    /// Files something is waiting on, like `git commit` or Claude Code's Ctrl-G through `tiri open --wait`.
+    /// Closing one hands it back, so it offers Done instead of Open as Tab.
+    var waitingFor: Set<ItemID> = []
+    /// Files a `tiri://` link opened outside every workspace. See `openLink`.
+    @ObservationIgnored var linkOnlyFiles: Set<String> = []
     @ObservationIgnored lazy var notebookKernels = NotebookKernels(model: self)
     var systemAppearanceRevision = 0
     /// Bumped when something outside SwiftUI's view (a controller) changed what headers show.
@@ -415,6 +420,8 @@ final class AppModel {
         watchForChanges(id)
         if inFront { plugins.workspaceChanged() }
         startWorkspaceTerminals(id)
+        // Back to a Peek that's waiting for typing: the keyboard goes back into it.
+        if inFront, focus, let peek = workspace.peek, waitingFor.contains(peek.id) { peekHasKeyboard = true }
         if inFront, focus { requestFocus() }
     }
 
@@ -481,6 +488,8 @@ final class AppModel {
 
     func prepareForTermination() {
         saveWork?.cancel()
+        // A Peek isn't kept through a quit, but what's typed in one a program waits on is: as a tab.
+        for index in workspaces.indices where workspaces[index].heldPeek != nil { workspaces[index].keepHeldPeek() }
         _ = keepAllUnsavedEdits()
         saveNow()
         editorBridge.stop()
@@ -883,7 +892,8 @@ final class AppModel {
                 setPeekKeyboard(true)
                 return
             }
-            if !event.modifierFlags.contains(.command) {
+            // One a program is waiting on stays: a click to scroll or copy from the terminal isn't being done with it.
+            if !event.modifierFlags.contains(.command), active.peek?.id != active.heldPeek {
                 dismissPeek(restoreFocus: false)
             }
         }
@@ -979,6 +989,11 @@ final class AppModel {
         let target = workspaceID ?? activeID
         let inFront = target == activeID
         let path = aliasedPath(rawPath, in: target)
+        var intent = intent
+        // A Peek something is waiting on stays put: anything else shown meanwhile goes in a tab beneath it.
+        if case .peek = intent, let peek = workspaces.first(where: { $0.id == target })?.peek, waitingFor.contains(peek.id), peek.filePath != path {
+            intent = .preview
+        }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
             if inFront { showToast(title: String(localized: "No such file"), detail: rawPath, symbol: "questionmark.folder", tint: .orange) }
@@ -1312,7 +1327,12 @@ final class AppModel {
     }
 
     func promotePeek(split: SplitDirection? = nil) {
-        guard active.peek != nil else { return }
+        guard let peek = active.peek else { return }
+        // Something's waiting for this file back: ⌘↩ is Done.
+        if split == nil, waitingFor.contains(peek.id) {
+            finishWaiting(peek.id)
+            return
+        }
         peekHasKeyboard = false
         layoutRegistry.peekFrame = nil
         updateActive { $0.promotePeek(split: split) }
@@ -1320,12 +1340,17 @@ final class AppModel {
     }
 
     func dismissPeek(restoreFocus: Bool = true, keepStops: Bool = false) {
-        guard active.peek != nil else { return }
+        guard let peek = active.peek else { return }
+        // Closing a file that's being waited on is finishing with it: what you typed goes back, not nothing.
+        if waitingFor.contains(peek.id), let controller = existingController(for: peek.id), controller.isDirty {
+            save(controller) { [weak self] in self?.dismissPeek(restoreFocus: restoreFocus, keepStops: keepStops) }
+            return
+        }
         // Places inside a Peek go with it. Nothing's left to go back through.
         if !keepStops { navigationStops.removeAll(where: \.inPeek) }
         peekHasKeyboard = false
         layoutRegistry.peekFrame = nil
-        updateActive { $0.dismissPeek() }
+        updateActive { $0.closePeek() }
         if restoreFocus { requestFocus() }
     }
 
@@ -1841,7 +1866,8 @@ final class AppModel {
         // A Peek is a glance at what's in front of you. It doesn't follow you elsewhere.
         peekHasKeyboard = false
         layoutRegistry.peekFrame = nil
-        if let index = workspaces.firstIndex(where: { $0.id == activeID }) {
+        // Except one something is waiting on: closing it would hand back what's half typed, so it waits there.
+        if let index = workspaces.firstIndex(where: { $0.id == activeID }), workspaces[index].peek?.id != workspaces[index].heldPeek {
             workspaces[index].dismissPeek()
         }
         find = nil
@@ -2066,6 +2092,10 @@ final class AppModel {
     }
 
     func handleExternalOpen(_ url: URL) {
+        if url.scheme?.lowercased() == FileLink.scheme {
+            openLink(url)
+            return
+        }
         if url.pathExtension == "code-workspace" {
             importWorkspace(url: url)
             return
@@ -2080,8 +2110,7 @@ final class AppModel {
         if isDirectory.boolValue {
             openFolderAsWorkspace(url.path)
         } else {
-            open(path: url.path, intent: .pinned)
-            requestFocus()
+            openFromOutside(url.path)
         }
     }
 
@@ -2412,6 +2441,8 @@ final class AppModel {
 
     /// An edit in a Peek or a preview tab is something you mean to keep.
     func fileWasEdited(_ id: ItemID) {
+        // Except one that's waiting to be handed back: typing in it is the point, and it stays where it is.
+        if waitingFor.contains(id), active.peek?.id == id { return }
         if active.peek?.id == id {
             promotePeek()
         } else {
@@ -2435,7 +2466,7 @@ final class AppModel {
         save(controller) {}
     }
 
-    private func save(_ controller: ItemController, then done: @escaping () -> Void) {
+    func save(_ controller: ItemController, then done: @escaping () -> Void) {
         switch controller.save(overwriting: false) {
         case .saved:
             done()

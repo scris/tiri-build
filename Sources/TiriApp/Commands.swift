@@ -317,6 +317,16 @@ enum ControlHandler {
         }
     }
 
+    /// `tiri open --wait`: answers once the file's tab or Peek has closed, however that happened.
+    private static func waitUntilClosed(_ request: ControlRequest) async -> ControlResponse {
+        guard let id = request.args["item"]?.stringValue else { return .failure(id: request.id, "Missing item") }
+        while await MainActor.run(body: { AppModel.shared.anyItem(id) != nil }) {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        await MainActor.run { _ = AppModel.shared.waitingFor.remove(id) }
+        return .success(id: request.id, .object(["closed": .string(id)]))
+    }
+
     static func handle(_ request: ControlRequest) async -> ControlResponse {
         // These wait: for a person to answer, or for a server to come up.
         if request.cmd == "askpass" {
@@ -345,6 +355,7 @@ enum ControlHandler {
             return .success(id: request.id, .object(["ran": .string(id), "output": .string(done.output)]))
         }
         if request.cmd == "work" { return await work(request) }
+        if request.cmd == "wait" { return await waitUntilClosed(request) }
         if request.cmd.hasPrefix("web.") { return await AppModel.shared.webCommand(request) }
         if request.cmd == "conversations" { return await conversations(request) }
         if request.cmd == "remote.connect" { return await remoteConnect(request) }
@@ -664,8 +675,27 @@ enum ControlHandler {
             }
             let line = request.args["line"]?.intValue
             let col = request.args["col"]?.intValue
+            let waits = request.args["wait"]?.boolValue == true
+            let source = request.args["source"]?.stringValue
+            // Someone asked from outside Tiri, or a dev server's "open in editor" did for them: it goes to
+            // the workspace that has the file, and Tiri comes forward when they asked for that or are waiting.
+            let front = request.args["front"]?.boolValue == true
+            let fromPlugin = request.args["plugin"]?.boolValue == true
+            if front || (source == nil && !fromPlugin && split(request) == nil && request.args["mode"]?.stringValue != "peek") {
+                guard let id = model.openFromOutside(path, line: line, col: col, asSource: waits) else { throw ControlFailure("Could not open \(path)") }
+                if waits { model.beginWaiting(on: id, from: nil, seen: true) }
+                // A test copy never comes forward: someone may be working on this Mac.
+                if front || waits, !AppModel.isTestCopy { NSApp.activate() }
+                return .object(["item": .string(id), "peek": false])
+            }
+            // An editor asked for from a Tiri terminal floats over that session, to type in. It takes the keyboard
+            // only from someone at that terminal, who pressed Ctrl-G or typed git commit: an agent's own git
+            // command doesn't get to take it from wherever they are. Its Peek waits, and its tab says it needs them.
+            let seen = source.map { model.isAtTerminal($0) } ?? false
             let intent: OpenIntent
-            if let direction = split(request) {
+            if waits {
+                intent = .peek(takeFocus: seen)
+            } else if let direction = split(request) {
                 intent = .split(direction)
             } else if request.args["mode"]?.stringValue == "tab" || request.args["pin"]?.boolValue == true {
                 intent = .pinned
@@ -678,6 +708,7 @@ enum ControlHandler {
             guard let id = model.open(path: path, line: line, col: col, intent: intent, in: sourceWorkspace) else {
                 throw ControlFailure("Could not open \(path)")
             }
+            if waits { model.beginWaiting(on: id, from: source, seen: seen) }
             let inFront = sourceWorkspace == nil || sourceWorkspace == model.activeID
             // Asked to keep something: fine to bring it up, but from a terminal, leave the keyboard there.
             if inFront, request.args["source"] == nil {

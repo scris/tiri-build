@@ -135,6 +135,8 @@ enum ViewerFactory {
         case .media:
             return MediaController(itemID: itemID, path: spec.path)
         case .html:
+            // A page that came from a link, shown as its text rather than run. See `openLink`.
+            if spec.showSource == true { return TextController(itemID: itemID, spec: spec, model: model) }
             return WebController(itemID: itemID, url: URL(fileURLWithPath: spec.path), forceDark: spec.forceDark, isFile: true, model: model)
         case .csv:
             return CSVController(itemID: itemID, path: spec.path)

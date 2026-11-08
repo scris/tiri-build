@@ -16,6 +16,9 @@ struct TiriApplication: App {
         .defaultSize(width: 1320, height: 860)
         .windowToolbarStyle(.unified(showsTitle: true))
         .commands { TiriMenus(model: model) }
+        // Files and links from outside are Tiri's to place. Left to SwiftUI, it shows this window for them by closing
+        // and reopening it, and a window that closed forgets its workspace and comes back on the first one.
+        .handlesExternalEvents(matching: [])
         // Each further window, with a workspace of its own. Tiri says what opens and what comes back.
         WindowGroup("Tiri", id: AppModel.workspaceWindowScene, for: String.self) { $windowID in
             WorkspaceWindowRoot(windowID: windowID)

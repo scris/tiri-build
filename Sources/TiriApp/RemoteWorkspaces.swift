@@ -835,6 +835,13 @@ enum RemoteRelay {
             guard allowed.contains(control.cmd) else {
                 return refuse("\(control.cmd) can only be run on the Mac, not from a server.")
             }
+            // Handing a file back means waiting for its save to reach the server as well, which nothing does yet.
+            if control.cmd == "open", control.args["wait"]?.boolValue == true {
+                return refuse("--wait only works in terminals on the Mac, not on a server.")
+            }
+            // Bringing Tiri forward, or acting as a plugin, is for what's on the Mac.
+            control.args["front"] = nil
+            control.args["plugin"] = nil
             control.args["fromServer"] = true
             // Everything a path could mean has to be on this server. Nothing here is a path on the Mac.
             for key in ["path", "cwd", "folder", "file"] {

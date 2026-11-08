@@ -185,9 +185,17 @@ Holding ⌘ underlines every path in terminal output that exists or can be found
 
 Agents often print paths that don't exist as written, like `/resume/index.html` from a web root. Tiri searches the workspace's folders, its terminals' folders and its open files. One match opens right away. Several let you pick, with the likeliest first.
 
+### Files from outside Tiri
+
+- **Finder:** Tiri is in **Open With** for code, text, config files, Markdown, notebooks and SVG, never for documents like Word or PDF. It never makes itself the default: Get Info → Open with → Change All does that. Any file dropped on the Dock icon opens too.
+- **It goes where it belongs.** A file opens in the workspace whose folder holds it, and Tiri switches there. A file in none of them opens in the workspace in front. `tiri open src/app.ts:12` from any terminal does the same.
+- **Links:** `tiri://file/Users/me/app/src/main.ts:12:5` opens a file at a line and column, the way `vscode://file/…` links do, so tools with an "open in editor" link can use Tiri. A link only ever shows a file: it never opens a folder, and an HTML file shows as its text instead of running.
+- **When a program asks for an editor:** Tiri's terminals set `EDITOR` to `tiri-edit`, so `git commit`, Claude Code's Ctrl-G and anything else that asks opens the file in a Peek over the session. Type, then **Done** (⌘↩) or Esc hands it back, saved. Until then it stays, through clicks elsewhere and workspace switches, and anything else shown meanwhile opens beneath it. If an agent's own command asks while you're somewhere else, it doesn't take your keyboard: its tab says it needs you. If Tiri quits first, what you typed comes back as a tab and the program is told it didn't get it. Outside Tiri, `tiri open --wait` does the same in a tab. If your shell sets `EDITOR`, yours is used. **Edit in Tiri** in Settings → Terminal turns this off.
+- **Dev servers:** `LAUNCH_EDITOR` and `REACT_EDITOR` name `tiri-open`, so "open in editor" on a Vite, Nuxt or Next error page opens the file in Tiri, at its line when the tool says which (Next doesn't).
+
 ### Quick edits
 
-Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes. Tiri asks before closing a tab over them, but not before quitting: unsaved changes are kept, and come back unsaved after a quit, a crash or a restart, as in VS Code. If the file changed on disk meanwhile, your text stays on screen and Tiri says so. If an agent changes a file while you're editing it, your text stays on screen and Tiri tells you, so nothing is overwritten without your choice. Editing a Peek turns it into a tab.
+Type in any text or code file, and ⌘S saves. A dot on the tab means unsaved changes. Tiri asks before closing a tab over them, but not before quitting: unsaved changes are kept, and come back unsaved after a quit, a crash or a restart, as in VS Code. If the file changed on disk meanwhile, your text stays on screen and Tiri says so. If an agent changes a file while you're editing it, your text stays on screen and Tiri tells you, so nothing is overwritten without your choice. Editing a Peek turns it into a tab, unless a program is waiting for it back.
 
 A file that isn't UTF-8, like Latin-1, Windows 1252, GB 18030, Big 5 or Shift JIS, opens the way it was written, and saves the same way. Its encoding shows above it. Click that, or choose **Reopen with Encoding…**, to read it another way or **Save as UTF-8**.
 
@@ -536,6 +544,7 @@ It checks every program in the bundle before sending anything to Apple, doesn't 
 ```sh
 swift test          # unit tests and an in-process control server test
 scripts/e2e.sh      # drives a real app through every CLI command, with isolated state
+scripts/e2e-opening.sh   # Finder, tiri:// links, tiri-edit and tiri-open, against a copy
 ```
 
 Test copies from `scripts/dev-app.sh` hide themselves, take no clicks, and stop if a window reaches the screen, because Stage Manager brings back any window placed off-screen. Set `TIRI_DEV_MAY_TAKE_FOCUS=yes` to make one visible when nobody is using the Mac.

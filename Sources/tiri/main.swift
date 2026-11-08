@@ -41,13 +41,46 @@ func fail(_ message: String, code: Int32 = 1) -> Never {
 }
 
 let environment = ProcessInfo.processInfo.environment
-let cliEnvironment = CLIParser.Environment(
+var cliEnvironment = CLIParser.Environment(
     cwd: FileManager.default.currentDirectoryPath,
     itemID: environment["TIRI_ITEM_ID"],
     workspace: environment["TIRI_WORKSPACE"],
     claudeEntrypoint: environment["CLAUDE_CODE_ENTRYPOINT"],
     ancestors: { processAncestors() }
 )
+cliEnvironment.plugin = environment["TIRI_PLUGIN_NAME"]
+
+/// Answers once the item that was opened has closed: that's when an editor is done. Tiri quitting counts too.
+/// If Tiri goes away first, what's typed is kept there as a tab, and this fails, so git or Claude Code
+/// don't carry on with half of it.
+func waitForClose(_ response: ControlResponse) {
+    guard case .object(let fields)? = response.result, let item = fields["item"]?.stringValue else { return }
+    // No time limit: someone's typing.
+    if let client = try? ControlClient(path: TiriPaths.socket, timeout: 0),
+       let answer = try? client.send(ControlRequest(id: "wait", cmd: "wait", args: ["item": .string(item)])), answer.ok { return }
+    fail("Tiri closed before you were done with the file. What you typed is still there, in a tab.")
+}
+
+// Called as tiri-edit or tiri-open, by a program that wants an editor. See EditorNames.
+if let commands = EditorNames.commands(invokedAs: CommandLine.arguments.first ?? "", arguments: Array(CommandLine.arguments.dropFirst())) {
+    for command in commands {
+        guard case .request(let request, _)? = try? CLIParser.parse(command, environment: cliEnvironment) else { continue }
+        // What's being written may not be there yet, as for `crontab -e`.
+        if request.args["wait"]?.boolValue == true, let path = request.args["path"]?.stringValue,
+           !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: nil)
+        }
+        let response: ControlResponse
+        do {
+            response = try ControlClient(path: TiriPaths.socket).send(request)
+        } catch {
+            fail("Tiri isn't running (\(error)). Open Tiri.app first.")
+        }
+        guard response.ok else { fail(response.error ?? "Unknown error") }
+        if request.args["wait"]?.boolValue == true { waitForClose(response) }
+    }
+    exit(0)
+}
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 let parsed: CLIParser.Parsed
@@ -116,6 +149,11 @@ if rawJSON {
 guard response.ok else {
     if isHookCommand { exit(0) }
     fail(response.error ?? "Unknown error")
+}
+
+if request.cmd == "open", request.args["wait"]?.boolValue == true {
+    waitForClose(response)
+    exit(0)
 }
 
 // Not FileHandle: it raises an exception if whatever's reading has gone, like `tiri items | head -1`.
