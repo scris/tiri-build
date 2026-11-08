@@ -117,8 +117,25 @@ final class FolderStarter {
                 if self.suggested[workspace] != found { self.suggested[workspace] = found }
             }
         }
-        let taken = Set(entries(in: workspace).map { $0.folder + "\u{1}" + $0.command })
+        let taken = Set(entries(in: workspace).map { $0.folder + "\u{1}" + $0.command }).union(space.hiddenStartSuggestions ?? [])
         return (suggested[workspace] ?? []).filter { !taken.contains($0.id) }
+    }
+
+    /// Dismissed, here, for good: until Show Hidden brings them back.
+    func hide(_ guesses: [StartGuess], in workspace: WorkspaceID) {
+        model?.update(workspace: workspace) { space in
+            var hidden = space.hiddenStartSuggestions ?? []
+            for guess in guesses where !hidden.contains(guess.id) { hidden.append(guess.id) }
+            space.hiddenStartSuggestions = hidden
+        }
+    }
+
+    func hiddenCount(in workspace: WorkspaceID) -> Int {
+        model?.workspaces.first { $0.id == workspace }?.hiddenStartSuggestions?.count ?? 0
+    }
+
+    func showHidden(in workspace: WorkspaceID) {
+        model?.update(workspace: workspace) { $0.hiddenStartSuggestions = nil }
     }
 
     func isRunning(in workspace: WorkspaceID) -> Bool { servers.contains { $0.key.workspace == workspace && !$0.value.checking } }
@@ -490,7 +507,8 @@ final class FolderStarter {
         case "list", "status" where name == nil:
             return .success(id: request.id, .array(starts.map(describe)))
         case "guesses":
-            let taken = Set(starts.map { $0.folder + "\u{1}" + $0.command })
+            // What's in the list already, or dismissed here, isn't a suggestion.
+            let taken = Set(starts.map { $0.folder + "\u{1}" + $0.command }).union(space.hiddenStartSuggestions ?? [])
             return .success(id: request.id, .array(suggestionsNow(space).filter { !taken.contains($0.id) }.map { guess in
                 var entry: [String: JSONValue] = ["name": .string(guess.name), "command": .string(guess.command),
                                                   "folder": .string(guess.folder), "source": .string(guess.source)]

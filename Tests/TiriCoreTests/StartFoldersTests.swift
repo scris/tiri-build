@@ -126,8 +126,11 @@ import Testing
         let store = WorkspaceStore(directory: directory)
         var workspace = Workspace(name: "w", folders: ["/p"])
         workspace.starts = [StartEntry(id: "s-1", name: "web", command: "pnpm dev", folder: "/p/web")]
+        workspace.hiddenStartSuggestions = ["/p\u{1}make dev"]
         try store.save(.init(workspaces: [workspace], activeID: workspace.id, windows: []))
-        #expect(try store.load()?.workspaces.first?.starts == workspace.starts)
+        let loaded = store.load()?.workspaces.first
+        #expect(loaded?.starts == workspace.starts)
+        #expect(loaded?.hiddenStartSuggestions == ["/p\u{1}make dev"])
     }
 
     @Test func aStartEntrySurvivesSavingAndAWorkspaceWithoutOneLoads() throws {

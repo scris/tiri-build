@@ -458,6 +458,8 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     public var kept: [KeptItem]?
     /// What ▶ Start offers in this workspace, in its order. Nil until it's first looked at.
     public var starts: [StartEntry]?
+    /// Suggestions someone dismissed here, by `StartGuess.id`, so they don't come back.
+    public var hiddenStartSuggestions: [String]?
 
     public init(id: WorkspaceID = TiriID.make("w"), name: String, folders: [String] = []) {
         self.id = id

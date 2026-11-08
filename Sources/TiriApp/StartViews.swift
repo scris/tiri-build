@@ -98,12 +98,22 @@ enum StartMenu {
                 menu.addItem(none)
             } else {
                 if #available(macOS 14, *) { menu.addItem(.sectionHeader(title: String(localized: "Suggested"))) }
-                for guess in found.prefix(8) {
+                // A few, the likeliest. The rest are a click away, and any of them can go: holding ⌥ turns each into Hide.
+                let shown = Array(found.prefix(4))
+                for guess in shown {
                     let add = item(guess.name, symbol: "plus") { starter.addAndStart(guess, in: workspace) }
                     if #available(macOS 14.4, *) { add.subtitle = guess.command }
                     add.toolTip = String(localized: "\(guess.command), from \(guess.source)")
                     menu.addItem(add)
+                    let hide = item(String(localized: "Hide “\(guess.name)”"), symbol: "eye.slash") { starter.hide([guess], in: workspace) }
+                    hide.isAlternate = true
+                    hide.keyEquivalentModifierMask = .option
+                    menu.addItem(hide)
                 }
+                if found.count > shown.count {
+                    menu.addItem(item(String(localized: "More Suggestions…")) { starter.editing = workspace })
+                }
+                menu.addItem(item(String(localized: "Hide Suggestions"), symbol: "eye.slash") { starter.hide(found, in: workspace) })
             }
         }
 
@@ -156,9 +166,23 @@ struct StartListSheet: View {
                 }
                 .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 9))
             }
-            if !found.isEmpty {
+            let hiddenCount = starter.hiddenCount(in: workspace)
+            if !found.isEmpty || hiddenCount > 0 {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Suggested").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Suggested").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        Spacer()
+                        if hiddenCount > 0 {
+                            Button(hiddenCount == 1 ? String(localized: "Show 1 Hidden") : String(localized: "Show \(hiddenCount) Hidden")) {
+                                starter.showHidden(in: workspace)
+                            }
+                            .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
+                        }
+                        if !found.isEmpty {
+                            Button("Hide All") { starter.hide(found, in: workspace) }
+                                .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                     ScrollView {
                         VStack(spacing: 0) {
                             ForEach(found) { guess in StartSuggestionRow(guess: guess, workspace: workspace) }
@@ -326,6 +350,16 @@ private struct StartSuggestionRow: View {
                     .lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                Button {
+                    model.starter.hide([guess], in: workspace)
+                } label: {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .medium)).frame(width: 18, height: 18).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .opacity(hovering ? 1 : 0.45)
+                .help("Hide this suggestion")
+                .accessibilityLabel(String(localized: "Hide \(guess.name)"))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)

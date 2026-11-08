@@ -783,6 +783,13 @@
 "Stop" = "停止";
 "Interrupt the kernel" = "中断内核";
 "Run All" = "全部运行";
+"Hide “%@”" = "隐藏“%@”";
+"More Suggestions…" = "更多建议…";
+"Hide Suggestions" = "隐藏建议";
+"Show 1 Hidden" = "显示 1 个已隐藏的";
+"Show %lld Hidden" = "显示 %lld 个已隐藏的";
+"Hide All" = "全部隐藏";
+"Hide this suggestion" = "隐藏这个建议";
 "What's running, and what else to start (⌃⌥S)" = "正在运行的，以及还能启动的（⌃⌥S）";
 "Start a dev server or script (⌃⌥S)" = "启动开发服务器或脚本（⌃⌥S）";
 "Start, something running" = "启动，有程序在运行";

@@ -783,6 +783,13 @@
 "Stop" = "停止";
 "Interrupt the kernel" = "中斷核心";
 "Run All" = "全部執行";
+"Hide “%@”" = "隱藏「%@」";
+"More Suggestions…" = "更多建議…";
+"Hide Suggestions" = "隱藏建議";
+"Show 1 Hidden" = "顯示 1 個已隱藏的";
+"Show %lld Hidden" = "顯示 %lld 個已隱藏的";
+"Hide All" = "全部隱藏";
+"Hide this suggestion" = "隱藏這個建議";
 "What's running, and what else to start (⌃⌥S)" = "正在執行的，以及還能啟動的（⌃⌥S）";
 "Start a dev server or script (⌃⌥S)" = "啟動開發伺服器或指令碼（⌃⌥S）";
 "Start, something running" = "啟動，有程式在執行";
