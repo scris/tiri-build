@@ -246,12 +246,12 @@ public enum SettingsSchema {
               note: "In a narrow pane they stay in one column.",
               kind: .toggle, value: { .bool($0.diffSideBySide) }),
 
-        .init(key: "run.button", pane: .run, group: "", title: "Run button",
-              explanation: "▶ above files Tiri can run. ⌃⌥N runs the file in front either way.",
+        .init(key: "run.button", pane: .run, group: "Run a File", title: "Run button",
+              explanation: "Shows ▶ Run above a file Tiri can run. ⌃⌥N works either way.",
               note: "It saves the file, then types the command into a terminal called Run, in the file's folder. While it runs, what you type goes to it.",
               kind: .toggle, value: { .bool($0.runButton) }),
-        .init(key: "run.opensIn", pane: .run, group: "", title: "Where it runs",
-              explanation: "Where the Run terminal opens the first time. After that it stays where you put it.",
+        .init(key: "run.opensIn", pane: .run, group: "Run a File", title: "Where it runs",
+              explanation: "The first time. After that, wherever you move it.",
               kind: .choice([.init("below", "Below"), .init("right", "Beside"), .init("tab", "Tab")]),
               value: { .string($0.runOpensIn.rawValue) }),
         .init(key: "run.commands", pane: .run, group: "", title: "Run commands",
@@ -320,7 +320,7 @@ public enum SettingsSchema {
 
     public static func openTarget(_ text: String) -> OpenTarget {
         if let key = definition(for: text)?.key { return .setting(key) }
-        if let pane = SettingsPane.allCases.first(where: { $0.rawValue == text.lowercased() || $0.title.lowercased() == text.lowercased() }) { return .pane(pane) }
+        if let pane = SettingsPane.allCases.first(where: { $0.rawValue.lowercased() == text.lowercased() || $0.title.lowercased() == text.lowercased() }) { return .pane(pane) }
         return .search(text)
     }
 

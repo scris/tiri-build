@@ -62,7 +62,7 @@ struct RunLanguagesSection: View {
         // Folded only when it's known to be missing and nobody's changed it.
         let folded = only == nil ? all.filter { foldedKeys?.contains($0.key) == true } : []
         let shown = all.filter { entry in !folded.contains { $0.key == entry.key } } + added
-        SettingsGroup(only == nil ? String(localized: "Languages") : "") {
+        SettingsGroup(only == nil ? String(localized: "Commands") : "") {
             SettingsCard {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, entry in
                     if index > 0 { SettingsRowDivider() }
@@ -209,6 +209,18 @@ private struct RunLanguageRow: View {
         TextField(standard ?? "", text: $draft)
             .textFieldStyle(.plain)
             .font(.system(.callout, design: .monospaced))
+            // Until it's being typed in, the command shows what Tiri fills in as tags. A click goes to the field under it.
+            .opacity(editing ? 1 : 0)
+            .overlay(alignment: .leading) {
+                if !editing {
+                    // As wide as the field and no wider: a long command fades out at its edge.
+                    Color.clear
+                        .overlay(alignment: .leading) { RunCommandText(command: draft) }
+                        .clipped()
+                        .mask(LinearGradient(stops: [.init(color: .black, location: 0.9), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing))
+                        .allowsHitTesting(false)
+                }
+            }
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
             .background {
@@ -227,7 +239,6 @@ private struct RunLanguageRow: View {
             .onChange(of: command) { _, value in if !editing { draft = value } }
             .onChange(of: editing) { _, isEditing in if !isEditing { commit() } }
             .onSubmit { commit() }
-            .help("$file is the file, $name it without its extension, $dir its folder, $out a place in /tmp for a compiled program")
             .accessibilityLabel(String(localized: "Command for \(name)"))
     }
 

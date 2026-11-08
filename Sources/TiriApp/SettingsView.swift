@@ -675,7 +675,7 @@ struct SettingRow: View {
     private var isWide: Bool {
         switch definition.kind {
         case .list, .presets, .commandMap: true
-        default: definition.key == ThemeSlot.dark.settingKey
+        default: definition.key == ThemeSlot.dark.settingKey || definition.key == "run.opensIn"
         }
     }
 
@@ -875,6 +875,8 @@ struct SettingRow: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .accessibilityLabel(title)
+        case .choice where definition.key == "run.opensIn":
+            RunPlacementPicker(selection: model.settings.runOpensIn) { set(.string($0.rawValue)) }
         case .choice(let options):
             let picker = Picker("", selection: Binding(get: { value.stringValue ?? "" }, set: { set(.string($0)) })) {
                 ForEach(options, id: \.self) { Text(L10n.display($0.label)).tag($0.value) }
