@@ -1,24 +1,29 @@
 diff --git a/Sources/TiriApp/Sidebar.swift b/Sources/TiriApp/Sidebar.swift
-index d1538d0..71499fc 100644
+index a8be412..343c6a2 100644
 --- a/Sources/TiriApp/Sidebar.swift
 +++ b/Sources/TiriApp/Sidebar.swift
-@@ -32,33 +32,6 @@ struct SidebarView: View {
+@@ -32,38 +32,6 @@ struct SidebarView: View {
          let itemsFill = !explorerOpen && !changesFill && itemsOpen
          VStack(spacing: 0) {
              WorkspaceSwitcher()
 -            sectionHeader(String(localized: "Explorer"), isOpen: $explorerOpen) {
--                // With no folder there's nowhere to put one.
--                if !model.active.folders.isEmpty {
--                    Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
--                        .help("New File")
--                        .accessibilityLabel("New File")
--                    Button { model.fileTree.beginCreating(.folder, in: nil) } label: { Image(systemName: "folder.badge.plus") }
--                        .help("New Folder")
--                        .accessibilityLabel("New Folder")
+-                // One + like the Workspaces one above, so the two line up; what it makes is in its menu.
+-                Menu {
+-                    // With no folder there's nowhere to put one.
+-                    if !model.active.folders.isEmpty {
+-                        Button("New File…") { model.fileTree.beginCreating(.file, in: nil) }
+-                        Button("New Folder…") { model.fileTree.beginCreating(.folder, in: nil) }
+-                        Divider()
+-                    }
+-                    Button("Add Folder to Workspace…") { model.addFolderInteractive() }
+-                } label: {
+-                    Image(systemName: "plus")
 -                }
--                Button { model.addFolderInteractive() } label: { Image(systemName: "plus") }
--                    .help("Add Folder to Workspace")
--                    .accessibilityLabel("Add Folder to Workspace")
+-                .menuStyle(.button)
+-                .menuIndicator(.hidden)
+-                .fixedSize()
+-                .help("Add")
+-                .accessibilityLabel("Add")
 -            }
 -            if model.active.folders.isEmpty {
 -                if explorerOpen {
@@ -36,23 +41,28 @@ index d1538d0..71499fc 100644
              if hasChangesSection {
                  Divider()
                  sectionHeader(String(localized: "Changes"), isOpen: $changesOpen) {
-@@ -95,6 +68,33 @@ struct SidebarView: View {
+@@ -100,6 +68,38 @@ struct SidebarView: View {
                      }
                  }
              }
 +            sectionHeader(String(localized: "Explorer"), isOpen: $explorerOpen) {
-+                // With no folder there's nowhere to put one.
-+                if !model.active.folders.isEmpty {
-+                    Button { model.fileTree.beginCreating(.file, in: nil) } label: { Image(systemName: "doc.badge.plus") }
-+                        .help("New File")
-+                        .accessibilityLabel("New File")
-+                    Button { model.fileTree.beginCreating(.folder, in: nil) } label: { Image(systemName: "folder.badge.plus") }
-+                        .help("New Folder")
-+                        .accessibilityLabel("New Folder")
++                // One + like the Workspaces one above, so the two line up; what it makes is in its menu.
++                Menu {
++                    // With no folder there's nowhere to put one.
++                    if !model.active.folders.isEmpty {
++                        Button("New File…") { model.fileTree.beginCreating(.file, in: nil) }
++                        Button("New Folder…") { model.fileTree.beginCreating(.folder, in: nil) }
++                        Divider()
++                    }
++                    Button("Add Folder to Workspace…") { model.addFolderInteractive() }
++                } label: {
++                    Image(systemName: "plus")
 +                }
-+                Button { model.addFolderInteractive() } label: { Image(systemName: "plus") }
-+                    .help("Add Folder to Workspace")
-+                    .accessibilityLabel("Add Folder to Workspace")
++                .menuStyle(.button)
++                .menuIndicator(.hidden)
++                .fixedSize()
++                .help("Add")
++                .accessibilityLabel("Add")
 +            }
 +            if model.active.folders.isEmpty {
 +                if explorerOpen {
