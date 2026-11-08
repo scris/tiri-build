@@ -1132,7 +1132,8 @@ extension RemoteManager {
         }
         names += configured.filter { !recents.contains($0.alias) }.map { ($0.alias, $0.detail) }
         let text = SSHConfigFile.halfWidth(query.trimmingCharacters(in: .whitespaces))
-        var rows: [PaletteModel.Row] = []
+        // Where you were last time comes first: most connections are back to the same folder.
+        var rows: [PaletteModel.Row] = recentFolderRows(query: text)
         for (alias, detail) in names where text.isEmpty || alias.localizedCaseInsensitiveContains(text) || (detail?.localizedCaseInsensitiveContains(text) ?? false) {
             rows.append(PaletteModel.Row(id: alias, title: SSHConfigFile.displayName(of: alias), detail: detail, symbol: "server.rack") { [weak self] _ in
                 self?.model.closePalette(restoreFocus: false)

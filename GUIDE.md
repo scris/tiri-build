@@ -322,7 +322,7 @@ Beside the address bar:
 
 ## Servers
 
-Press **Connect to Server…** in the workspaces' + menu or the command palette, or run `tiri remote connect <host> [folder]`. Pick a host from your `~/.ssh/config` or type `user@host`, then pick a folder. It becomes a workspace like any other, starting with a terminal there.
+Choose **File → Connect to Server…**, the workspaces' + menu, or the command palette (typing `ssh` finds it), or run `tiri remote connect <host> [folder]`. Folders you've opened before come first; otherwise pick a host from your `~/.ssh/config` or type `user@host`, then pick a folder. It becomes a workspace like any other, starting with a terminal there. If you have servers, an empty tab offers it too, and typing `ssh <host>` in a terminal here asks once whether to open that server as a workspace.
 
 Everything works as it does locally: the tree, quick open, ⌘-click, the Peek, Changes, search, language servers, review comments and agents, which run on the server. `tiri open report.md` in a terminal there floats a Peek on your Mac.
 

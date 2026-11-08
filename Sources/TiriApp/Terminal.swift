@@ -1099,6 +1099,8 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     private var lastHookWorkingAt: Double = 0
     private var foregroundBusySince: Double?
     private var sawAgentOutputBurst = false
+    /// `ssh` typed at the prompt: which one, since when, and where it went if Tiri could go there too.
+    private var sshSeen: (pid: pid_t, since: Double, destination: String?)?
     private var agentHasWork = false
 
     init(itemID: ItemID, spec: TerminalSpec, launchCommand: String?, attachedTo: String? = nil, prefill: String? = nil,
@@ -1600,6 +1602,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             lastTypedAgent = typed
             model.terminalTypedAgentChanged(item: itemID, agent: typed)
         }
+        considerServerOffer(commandLine)
         // Typed or started as the terminal's command, an agent that's just come up is where its first turn starts.
         let agent = runningAgent(commandLine: commandLine)
         if agent != lastSeenAgent {
@@ -1829,6 +1832,24 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
               !model.toasts.contains(where: { $0.actionTitle != nil }) else { return }
         peekTipLooksAfterTurn = false
         if terminalView.showPeekTip() { Tips.peekShown = true }
+    }
+
+    /// An `ssh` session that's lasted a few seconds has connected, and isn't a typo or a one-off command.
+    private func considerServerOffer(_ commandLine: [String]) {
+        guard !isRemote, let pid = foregroundPID, let executable = commandLine.first,
+              (executable as NSString).lastPathComponent == "ssh" else {
+            sshSeen = nil
+            return
+        }
+        guard let seen = sshSeen, seen.pid == pid else {
+            let arguments = ProcessArguments.of(pid)
+            sshSeen = (pid, ProcessClock.now(), SSHConfigFile.destination(sshArguments: Array(arguments.dropFirst())))
+            return
+        }
+        guard let destination = seen.destination, ProcessClock.now() - seen.since > 4_000,
+              model.isLookingAt(itemID) || Self.testCopyLooks && model.active.focused.active == itemID else { return }
+        sshSeen?.destination = nil
+        model.offerServerWorkspace(destination)
     }
 
     func noteKeyPress(isReturn: Bool) {

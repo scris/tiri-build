@@ -179,6 +179,7 @@ struct TiriMenus: Commands {
             item("newWindow")
             item("newWorkspace")
             item("addFolder")
+            item("connectToServer")
             item("importWorkspace")
         }
         CommandGroup(replacing: .saveItem) {

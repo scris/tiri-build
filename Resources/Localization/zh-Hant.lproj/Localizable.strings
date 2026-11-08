@@ -1194,6 +1194,8 @@
 "Getting %@, %@…" = "正在取得 %@（%@）…";
 "Connect to a server. Type a host from your SSH config, or user@host." = "連線到伺服器。輸入 SSH 設定中的主機，或 user@host。";
 "Connecting to %@…" = "正在連線到 %@…";
+"Open %@ as a workspace?" = "將 %@ 作為工作區打開？";
+"Its files in the sidebar, and agents that run there." = "它的檔案顯示在側邊欄中，代理也在那裡執行。";
 "Couldn't connect" = "無法連線";
 "Folder on %@. Type a path, ↩ adds it." = "%@ 上的資料夾。輸入路徑，按 ↩ 加入。";
 "Folder on %@. Type a path, ↩ opens it." = "%@ 上的資料夾。輸入路徑，按 ↩ 打開。";

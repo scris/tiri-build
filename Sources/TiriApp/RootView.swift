@@ -514,6 +514,10 @@ struct EmptyGroupView: View {
                         StartRow(title: String(localized: "Past Conversations"), symbol: "clock.arrow.circlepath", shortcut: model.shortcutSymbol(for: "conversations")) { model.openConversationPicker() }
                         StartRow(title: String(localized: "Open a File"), symbol: "doc", shortcut: model.shortcutSymbol(for: "quickOpen")) { model.run("quickOpen") }
                         StartRow(title: String(localized: "New Terminal"), symbol: "terminal", shortcut: model.shortcutSymbol(for: "newTerminal")) { model.run("newTerminal") }
+                        // Only for someone who has servers, and isn't on one already.
+                        if here.active.remote == nil, ServerEntry.usesServers(model.remote) {
+                            StartRow(title: String(localized: "Connect to a Server"), symbol: "server.rack", shortcut: nil) { model.connectToServerInteractive() }
+                        }
                         if model.yourTiri.entriesAreOn {
                             StartRow(title: String(localized: "Change Tiri"), symbol: "wand.and.stars", shortcut: nil) { model.yourTiri.beginChange(surface: nil) }
                         }

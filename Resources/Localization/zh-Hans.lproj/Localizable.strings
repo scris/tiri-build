@@ -1194,6 +1194,8 @@
 "Getting %@, %@…" = "正在获取 %@（%@）…";
 "Connect to a server. Type a host from your SSH config, or user@host." = "连接到服务器。输入 SSH 配置中的主机，或 user@host。";
 "Connecting to %@…" = "正在连接 %@…";
+"Open %@ as a workspace?" = "将 %@ 作为工作区打开？";
+"Its files in the sidebar, and agents that run there." = "它的文件显示在边栏中，智能体也在那里运行。";
 "Couldn't connect" = "无法连接";
 "Folder on %@. Type a path, ↩ adds it." = "%@ 上的文件夹。输入路径，按 ↩ 添加。";
 "Folder on %@. Type a path, ↩ opens it." = "%@ 上的文件夹。输入路径，按 ↩ 打开。";

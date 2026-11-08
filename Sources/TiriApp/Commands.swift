@@ -12,6 +12,8 @@ struct AppCommand: Identifiable {
     let category: String
     /// The title on screen, for one with a name or number in it, which has no word of its own to look up.
     var shown: String? = nil
+    /// Other words people look for it by, in any language: "ssh" for Connect to Server.
+    var keywords: [String] = []
     let action: (AppModel) -> Void
 
     var shownTitle: String { shown ?? L10n.display(title) }
@@ -21,6 +23,15 @@ struct AppCommand: Identifiable {
     var paletteLabel: (shown: String, english: String) {
         if title.hasPrefix(category + ":") { return (shownTitle, title) }
         return (String(localized: "\(shownCategory): \(shownTitle)"), "\(category): \(title)")
+    }
+
+    /// A word it's also known by, typed from its start: "ss" finds Connect to Server, "sh" doesn't.
+    func keywordScore(_ typed: String) -> Int? {
+        guard typed.count >= 2 else { return nil }
+        return keywords.lazy.compactMap { word -> Int? in
+            guard word.lowercased().hasPrefix(typed.lowercased()) else { return nil }
+            return FuzzyMatcher.match(query: typed, candidate: word, nameStart: 0)?.score
+        }.max()
     }
 
     /// "Notebook: Run Cell" under Notebook is "Run Cell", in whichever language, when the words line up.
@@ -137,7 +148,8 @@ extension AppModel {
             AppCommand(id: "newWorkspace", title: "New Workspace…", category: "Workspaces") { $0.newWorkspaceInteractive() },
             AppCommand(id: "newWindow", title: "New Window", category: "Workspaces") { $0.openNewWindow() },
             AppCommand(id: "addFolder", title: "Add Folder to Workspace…", category: "Workspaces") { $0.addFolderInteractive() },
-            AppCommand(id: "connectToServer", title: "Connect to Server…", category: "Workspaces") { $0.connectToServerInteractive() },
+            AppCommand(id: "connectToServer", title: "Connect to Server…", category: "Workspaces",
+                       keywords: ["ssh", "remote", "host", "远程", "遠端", "主机", "主機"]) { $0.connectToServerInteractive() },
             AppCommand(id: "importWorkspace", title: "Import .code-workspace…", category: "Workspaces") { $0.importWorkspaceInteractive() },
             AppCommand(id: "renameWorkspace", title: "Rename Workspace…", category: "Workspaces") { $0.promptRenameWorkspace($0.activeID) },
             AppCommand(id: "deleteWorkspace", title: "Delete Workspace…", category: "Workspaces") { $0.confirmDeleteWorkspace($0.activeID) },
@@ -165,7 +177,7 @@ extension AppModel {
                 model.setForceDark(false, item: model.active.focused.active)
             },
             AppCommand(id: "about", title: "About Tiri", category: "Help") { _ in AboutPanel.show() },
-            AppCommand(id: "openSettings", title: "Open Settings…", category: "Settings") { $0.openSettings() },
+            AppCommand(id: "openSettings", title: "Open Settings…", category: "Settings", keywords: ["preferences", "options", "偏好设置", "偏好設定"]) { $0.openSettings() },
             AppCommand(id: "openKeybindings", title: "Open Keyboard Shortcuts", category: "Settings") { $0.openKeyboardShortcuts() },
             AppCommand(id: "themeSystem", title: "Theme: Follow System", category: "Settings") { $0.setTheme(.system) },
             AppCommand(id: "themeLight", title: "Theme: Light", category: "Settings") { $0.setTheme(.light) },

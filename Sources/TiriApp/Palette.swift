@@ -478,6 +478,8 @@ final class PaletteModel {
             } else if english != label, let match = FuzzyMatcher.match(query: trimmed, candidate: english, nameStart: 0) {
                 // Typed in English, as in a guide or by habit. What matched isn't on the row to mark.
                 scored.append((match.score, row([])))
+            } else if let score = command.keywordScore(trimmed) {
+                scored.append((score, row([])))
             }
         }
         scored.sort { $0.0 > $1.0 }
