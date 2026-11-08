@@ -63,6 +63,7 @@ fastlane/test_output
 
 # Assembled app bundle
 build/
+build-preview/
 screenshots/
 scripts/grammars/node_modules/
 .DS_Store

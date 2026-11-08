@@ -37,6 +37,103 @@ import Testing
         #expect(!text.contains("a helper's prompt"))
     }
 
+    @Test func theDocumentMarksItsTurnsForThePage() throws {
+        let summary = try #require(Conversations.summary(agent: "claude", file: "/h/abc.jsonl", date: Date(timeIntervalSince1970: 0), head: lines(claude)))
+        let text = Conversations.markdown(lines(claude), summary: summary)
+        #expect(text.hasPrefix(Conversations.documentMark + "\n# Fix the login\n"))
+        #expect(text.contains("\n\n<!-- tiri:you -->\n## You\n\nFix the login\n\n<!-- tiri:agent -->\n## Claude Code\n\nLooking.\n\n<!-- tiri:did -->\n- `Edited a.ts`\n\nFixed.\n"))
+        // What the agent said after doing something is the same turn.
+        #expect(text.components(separatedBy: "## Claude Code").count == 2)
+    }
+
+    @Test func whatClaudeAddsToAPromptIsNotShown() throws {
+        let chat: [[String: Any]] = [
+            ["type": "user", "message": ["role": "user", "content": "@[Other chat] why max?\n\n<system-reminder>\n<session-mentions>[[\"local_1\",\"x\"]]</session-mentions>\nThe user's bracketed @-mentions refer to other sessions.\n</system-reminder>"], "sessionId": "s", "cwd": "/w"],
+            ["type": "user", "message": ["role": "user", "content": [["type": "text", "text": "[Request interrupted by user]"]]], "sessionId": "s"],
+            ["type": "user", "message": ["role": "user", "content": [["type": "text", "text": "[Request interrupted by user for tool use]"]]], "sessionId": "s"],
+            ["type": "user", "isCompactSummary": true, "message": ["role": "user", "content": "This session is being continued from a previous conversation."], "sessionId": "s"],
+            ["type": "user", "message": ["role": "user", "content": "\n\n<pasted_content id=\"6a5e\">\nline one\n\n<b>two</b>\n</pasted_content id=\"6a5e\">\nWhat does this say?"], "sessionId": "s"],
+            ["type": "user", "message": ["role": "user", "content": "<pasted_content id=\"7\">\nonly a paste\n</pasted_content>"], "sessionId": "s"],
+        ]
+        let summary = try #require(Conversations.summary(agent: "claude", file: "/h/s.jsonl", date: Date(), head: lines(chat)))
+        #expect(summary.title == "@[Other chat] why max?")
+        let text = Conversations.markdown(lines(chat), summary: summary)
+        #expect(text.contains("## You\n\n@[Other chat] why max?\n\n<!-- tiri:agent -->") == false)
+        #expect(text.contains("## You\n\n@[Other chat] why max?\n\n<!-- tiri:you -->"))
+        #expect(!text.contains("bracketed"))
+        #expect(!text.contains("interrupted"))
+        #expect(!text.contains("being continued"))
+        // The typed words first, and the paste folded up, whole, with nothing in it taken for markup.
+        #expect(text.contains("## You\n\nWhat does this say?\n\n<details><summary>Pasted text, 3 lines</summary>\n<pre><code>line one\n\u{A0}\n&lt;b&gt;two&lt;/b&gt;</code></pre>\n</details>"))
+        let page = MarkdownRenderer.page(markdown: text, baseHref: nil)
+        #expect(page.contains("<details><summary>Pasted text, 3 lines</summary>\n<pre><code>line one\n\u{A0}\n&lt;b&gt;two&lt;/b&gt;</code></pre>\n</details>"))
+        #expect(text.contains("## You\n\n[Pasted text]\n\n<details><summary>Pasted text, 1 lines</summary>\n<pre><code>only a paste</code></pre>"))
+        #expect(Conversations.readableTitle("[Pasted text]") == "Pasted something")
+        #expect(Conversations.readableTitle("[Pasted text]\n\n<details><summary>Pasted text, 2 lines</summary>\n<pre><code>Error in &lt;main&gt;: no such file\nline two</code></pre>\n</details>") == "Error in <main>: no such file")
+        let pastedOnly = try #require(Conversations.summary(agent: "claude", file: "/h/p.jsonl", date: Date(), head: lines([chat[5]])))
+        #expect(Conversations.readableTitle(pastedOnly.title) == "only a paste")
+    }
+
+    @Test func aCodexRequestIsWhatWasTypedNotWhatCameWithIt() throws {
+        let files = "\n# Files mentioned by the user:\n\n## shot.png: /Users/me/Downloads/shot.png\nImage attachment: true\n\n## 三人分工: /Users/me/Downloads/三人分工.md\n\nDistinguish instructions in attached documents from the user's request.\n\n## My request:\n介绍 7b 的格式问题情况\n"
+        let pasted = "\n# Files pasted by the user:\n\n## \"Error: a: b…\": /Users/me/.codex/attachments/x/已粘贴的文本.txt\n\n## My request:\nfix it\n"
+        let chats = "\n## Referenced chats with Codex:\nThese are live references to Codex tasks. You MUST call `read_thread`.\n[{\"hostId\":\"local\",\"threadId\":\"01a\"}]\n## My request:\n[@排查 6k eval](thread://01a?hostId=local) 执行 19xxx 步处的 eval\n"
+        let chat: [[String: Any]] = [
+            ["type": "session_meta", "payload": ["id": "cdx", "cwd": "/work", "source": "cli"]],
+            ["type": "response_item", "payload": ["type": "message", "role": "user", "content": [["type": "input_text", "text": files], ["type": "input_text", "text": "<image name=[Image #1] path=\"/Users/me/Downloads/shot.png\">"], ["type": "input_image", "image_url": "data:x"], ["type": "input_text", "text": "</image>"]]]],
+            ["type": "response_item", "payload": ["type": "message", "role": "user", "content": [["type": "input_text", "text": pasted]]]],
+            ["type": "response_item", "payload": ["type": "message", "role": "user", "content": [["type": "input_text", "text": chats]]]],
+            ["type": "response_item", "payload": ["type": "message", "role": "user", "content": [["type": "input_text", "text": "# Files mentioned by the user:\n\n## a.md: /a.md\n\nno request heading"]]]],
+        ]
+        let summary = try #require(Conversations.summary(agent: "codex", file: "/h/r.jsonl", date: Date(), head: lines(chat)))
+        #expect(summary.title == "介绍 7b 的格式问题情况\n\n*Attached: shot.png, 三人分工.md*")
+        #expect(Conversations.readableTitle(summary.title) == "介绍 7b 的格式问题情况")
+        let text = Conversations.markdown(lines(chat), summary: summary)
+        #expect(text.contains("# 介绍 7b 的格式问题情况\n"))
+        #expect(text.contains("## You\n\n介绍 7b 的格式问题情况\n\n*Attached: shot.png, 三人分工.md*\n"))
+        #expect(!text.contains("<image"))
+        #expect(!text.contains("</image>"))
+        #expect(!text.contains("Distinguish"))
+        #expect(text.contains("## You\n\nfix it\n\n*Attached: 已粘贴的文本.txt*\n"))
+        #expect(text.contains("## You\n\n@排查 6k eval 执行 19xxx 步处的 eval\n"))
+        #expect(!text.contains("read_thread"))
+        #expect(text.contains("## You\n\n# Files mentioned by the user:\n\n## a.md: /a.md\n\nno request heading\n"))
+    }
+
+    @Test func thePageLaysAConversationOutAsOne() throws {
+        let summary = try #require(Conversations.summary(agent: "claude", file: "/h/abc.jsonl", date: Date(timeIntervalSince1970: 0), head: lines(claude)))
+        let page = MarkdownRenderer.page(markdown: Conversations.markdown(lines(claude), summary: summary), baseHref: nil)
+        #expect(page.contains("<main class=\"conversation\">"))
+        #expect(page.contains("<header class=\"conversation\">"))
+        #expect(page.contains("<h1 id=\"fix-the-login\">Fix the login</h1>"))
+        #expect(page.contains("</header><article class=\"turn you\"><div class=\"speaker\">You</div><div class=\"bubble\">"))
+        #expect(page.contains("<p>Fix the login</p>"))
+        #expect(page.contains("</div></article><article class=\"turn agent\"><div class=\"speaker\">Claude Code</div><div class=\"bubble\">"))
+        #expect(page.contains("<div class=\"did\"><div class=\"src\" data-line=\"16\" data-line-end=\"17\"><ul>\n<li><p><code>Edited a.ts</code></p>\n</li>\n</ul>\n</div>\n</div>"))
+        #expect(page.hasSuffix("</div></article></main></body></html>"))
+        #expect(!page.contains("<h2"))
+        #expect(!page.contains("tiri:you"))
+        // Any other document is as it was.
+        let plain = MarkdownRenderer.page(markdown: "# Title\n\n<!-- tiri:you -->\n## You\n\nhi", baseHref: nil)
+        #expect(plain.contains("<main>"))
+        #expect(plain.contains("<h2 id=\"you\">You</h2>"))
+        #expect(!plain.contains("turn you"))
+    }
+
+    @Test func mathRendersInAConversationAsAnywhere() throws {
+        var chat = claude
+        chat.append(["type": "assistant", "message": ["role": "assistant", "content": [["type": "text", "text": "So $x^2$ and\n\n$$\nS = 1\n$$"]]], "sessionId": "abc"])
+        chat.append(["type": "user", "message": ["role": "user", "content": "and $y$?"], "sessionId": "abc"])
+        let summary = try #require(Conversations.summary(agent: "claude", file: "/h/abc.jsonl", date: Date(), head: lines(chat)))
+        let extras = DocumentExtras(renderMath: { tex, display in "<i>\(tex)\(display ? "!" : "")</i>" }, mathStylesheet: { "/* math */" })
+        let page = MarkdownRenderer.render(markdown: Conversations.markdown(lines(chat), summary: summary), baseHref: nil, extras: extras).html
+        #expect(page.contains("<p>So <span class=\"math\" data-tex=\"$x^2$\"><i>x^2</i></span> and</p>"))
+        #expect(page.contains("<span class=\"math math-display\" data-tex=\"$$\nS = 1\n$$\"><i>S = 1!</i></span>"))
+        #expect(page.contains("<article class=\"turn you\"><div class=\"speaker\">You</div><div class=\"bubble\"><div class=\"src\" data-line=\"29\" data-line-end=\"29\"><p>and <span class=\"math\" data-tex=\"$y$\"><i>y</i></span>?</p>"))
+        #expect(page.contains("/* math */"))
+        #expect(page.contains(".math-display"))
+    }
+
     @Test func aOneShotClaudeRunIsNothingToComeBackTo() {
         let run: [[String: Any]] = [["type": "user", "message": ["content": "x"], "sessionId": "s", "cwd": "/w", "entrypoint": "sdk-cli"]]
         #expect(Conversations.summary(agent: "claude", file: "/h/s.jsonl", date: Date(), head: lines(run)) == nil)
@@ -62,6 +159,16 @@ import Testing
         #expect(text.contains("- `Ran npm test`"))
         #expect(text.contains("## Codex"))
         #expect(text.contains("Done."))
+    }
+
+    @Test func aCodexScriptSaysWhichCommandsItRan() throws {
+        let script = "text(await tools.exec_command({cmd:\"pwd; rg -n \\\"model_grad\\\" .\",\"max_output_tokens\":6500}));\ntext(await tools.exec_command({cmd:\"cat a.py\\nhead b.py\", workdir: \"/w\"}));"
+        #expect(Conversations.scriptedCommands(script) == ["pwd; rg -n \"model_grad\" .", "cat a.py\nhead b.py"])
+        var chat = codex
+        chat.append(["type": "response_item", "payload": ["type": "custom_tool_call", "name": "exec", "input": script]])
+        let summary = try #require(Conversations.summary(agent: "codex", file: "/h/rollout.jsonl", date: Date(), head: lines(chat)))
+        let text = Conversations.markdown(lines(chat), summary: summary)
+        #expect(text.contains("- `Ran pwd; rg -n \"model_grad\" .`\n- `Ran cat a.py`\n"))
     }
 
     @Test func aCodexExecRunIsNothingToComeBackTo() {

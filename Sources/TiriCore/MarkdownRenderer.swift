@@ -45,24 +45,29 @@ public enum MarkdownRenderer {
         var fragments = Fragments(extras: extras)
         // Each block says which source lines it came from, so a selection in the rendered page
         // can name them. `display: contents` keeps these wrappers out of the layout.
-        let html = fragments.html(markdown: body, lineOffset: frontMatterLineCount(frontMatter))
+        // A conversation an agent had is laid out as one, as `ConversationPage.swift` says.
+        let conversation = isConversation(body)
+        let html = conversation ? fragments.conversationHTML(markdown: body, lineOffset: frontMatterLineCount(frontMatter))
+                                : fragments.html(markdown: body, lineOffset: frontMatterLineCount(frontMatter))
         var main = ""
         if let frontMatter {
             main += "<pre class=\"front-matter\"><code>\(escapeText(frontMatter))</code></pre>\n"
         }
         main += html
-        return RenderedDocument(html: wrap(main: main, baseHref: baseHref, title: title, stylesheet: stylesheet + fragments.extraStyles()),
+        let styles = stylesheet + fragments.extraStyles() + (conversation ? conversationStyles : "")
+        return RenderedDocument(html: wrap(main: main, baseHref: baseHref, title: title, stylesheet: styles, mainClass: conversation ? "conversation" : nil),
                                 hasDiagrams: fragments.hasDiagrams, hasPendingDiagrams: fragments.hasPendingDiagrams)
     }
 
-    static func wrap(main: String, baseHref: String?, title: String, stylesheet: String) -> String {
+    static func wrap(main: String, baseHref: String?, title: String, stylesheet: String, mainClass: String? = nil) -> String {
         // Documents can contain raw HTML. Nothing but local files and secure images gets to load.
         var head = "<meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"\(contentSecurityPolicy)\">"
         if let baseHref {
             head += "<base href=\"\(escapeAttribute(baseHref))\">"
         }
         head += "<title>\(escapeText(title))</title><style>\(stylesheet)</style>"
-        return "<!DOCTYPE html><html><head>\(head)</head><body><main>\(main)</main></body></html>"
+        let opening = mainClass.map { "<main class=\"\($0)\">" } ?? "<main>"
+        return "<!DOCTYPE html><html><head>\(head)</head><body>\(opening)\(main)</main></body></html>"
     }
 
     /// Turns markdown into HTML, with its math and diagrams, for a page or part of one.
@@ -79,15 +84,24 @@ public enum MarkdownRenderer {
             let math = MathText.extract(markdown)
             let tall = math.spans.filter { $0.endLine != nil }
             let document = Document(parsing: math.markdown)
-            var html = document.children.map { block -> String in
-                let inner = DocumentHTML.format(block, highlight: extras.highlight)
-                guard let lineOffset, let range = block.range else { return inner }
-                var end = range.upperBound.line - 1
-                // Math over several lines is one line to the parser.
-                for span in tall where inner.contains(span.token) { end = max(end, span.endLine ?? end) }
-                return "<div class=\"src\" data-line=\"\(range.lowerBound.line - 1 + lineOffset)\" data-line-end=\"\(end + lineOffset)\">\(inner)</div>\n"
-            }.joined()
-            html = addHeadingAnchors(html, math: math.spans)
+            let html = document.children.map { blockHTML($0, lineOffset: lineOffset, tall: tall) }.joined()
+            return finish(html, math: math)
+        }
+
+        /// One block of a document, saying which source lines it came from when there's an offset to count
+        /// from. `tall` is the math that runs over several lines.
+        func blockHTML(_ block: Markup, lineOffset: Int?, tall: [MathText.Span]) -> String {
+            let inner = DocumentHTML.format(block, highlight: extras.highlight)
+            guard let lineOffset, let range = block.range else { return inner }
+            var end = range.upperBound.line - 1
+            // Math over several lines is one line to the parser.
+            for span in tall where inner.contains(span.token) { end = max(end, span.endLine ?? end) }
+            return "<div class=\"src\" data-line=\"\(range.lowerBound.line - 1 + lineOffset)\" data-line-end=\"\(end + lineOffset)\">\(inner)</div>\n"
+        }
+
+        /// What the blocks of any page go through once they're together.
+        mutating func finish(_ html: String, math: MathText.Extracted) -> String {
+            var html = addHeadingAnchors(html, math: math.spans)
             html = convertTaskLists(html)
             html = placeDiagrams(html)
             return MathText.restore(html, spans: math.spans) { span in renderedMath(span) }
