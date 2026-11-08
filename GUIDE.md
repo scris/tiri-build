@@ -305,16 +305,15 @@ Python, JavaScript and TypeScript (Node 23.6 or later), C, C++, Java, Kotlin, Go
 
 ## Starting a project
 
-For a project's dev server, or whatever else keeps running while you work: one per folder, in the bar along the bottom.
+For dev servers, a project's own start scripts, and the parts of a monorepo: each workspace keeps its own list, under **▶ Start** in the toolbar at the top right.
 
-- **▶ Start** sits next to the folder's branch, for any folder Tiri can guess a command for. The first press shows its guesses: `package.json`'s `dev` or `start` with your package manager, what Claude Code's preview saved in `.claude/launch.json`, a `Procfile`, `manage.py`, `make dev`, `cargo run`, `docker compose up`. Pick one, type your own, or have your agent find it. It's kept for the folder from then on.
-- **It runs in a terminal of its own**, a tab behind what you're looking at, named after the command. When the server listens, Tiri sees the port, whatever it chose, and opens the page beside your code without taking the keyboard.
-- **The bar shows its address while it runs.** Click it to open the page, ↻ restarts and ■ stops. Right-click for its output or a new command. ⌃⌥S starts the folder you're in, or opens its page.
-- **If it stops by itself**, a notice shows the last thing it printed, with **Ask Claude Code**.
-- **It keeps running when Tiri quits**, like any terminal, unless you turn that off in Settings → Agents. It's there when Tiri comes back.
-- **Your agent uses the same one.** `tiri start` starts it or finds it running, and waits to print its address, so agents never start a second copy or leave one running where nobody sees it. `tiri start logs`, `restart` and `stop` do the rest, and `tiri start set "<command>"` saves one. The agent guide tells agents to use it.
-- **Settings → Run** lists each folder's command, to change or forget.
-- **On a server**, it runs there, and the page comes through a forwarded port.
+- **Click ▶ Start** for the list. Each start runs with a click, and each running one shows its address, with **Open**, **Show Output**, **Restart** and **Stop**. A green dot on ▶ says something's running. ⌃⌥S starts the only one, or opens the list.
+- **Filling the list:** with nothing in it yet, ▶ Start suggests what the folders hold, and one click adds and starts it. Tiri reads the project's own `scripts/start-*.sh` and `bin/dev`, `package.json`'s `dev` or `start` with your package manager, `.claude/launch.json`, `Procfile`, `manage.py`, `make dev`, Spring Boot, `cargo run` and `docker compose up`, in each folder and in its subfolders, as in a monorepo. **Edit Starts…** renames, changes or removes them, picks the folder each runs in, and adds your own. **Ask Claude Code to Set Up…** has your agent read the project and fill the list.
+- **Each runs in a terminal of its own**, a tab behind what you're looking at, named after the start. When it listens, Tiri sees its ports, whatever it chose, and opens the page beside your code without taking the keyboard. A start script that brings up several servers lists each port.
+- **If one stops by itself**, a notice shows the last thing it printed, with **Ask Claude Code**.
+- **They keep running when Tiri quits**, like any terminal, unless you turn that off in Settings → Agents. They're picked up again when Tiri comes back.
+- **Your agent uses the same ones.** `tiri start list` shows them, `tiri start <name>` starts one or finds it running and waits to print its address, and `logs`, `restart`, `stop`, `add` and `remove` do the rest. So agents never start a second copy, or leave one running where nobody sees it. The agent guide tells them to.
+- **On a server**, they run there, and the page comes through a forwarded port.
 
 ---
 

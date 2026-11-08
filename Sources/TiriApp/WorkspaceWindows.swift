@@ -148,7 +148,6 @@ struct WindowModel {
         if app.workspacesWithBar.contains(activeID) { return true }
         // The file in front is the front window's, so it only counts for that window's own workspace.
         let now = app.yourTiri.waiting != nil || live.barHasRepositories || active.remote != nil || !app.plugins.statusItems.isEmpty
-            || active.folders.contains { app.starter.shows($0, in: activeID) }
             || isCurrent && (app.languageHasNews || app.unknownLanguageExtension != nil)
         if now { app.workspacesWithBar.insert(activeID) }
         return now

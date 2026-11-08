@@ -37,10 +37,6 @@ struct StatusBar: View {
                         ForEach(here.repositories) { repository in
                             RepositoryStatusItem(repository: repository, showsName: here.repositories.count > 1)
                         }
-                        let startable = here.active.folders.filter { model.starter.shows($0, in: here.activeID) }
-                        ForEach(startable, id: \.self) { folder in
-                            StartStatusItem(folder: folder, showsName: here.active.folders.count > 1)
-                        }
                     }
                     .padding(.horizontal, 16)
                     .frame(maxHeight: .infinity)

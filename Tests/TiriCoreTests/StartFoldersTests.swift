@@ -25,6 +25,7 @@ import Testing
           ] }
         """
         let found = guesses([".claude/launch.json": launch, "package.json": #"{"scripts":{"dev":"next dev"}}"#])
+        #expect(found.map(\.name) == ["web", "api", "p"])
         #expect(found.map(\.command) == ["cd apps/web && pnpm dev --port 3001", "PORT=8080 node server.js", "npm run dev"])
         #expect(found.first?.source == ".claude/launch.json")
     }
@@ -58,6 +59,9 @@ import Testing
         #expect(StartFolders.pagePort(listening: [4000], printed: 3000) == 4000)
         #expect(StartFolders.pagePort(listening: [], printed: 3000) == 3000)
         #expect(StartFolders.pagePort(listening: [], printed: nil) == nil)
+        // A script bringing up a site and its API, the API ready first or last: the lower is the page.
+        #expect(StartFolders.pagePort(listening: [5410, 5411], printed: [5411, 5410]) == 5410)
+        #expect(StartFolders.printedPorts(in: "API on http://localhost:5411/\nSite on http://localhost:5410/") == [5411, 5410])
     }
 
     @Test func aTabTitleIsTheCommandsStart() {
@@ -71,19 +75,68 @@ import Testing
         #expect(settings.startCommands == ["/a": "pnpm dev"])
     }
 
-    @Test func theCommandLineSaysWhichFolderAndWhat() throws {
+    @Test func theCommandLineNamesAStartOrSaysWhatToDo() throws {
         let environment = CLIParser.Environment(cwd: "/p/src", itemID: "i-1", fileExists: { _ in false }, readStdin: { Data() })
         func parsed(_ args: [String]) throws -> ControlRequest? {
             guard case .request(let request, _) = try CLIParser.parse(args, environment: environment) else { return nil }
             return request
         }
         let plain = try #require(try parsed(["start"]))
-        #expect(plain.cmd == "start" && plain.args["action"] == nil && plain.args["folder"]?.stringValue == "/p/src")
-        let set = try #require(try parsed(["start", "set", "pnpm dev", "--folder", "/q"]))
-        #expect(set.args["action"]?.stringValue == "set" && set.args["command"]?.stringValue == "pnpm dev" && set.args["folder"]?.stringValue == "/q")
-        #expect(try parsed(["start", "logs", "--lines", "40"])?.args["lines"]?.intValue == 40)
-        #expect(throws: (any Error).self) { try parsed(["start", "launch"]) }
-        #expect(throws: (any Error).self) { try parsed(["start", "set"]) }
+        #expect(plain.cmd == "start" && plain.args["action"] == nil && plain.args["name"] == nil && plain.args["source"]?.stringValue == "i-1")
+        #expect(try parsed(["start", "web"])?.args["name"]?.stringValue == "web")
+        let add = try #require(try parsed(["start", "add", "web", "pnpm dev", "--folder", "/p/apps/web"]))
+        #expect(add.args["action"]?.stringValue == "add" && add.args["name"]?.stringValue == "web" && add.args["command"]?.stringValue == "pnpm dev")
+        #expect(add.args["folder"]?.stringValue == "/p/apps/web")
+        let logs = try #require(try parsed(["start", "logs", "web", "--lines", "40"]))
+        #expect(logs.args["name"]?.stringValue == "web" && logs.args["lines"]?.intValue == 40)
+        #expect(try parsed(["start", "list"])?.args["action"]?.stringValue == "list")
+        #expect(throws: (any Error).self) { try parsed(["start", "add", "web"]) }
+        #expect(throws: (any Error).self) { try parsed(["start", "remove"]) }
+    }
+
+    @Test func aMonorepoSuggestsItsPartsAndItsOwnScripts() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("tiri-start-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        func write(_ path: String, _ text: String) throws {
+            let full = (root as NSString).appendingPathComponent(path)
+            try FileManager.default.createDirectory(atPath: (full as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try text.write(toFile: full, atomically: true, encoding: .utf8)
+        }
+        try write("scripts/start-trainhub.sh", "#!/bin/sh")
+        try write("scripts/start-home.sh", "#!/bin/sh")
+        try write("scripts/test.sh", "#!/bin/sh")
+        try write("Frontend/package.json", #"{"scripts":{"dev":"vite","start":"vite preview"}}"#)
+        try write("Frontend/yarn.lock", "")
+        try write("Backend/pom.xml", "<plugin>spring-boot-maven-plugin</plugin>")
+        try write("Backend/mvnw", "")
+        try write("node_modules/x/package.json", #"{"scripts":{"dev":"no"}}"#)
+        try write("notes/README.md", "hi")
+        let found = StartFolders.suggestions(for: [root])
+        #expect(found.map(\.name) == ["home", "trainhub", "Backend", "Frontend"])
+        #expect(found.first { $0.name == "Frontend" }?.command == "yarn dev")
+        #expect(found.first { $0.name == "Frontend" }?.folder == (root as NSString).appendingPathComponent("Frontend"))
+        #expect(found.first { $0.name == "Backend" }?.command == "./mvnw spring-boot:run")
+        #expect(found.first { $0.name == "trainhub" }?.command == "scripts/start-trainhub.sh")
+        #expect(found.first { $0.name == "trainhub" }?.folder == root)
+    }
+
+    @Test func aWorkspacesStartsAreSavedWithItAndComeBack() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tiri-starts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = WorkspaceStore(directory: directory)
+        var workspace = Workspace(name: "w", folders: ["/p"])
+        workspace.starts = [StartEntry(id: "s-1", name: "web", command: "pnpm dev", folder: "/p/web")]
+        try store.save(.init(workspaces: [workspace], activeID: workspace.id, windows: []))
+        #expect(try store.load()?.workspaces.first?.starts == workspace.starts)
+    }
+
+    @Test func aStartEntrySurvivesSavingAndAWorkspaceWithoutOneLoads() throws {
+        var workspace = Workspace(name: "w", folders: ["/p"])
+        workspace.starts = [StartEntry(id: "s-1", name: "web", command: "pnpm dev", folder: "/p")]
+        let data = try JSONEncoder().encode(workspace)
+        #expect(try JSONDecoder().decode(Workspace.self, from: data).starts == workspace.starts)
+        let older = try JSONEncoder().encode(Workspace(name: "old", folders: []))
+        #expect(try JSONDecoder().decode(Workspace.self, from: older).starts == nil)
     }
 
     @Test func theKernelSaysWhatAProgramListensOn() throws {

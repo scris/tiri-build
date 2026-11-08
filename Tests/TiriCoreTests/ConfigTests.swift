@@ -372,7 +372,7 @@ import Testing
         // Two lists elsewhere on the screen, three themes the Theme row shows, and Run's languages table: no rows of their own.
         #expect(Set(SettingsSchema.all.filter(\.shownElsewhere).map(\.key))
                 == ["terminal.presets", "terminal.resume", "theme.light", "theme.highContrastDark", "theme.highContrastLight",
-                    "run.commands", "run.off", "start.commands"])
+                    "run.commands", "run.off"])
     }
 
     /// One line under each title. Anything longer belongs in its note.

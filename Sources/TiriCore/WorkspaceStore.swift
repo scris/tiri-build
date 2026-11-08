@@ -26,6 +26,8 @@ public struct WorkspaceStore: Sendable {
         var recentFiles: [String]?
         var groupMRU: [GroupID]?
         var review: [ReviewComment]?
+        /// ▶ Start's list. Missing before there was one, and in a workspace that hasn't looked at it yet.
+        var starts: [StartEntry]?
         /// What wrote it. Missing before there was one.
         var version: Int?
     }
@@ -170,7 +172,7 @@ public struct WorkspaceStore: Sendable {
             let layout = LayoutFile(items: saved.items, layout: saved.layout,
                                     focusedGroup: workspace.focusedGroup, closed: saved.closed,
                                     expandedFolders: workspace.expandedFolders, recentFiles: workspace.recentFiles, groupMRU: workspace.groupMRU,
-                                    review: workspace.review.isEmpty ? nil : workspace.review, version: Self.formatVersion)
+                                    review: workspace.review.isEmpty ? nil : workspace.review, starts: workspace.starts, version: Self.formatVersion)
             try written.write(encoder.encode(layout), to: layoutURL(workspace.id))
         }
         if Self.lastGoodDue(lastGoodURL) { keepLastGood() }
@@ -201,6 +203,7 @@ extension Workspace {
         recentFiles = layout.recentFiles ?? []
         groupMRU = layout.groupMRU ?? []
         review = layout.review ?? []
+        starts = layout.starts
     }
 }
 

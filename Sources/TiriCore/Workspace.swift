@@ -34,8 +34,10 @@ public struct TerminalSpec: Codable, Hashable, Sendable {
     public var typedAgent: String?
     /// The terminal ▶ and ⌃⌥N type into. One per workspace, found again after a relaunch.
     public var runsFiles: Bool?
-    /// The folder whose Start runs here: its dev server, say. One per folder, found again after a relaunch.
+    /// The folder whose Start ran here, before starts were a workspace's list. Picked up as that folder's start.
     public var startsFolder: String?
+    /// The start that runs here, from the workspace's list. Found again after a relaunch.
+    public var startsEntry: String?
 
     /// Whether a hook from this agent is about this terminal. One agent running another, as in a
     /// Claude session calling `codex exec`, reports through the same terminal, and a Codex
@@ -454,6 +456,8 @@ public struct Workspace: Codable, Hashable, Identifiable, Sendable {
     public var review: [ReviewComment] = []
     /// Tabs another copy of Tiri made that this one can't show. Saved back as they came. See `KeptItem`.
     public var kept: [KeptItem]?
+    /// What ▶ Start offers in this workspace, in its order. Nil until it's first looked at.
+    public var starts: [StartEntry]?
 
     public init(id: WorkspaceID = TiriID.make("w"), name: String, folders: [String] = []) {
         self.id = id

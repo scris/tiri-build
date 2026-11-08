@@ -113,20 +113,10 @@ extension AppModel {
             AppCommand(id: "newTerminal", title: "New Terminal", category: "Terminal") { $0.startTerminal() },
             AppCommand(id: "runFile", title: "Run File", category: "Terminal",
                        keywords: ["code runner", "execute", "运行", "執行"]) { $0.runner.runFront() },
-            AppCommand(id: "startFolder", title: "Start: Start or Open Page", category: "Start",
+            AppCommand(id: "startFolder", title: "Start: Start or Choose", category: "Start",
                        keywords: ["dev server", "serve", "launch", "启动", "啟動"]) { $0.starter.pressInFront() },
-            AppCommand(id: "startRestart", title: "Start: Restart", category: "Start") { model in
-                if let folder = model.starter.folderInFront() { model.starter.restart(folder, in: model.activeID) }
-            },
-            AppCommand(id: "startStop", title: "Start: Stop", category: "Start") { model in
-                if let folder = model.starter.folderInFront() { model.starter.stop(folder, in: model.activeID) }
-            },
-            AppCommand(id: "startShowOutput", title: "Start: Show Output", category: "Start") { model in
-                if let folder = model.starter.folderInFront() { model.starter.showOutput(folder, in: model.activeID) }
-            },
-            AppCommand(id: "startChange", title: "Start: Change Command…", category: "Start") { model in
-                if let folder = model.starter.folderInFront() { model.starter.openChooser(folder, in: model.activeID) }
-            },
+            AppCommand(id: "startEdit", title: "Start: Edit Starts…", category: "Start") { $0.starter.editing = $0.activeID },
+            AppCommand(id: "startStopAll", title: "Start: Stop All", category: "Start") { $0.starter.stopAll(in: $0.activeID) },
             AppCommand(id: "restartTerminal", title: "Restart Exited Terminal", category: "Terminal") { model in
                 if let id = model.active.focused.active {
                     (model.existingController(for: id) as? TerminalController)?.restart()

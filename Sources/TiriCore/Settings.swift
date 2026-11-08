@@ -111,7 +111,7 @@ public struct TiriSettings: Equatable, Sendable {
     public var runCommands: [String: String] = [:]
     /// Languages and `.ext`s that don't run.
     public var runOff: [String] = []
-    /// What ▶ Start runs for each folder, by its path. See `StartFolders`.
+    /// What ▶ Start ran for each folder, by its path, before each workspace kept a list. Read only to bring them into those lists.
     public var startCommands: [String: String] = [:]
     /// Steps of ⌘+ and ⌘-. Each is one point of text, in terminals and in files.
     public var zoomLevel = 0
@@ -195,8 +195,6 @@ public struct TiriSettings: Equatable, Sendable {
       "run.commands": {},
       // Languages or ".ext"s that don't run, like "php".
       "run.off": [],
-      // What Start runs for a folder, usually its dev server, by the folder's path. `tiri start set` changes it.
-      "start.commands": {},
 
       // Steps of ⌘+ and ⌘-.
       "window.zoomLevel": 0,

@@ -181,19 +181,25 @@ public enum CLIParser {
             return request("notebook." + action, payload)
 
         case "start":
-            let usage = "usage: tiri start [status | stop | restart | logs [--lines N] | guesses | set \"<command>\"] [--folder DIR]   (a folder's dev server, in a terminal of its own)"
+            let usage = "usage: tiri start [<name>] | list | status [<name>] | stop [<name>] | restart [<name>] | logs [<name>] [--lines N] | add <name> \"<command>\" [--folder DIR] | remove <name> | guesses   (the workspace's dev servers and scripts, each in a terminal of its own)"
             var options = Options(args)
             let folder = try options.value("--folder")
             let lines = try options.value("--lines")
             var payload: [String: JSONValue] = ["folder": .string(absolute(folder ?? environment.cwd, environment))]
             // The agent's own workspace, which may be behind the one in front.
             if let item = environment.itemID { payload["source"] = .string(item) }
-            if let action = options.positional() {
-                guard ["status", "stop", "restart", "logs", "guesses", "set", "start"].contains(action) else { throw UsageError(usage) }
-                payload["action"] = .string(action)
-                if action == "set" {
-                    guard let command = options.positional() else { throw UsageError(usage) }
-                    payload["command"] = .string(command)
+            let actions = ["list", "status", "stop", "restart", "logs", "add", "remove", "guesses"]
+            if let first = options.positional() {
+                if actions.contains(first) {
+                    payload["action"] = .string(first)
+                    if let name = options.positional() { payload["name"] = .string(name) }
+                    if first == "add" {
+                        guard payload["name"] != nil, let command = options.positional() else { throw UsageError(usage) }
+                        payload["command"] = .string(command)
+                    }
+                    if first == "remove", payload["name"] == nil { throw UsageError(usage) }
+                } else {
+                    payload["name"] = .string(first)
                 }
             }
             try options.finish()
@@ -1010,8 +1016,8 @@ public enum CLIParser {
       tiri reveal <path>
       tiri preview <url-or-path> [--split right]
       tiri term [--cwd DIR] [--cmd "claude"] [--split right]
-      tiri start [status | stop | restart | logs | guesses | set "<cmd>"] [--folder DIR]
-                               (a folder's dev server in a terminal of its own; start waits for its address)
+      tiri start [<name>] | list | stop | restart | logs [<name>] | add <name> "<cmd>" | remove <name> | guesses
+                               (the workspace's dev servers and scripts, each in a terminal of its own; start waits for its address)
       tiri worktree <branch>       (a second checkout, as a workspace, so another agent's edits stay apart)
       tiri remote                  (servers in use, and how their connections are)
       tiri remote connect <host> [<folder>]   (a workspace on a server, over SSH)
@@ -1263,19 +1269,21 @@ public enum AgentGuide {
 
     ## Dev servers
 
-    Don't start a project's dev server in the background yourself. Use the folder's own, which the user
-    sees in the bar along the bottom and which outlives your session in a terminal of its own:
+    Don't start a project's dev server in the background yourself. Each workspace has a list of starts,
+    which the user sees under Start in the window's toolbar, each running in a terminal of its own that
+    outlives your session:
 
     ```sh
-    tiri start                            # starts it, or finds it already running; waits and prints its address
-    tiri start logs --lines 100           # what it printed, to read an error
-    tiri start restart                    # after changing its config; stop when asked to
-    tiri start guesses                    # when it has no command yet: what Tiri thinks starts it
-    tiri start set "pnpm dev"             # save the command, then tiri start
+    tiri start list                       # what's in the list, and what's running where
+    tiri start web                        # start one by name, or find it running; waits and prints its address
+    tiri start logs web --lines 100       # what it printed, to read an error
+    tiri start restart web                # after changing its config; stop when asked to
+    tiri start guesses                    # what Tiri thinks could start things in this workspace's folders
+    tiri start add web "pnpm dev" --folder apps/web   # add one; the folder defaults to where you are
     ```
 
-    They apply to the folder you're in; `--folder DIR` picks another. Then `tiri preview <its address>`
-    and `tiri web shot` let you look at what you changed.
+    With only one start, the name can be left out. Then `tiri preview <its address>` and `tiri web shot`
+    let you look at what you changed.
 
     ## Report status
 
@@ -1333,8 +1341,8 @@ public enum AgentGuide {
     tiri remote forward 3000              # reach a port on the server from this Mac, and print the address
     tiri notebook run report.ipynb        # run every cell; --cell N for one, counting from 0
     tiri notebook status report.ipynb     # is it still going? Results are in the file as they arrive
-    tiri start                            # the folder's dev server, in a terminal of its own; waits, then prints its address
-    tiri start logs                       # what it printed; also status, restart, stop, and set "<command>" when it has none
+    tiri start list                       # the workspace's starts: dev servers and scripts, and which are running
+    tiri start web                        # start one by name, or find it running; waits, then prints its address
     tiri activity                         # what every running agent is doing
     tiri work                             # branches and worktrees besides this one, in plain terms
     tiri conversations [words]            # past conversations of any agent, by what was said; read prints a path to read, and open, reopen, hand

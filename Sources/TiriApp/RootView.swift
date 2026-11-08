@@ -43,8 +43,8 @@ struct RootView: View {
         }
         .environment(\.windowScope, scope)
         // What starts a folder, asked from the bar, the palette or ⌃⌥S alike: so a sheet, not something hanging off the bar.
-        .sheet(isPresented: Binding(get: { model.starter.choosing?.workspace == here.activeID }, set: { if !$0 { model.starter.choosing = nil } })) {
-            if let key = model.starter.choosing { StartChooser(key: key).environment(model) }
+        .sheet(isPresented: Binding(get: { model.starter.editing == here.activeID }, set: { if !$0 { model.starter.editing = nil } })) {
+            if let workspace = model.starter.editing { StartListSheet(workspace: workspace).environment(model) }
         }
         .onAppear { model.adoptOpenWindow(openWindow) }
     }
@@ -98,6 +98,8 @@ struct MainToolbar: ToolbarContent {
             }
             .help("New terminal or agent")
             .accessibilityLabel("New Terminal or Agent")
+
+            StartToolbarButton(workspace: here.activeID)
 
             Button { model.openConversationPicker() } label: {
                 Label("Past Conversations", systemImage: "clock.arrow.circlepath")

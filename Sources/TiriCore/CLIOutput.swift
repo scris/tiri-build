@@ -44,15 +44,22 @@ public enum CLIOutput {
             if let python = response.result?["python"]?.stringValue { parts.append(python) }
             say(parts.joined(separator: "\t"))
         case "start":
+            func line(_ entry: JSONValue) -> String {
+                [cell(entry["name"]), cell(entry["state"]), cell(entry["url"]), cell(entry["command"])].filter { !$0.isEmpty }.joined(separator: "\t")
+            }
             if let text = response.result?["text"]?.stringValue {
                 say(text)
-            } else if let guesses = response.result?.arrayValue {
-                for guess in guesses {
-                    say([cell(guess["command"]), cell(guess["source"]), cell(guess["detail"])].filter { !$0.isEmpty }.joined(separator: "\t"))
+            } else if let removed = response.result?["removed"]?.stringValue {
+                say("removed \(removed)")
+            } else if let list = response.result?.arrayValue {
+                for entry in list {
+                    // Starts have a state; suggestions say where they came from.
+                    if entry["state"] != nil { say(line(entry)) } else {
+                        say([cell(entry["name"]), cell(entry["command"]), cell(entry["folder"]), cell(entry["source"])].joined(separator: "\t"))
+                    }
                 }
-            } else {
-                let result = response.result
-                say([cell(result?["state"]), cell(result?["url"]), cell(result?["command"])].filter { !$0.isEmpty }.joined(separator: "\t"))
+            } else if let result = response.result {
+                say(line(result))
             }
         case "web.console", "web.network":
             for line in response.result?.arrayValue ?? [] { say(line.stringValue ?? "") }
