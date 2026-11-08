@@ -114,6 +114,28 @@ import Testing
         }
     }
 
+    /// A language's name is a name: "Go" must not become the Go menu's 前往. Only the phrases are looked up,
+    /// and those, like a server described in words, have their words.
+    @Test func languageNamesShowAsTheyAreUnlessThePhrasesHaveWords() throws {
+        let tables = try Self.languages.map { try Self.table($0) }
+        let names = Set(LanguageServerCatalog.all.map(\.language))
+        #expect(LanguageServerDefinition.phrases.isSubset(of: names))
+        #expect(LanguageServerCatalog.all.first { $0.id == "go" }?.shownLanguage == "Go")
+        let words = LanguageServerDefinition.phrases.union(LanguageServerCatalog.all.compactMap(\.managed?.title).filter { $0.contains(" ") })
+        for word in words {
+            for (language, table) in zip(Self.languages, tables) {
+                #expect(table[word] != nil, "\(language) has nothing for \"\(word)\"")
+            }
+        }
+    }
+
+    @Test func chineseKeepsASpaceBesideLatinAndNoneAfterItsFullStop() {
+        #expect(L10n.spaced("JSON和CSS") == "JSON 和 CSS")
+        #expect(L10n.spaced("HTML、JSON和CSS") == "HTML、JSON 和 CSS")
+        #expect(L10n.sentences(["用于 .go 文件。", "安装方法：go install"]) == "用于 .go 文件。安装方法：go install")
+        #expect(L10n.sentences(["For .go files.", "To install it: go install"]) == "For .go files. To install it: go install")
+    }
+
     /// Every literal the app looks up, found the way the compiler makes its key.
     @Test func everyLiteralTheCodeLooksUpIsInBothTables() throws {
         let tables = try Self.languages.map { try Self.table($0) }

@@ -248,7 +248,7 @@ final class LanguageServerHub {
         }
         guard (failedStarts[key] ?? 0) < 3, let found = command(for: definition, root: root) else { return nil }
         if found.isLocal, !model.languageTrust.isTrusted(found.executable) {
-            guard asked, await model.confirmRunningLocalServer(found.executable, language: definition.language) else { return nil }
+            guard asked, await model.confirmRunningLocalServer(found.executable, language: definition.shownLanguage) else { return nil }
             guard sessions[key] == nil else { return sessions[key] }
         }
         let client = LSPClient(launch: .init(executable: found.executable, arguments: found.arguments, directory: root, path: model.userPath,
@@ -385,7 +385,7 @@ final class LanguageServerHub {
         let recent = (crashes[key] ?? []).filter { now.timeIntervalSince($0) < Self.crashWindow } + [now]
         crashes[key] = recent
         guard recent.count >= Self.crashLimit, gaveUp.insert(key).inserted else { return }
-        _ = model.showToast(title: String(localized: "\(L10n.display(definition.language)) server keeps crashing"),
+        _ = model.showToast(title: String(localized: "\(definition.shownLanguage) server keeps crashing"),
                             detail: String(localized: "Tiri stopped restarting it."), symbol: "exclamationmark.triangle", tint: .orange)
     }
 
@@ -1028,12 +1028,12 @@ extension LanguageServerHub {
         } else {
             guard case .missing = availability(of: definition, roots: [root(for: path, definition: definition)]) else { return }
         }
-        let language = L10n.display(definition.language)
+        let language = definition.shownLanguage
         let title = String(localized: "Add a language server for \(language)?")
         // Only once there's something to say. Otherwise the one chance would go on nothing.
         if remote == nil, let managed = definition.managed, toolPath(managed.tool) != nil {
             guard offers(claim: definition.id) else { return }
-            openOffers[definition.id] = model.showToast(title: title, detail: String(localized: "Completion and Go to Definition. Installs \(managed.title), \(managed.megabytes) MB."),
+            openOffers[definition.id] = model.showToast(title: title, detail: String(localized: "Completion and Go to Definition. Installs \(managed.shownTitle), \(managed.megabytes) MB."),
                                 symbol: "sparkles", tint: .accentColor, actionTitle: String(localized: "Add"), duration: 20) { [weak self] in
                 Task { await self?.add(definition) }
             }
@@ -1061,12 +1061,12 @@ extension LanguageServerHub {
         if let failure {
             let preset = model.runnableAgentPresets().first
             // What Tiri says is English for `tiri languages add`, and in Tiri's language here. A tool's own output stays as it is.
-            _ = model.showToast(title: String(localized: "Couldn't add the \(L10n.display(definition.language)) server"), detail: L10n.display(failure),
+            _ = model.showToast(title: String(localized: "Couldn't add the \(definition.shownLanguage) server"), detail: L10n.display(failure),
                                 symbol: "exclamationmark.triangle", tint: .orange, actionTitle: preset.map { String(localized: "Ask \($0.name)") }) {
                 if let preset { model.askAgentToInstall(definition, preset: preset) }
             }
         } else {
-            _ = model.showToast(title: String(localized: "\(L10n.display(definition.language)) server added"), detail: nil, symbol: "checkmark.circle", tint: .green)
+            _ = model.showToast(title: String(localized: "\(definition.shownLanguage) server added"), detail: nil, symbol: "checkmark.circle", tint: .green)
             forgetFailures()
             startForOpenFiles()
         }
@@ -1099,7 +1099,7 @@ extension AppModel {
         guard let window else { return false }
         let project = ((executable as NSString).abbreviatingWithTildeInPath)
         let alert = NSAlert()
-        alert.messageText = String(localized: "Run this project's own \(L10n.display(language)) server?")
+        alert.messageText = String(localized: "Run this project's own \(language) server?")
         alert.informativeText = String(localized: "\(project) came with this project, so it's the project's code. Run it only if you trust the project.\n\nWithout it, Tiri searches the files instead.")
         alert.addButton(withTitle: String(localized: "Run It"))
         alert.addButton(withTitle: String(localized: "Not Now"))
@@ -1162,7 +1162,7 @@ struct LanguageServersSection: View {
     }
 
     private func line(_ definition: LanguageServerDefinition, _ rest: String) -> String {
-        [definition.filesLine, rest].compactMap { $0 }.joined(separator: " ")
+        L10n.sentences([definition.filesLine, rest].compactMap { $0 })
     }
 
     private func status(_ definition: LanguageServerDefinition, _ availability: LanguageServerHub.Availability) -> String {
@@ -1194,7 +1194,7 @@ struct LanguageServersSection: View {
         let isShowing = showingWhere.contains(definition.id)
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(L10n.display(definition.language))
+                Text(definition.shownLanguage)
                 Text(status(definition, entry.availability))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1225,8 +1225,8 @@ struct LanguageServersSection: View {
             } else if entry.availability.canBeInstalled {
                 if let managed = definition.managed, canAdd(definition) {
                     Button("Add") { Task { await model.languageServers.add(definition) } }
-                        .help("Installs \(managed.title) \(managed.version) into Tiri's own folder, about \(managed.megabytes) MB. Nothing outside it changes.")
-                        .accessibilityLabel("Add \(managed.title)")
+                        .help("Installs \(managed.shownTitle) \(managed.version) into Tiri's own folder, about \(managed.megabytes) MB. Nothing outside it changes.")
+                        .accessibilityLabel("Add \(managed.shownTitle)")
                 } else if let preset = model.runnableAgentPresets().first {
                     Button("Ask \(preset.name)") { model.askAgentToInstall(definition, preset: preset) }
                         .help("Prepares a request to install it: \(L10n.display(definition.installHint))")
@@ -1360,13 +1360,13 @@ struct LanguageStatusItem: View {
                         Label("\(warnings)", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
                     if model.languageServers.isStarting(definition) {
-                        Text("\(L10n.display(definition.language)): starting")
+                        Text("\(definition.shownLanguage): starting")
                             .foregroundStyle(.secondary)
                     } else if !model.languageServers.isRunning(definition) {
-                        Text("\(L10n.display(definition.language)): no language server")
+                        Text("\(definition.shownLanguage): no language server")
                             .foregroundStyle(.faint)
                     } else {
-                        Text(L10n.display(definition.language))
+                        Text(definition.shownLanguage)
                             .foregroundStyle(.secondary)
                     }
                 }

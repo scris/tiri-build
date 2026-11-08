@@ -35,6 +35,8 @@ Never translated, and never wrapped:
   is `%@`, an `Int` `%lld`, a `Double` `%lf`. A translation may reorder them with `%1$@`, `%2$lld`.
 - **One sentence, one key.** Don't build sentences from pieces: word order differs. Plural forms in English are
   separate keys (`"1 file"`, `"%lld files"`), both translated.
+- **A language's name is a name**: "Go" looked up would find the Go menu's 前往. Show `definition.shownLanguage`,
+  which looks up only the names that are phrases (`LanguageServerDefinition.phrases`), never `L10n.display(language)`.
 - **TiriCore** may use `String(localized:)` too. The `tiri` command has no tables beside it, so it stays English.
 
 ## Checks

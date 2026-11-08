@@ -86,6 +86,22 @@ public enum L10n {
     public static func list(_ items: [String]) -> String {
         let formatter = ListFormatter()
         formatter.locale = locale
-        return formatter.string(from: items) ?? items.joined(separator: ", ")
+        let list = formatter.string(from: items) ?? items.joined(separator: ", ")
+        // Foundation's Chinese list is "HTML和CSS": Tiri's Chinese puts a space between Chinese and Latin.
+        return locale.identifier.hasPrefix("zh") ? spaced(list) : list
+    }
+
+    /// A space between Chinese and Latin letters or numbers, as Tiri's Chinese always has: "JSON 和 CSS".
+    public static func spaced(_ text: String) -> String {
+        text.replacingOccurrences(of: #"(\p{Han})([A-Za-z0-9.#+])"#, with: "$1 $2", options: .regularExpression)
+            .replacingOccurrences(of: #"([A-Za-z0-9+#])(\p{Han})"#, with: "$1 $2", options: .regularExpression)
+    }
+
+    /// Sentences one after another: "For .go files. To install it: …", but no space after Chinese's "。".
+    public static func sentences(_ parts: [String]) -> String {
+        parts.reduce("") { text, part in
+            guard let last = text.last else { return part }
+            return text + ("。！？：；）」”".contains(last) ? "" : " ") + part
+        }
     }
 }

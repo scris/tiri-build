@@ -1310,6 +1310,7 @@
 "Shell scripts" = "Shell 腳本";
 "CSS, SCSS and Less" = "CSS、SCSS 和 Less";
 "Dockerfiles" = "Dockerfile";
+"VS Code's web language servers" = "VS Code 的 Web 語言伺服器";
 "It comes with Xcode: xcode-select --install" = "隨 Xcode 附帶：xcode-select --install";
 "It comes with the Dart SDK: brew install dart" = "隨 Dart SDK 附帶：brew install dart";
 "uv tool install basedpyright, or npm install -g pyright" = "uv tool install basedpyright，或 npm install -g pyright";

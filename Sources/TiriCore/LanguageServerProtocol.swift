@@ -23,6 +23,9 @@ public struct ManagedServer: Sendable, Equatable {
     public var title: String
     public var package: String?
 
+    /// The title on screen. A package's name ("gopls") shows as it is; one written in words has words of its own.
+    public var shownTitle: String { title.contains(" ") ? L10n.display(title) : title }
+
     public init(tool: Tool, lock: String, version: String, megabytes: Int, title: String, package: String? = nil) {
         self.tool = tool
         self.lock = lock
@@ -89,14 +92,20 @@ extension LanguageServerDefinition {
         return LanguageServerCatalog.all.filter { $0.id != id && $0.managed?.lock == managed.lock }
     }
 
+    /// Its name on screen. A language's name is a name and shows as it is: looking "Go" up finds the Go
+    /// menu's word. Only the names that are phrases have words of their own.
+    public var shownLanguage: String { Self.phrases.contains(language) ? L10n.display(language) : language }
+
+    public static let phrases: Set<String> = ["TypeScript and JavaScript", "C, C++ and Objective-C", "Shell scripts", "CSS, SCSS and Less", "Dockerfiles"]
+
     /// What pressing Add does, in words.
     public var addLine: String? {
         guard let managed else { return nil }
         // Its first name is enough here: "CSS", not "CSS, SCSS and Less".
         let others = sharesInstallWith.map { $0.language.split(separator: ",").first.map(String.init) ?? $0.language }
-        guard !others.isEmpty else { return String(localized: "Installs \(managed.title), \(managed.megabytes) MB.") }
-        let names = L10n.list(others.map(L10n.display))
-        return String(localized: "Installs \(managed.title), \(managed.megabytes) MB. Also covers \(names).")
+        guard !others.isEmpty else { return String(localized: "Installs \(managed.shownTitle), \(managed.megabytes) MB.") }
+        let names = L10n.list(others)
+        return String(localized: "Installs \(managed.shownTitle), \(managed.megabytes) MB. Also covers \(names).")
     }
 }
 
