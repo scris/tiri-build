@@ -208,7 +208,28 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         // Let pages with a dark mode use their own first; only fall back to inverting.
         webView.appearance = forceDarkActive ? NSAppearance(named: .darkAqua) : nil
         webView.evaluateJavaScript(forceDarkActive ? Self.enableDarkScript : Self.disableDarkScript, completionHandler: nil)
+        matchOverscrollToPage()
     }
+
+    /// Past either end of a page, as it bounces, WebKit shows the page's own background, which no filter reaches:
+    /// a light page made dark would flash its old white there. Inverted, the page's edge is black, and so is that.
+    private func matchOverscrollToPage() {
+        guard forceDarkActive else {
+            webView.underPageBackgroundColor = nil
+            return
+        }
+        // The page decides whether it's inverted a frame after the script runs.
+        webView.callAsyncJavaScript(Self.isInvertedScript, arguments: [:], in: nil, in: .page) { [weak self] result in
+            guard let self, self.forceDarkActive else { return }
+            let inverted = (try? result.get()) as? Bool == true
+            self.webView.underPageBackgroundColor = inverted ? .black : nil
+        }
+    }
+
+    private static let isInvertedScript = """
+    await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+    return document.getElementById('tiri-dark-invert') !== null;
+    """
 
     private static let disableDarkScript = """
     (function(){ for (const id of ['tiri-dark-scheme','tiri-dark-invert']) { const n=document.getElementById(id); if(n) n.remove(); } })();
