@@ -5,6 +5,11 @@
 # Takes a few minutes the first time, since it builds Tiri from its own source twice.
 set -u
 cd "$(dirname "$0")/.."
+# Copies of Tiri in debug mode, a fraction of a release build's time; what's tested isn't the optimizer.
+# TIRI_DEV_COPY_CONFIG=release makes them as a real change does.
+export TIRI_DEV_COPY_CONFIG="${TIRI_DEV_COPY_CONFIG:-debug}"
+# And all in one build folder, kept between runs, so the packages Tiri uses compile once, not in every fresh source folder.
+export TIRI_SCRATCH_PATH="${TIRI_SCRATCH_PATH:-${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}/swift-build-cache}"
 REPO="$PWD"
 NAME="${TIRI_E2E_NAME:-yte2e}"
 ROOT="${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}"

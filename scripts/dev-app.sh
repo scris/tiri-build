@@ -18,6 +18,7 @@
 # TIRI_DEV_WELCOME=1 shows the first launch's welcome, which test copies otherwise skip. TIRI_DEV_LOOKING=1
 # acts as if someone were looking at its window, which a hidden copy never is, for what waits for that.
 # CLAUDE_CONFIG_DIR, CODEX_HOME, GROK_HOME=<empty folder> make it see an agent with no hooks, as a newcomer's would be.
+# TIRI_DEV_COPY_CONFIG=debug makes Your Tiri build copies in debug mode, as the Your Tiri suites do, for speed.
 # TIRI_DEV_NO_DEVELOPER_TOOLS=1 makes it act as if this Mac had no Command Line Tools, as a fresh Mac doesn't; =all, as if it had no git anywhere.
 #   scripts/dev-app.sh env <name>        prints `export ...` lines; `eval` them to use its CLI
 #   scripts/dev-app.sh cli <name> ...    runs its `tiri`
@@ -76,6 +77,7 @@ launch_in_background() {
     ${CODEX_HOME:+--env CODEX_HOME="$CODEX_HOME"} ${GROK_HOME:+--env GROK_HOME="$GROK_HOME"} \
     ${CLAUDE_CONFIG_DIR:+--env CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR"} \
     ${TIRI_DEV_WELCOME:+--env TIRI_DEV_WELCOME=1} ${TIRI_DEV_LOOKING:+--env TIRI_DEV_LOOKING=1} \
+    ${TIRI_DEV_COPY_CONFIG:+--env TIRI_DEV_COPY_CONFIG="$TIRI_DEV_COPY_CONFIG"} \
     ${TIRI_DEV_APPLICATIONS:+--env TIRI_DEV_APPLICATIONS="$TIRI_DEV_APPLICATIONS"}
   for _ in $(seq 1 50); do
     pid="$(pgrep -f "$NAME/TiriDev.app/Contents/MacOS/Tiri" | head -1 || true)"

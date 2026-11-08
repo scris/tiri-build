@@ -9,6 +9,8 @@
 #   TIRI_BUILD_DIR    somewhere other than build/, so a running Tiri isn't deleted, with no CLI installed
 #   TIRI_SIGN_TIMESTAMP=1    a secure timestamp, which notarization requires and which needs the network
 #   TIRI_UPDATE_FEED  the feed the app looks at for updates, written into it as TiriUpdateFeed
+# TIRI_SCRATCH_PATH builds there instead of in .build: test suites share one between several copies of the source,
+# so what doesn't change between them, the packages Tiri uses, is compiled once.
 # TIRI_BUNDLE_ID gives it another bundle ID, as for a test release (see scripts/stamp-bundle.sh).
 # A copy made for someone's own Tiri (see Sources/TiriCore/YourTiriChanges.swift) sets TIRI_COPY=personal,
 # TIRI_BUNDLE_ID, TIRI_RELEASE_COMMIT and TIRI_SIGN_KEYCHAIN too.
@@ -17,10 +19,12 @@ cd "$(dirname "$0")"
 
 CONFIG="${1:-release}"
 source scripts/swift-setup.sh
-swift build -c "$CONFIG" --product TiriApp
-swift build -c "$CONFIG" --product tiri
-swift build -c "$CONFIG" --product tiri-session
-BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+SCRATCH=()
+if [ -n "${TIRI_SCRATCH_PATH:-}" ]; then SCRATCH=(--scratch-path "$TIRI_SCRATCH_PATH"); fi
+swift build -c "$CONFIG" ${SCRATCH[@]+"${SCRATCH[@]}"} --product TiriApp
+swift build -c "$CONFIG" ${SCRATCH[@]+"${SCRATCH[@]}"} --product tiri
+swift build -c "$CONFIG" ${SCRATCH[@]+"${SCRATCH[@]}"} --product tiri-session
+BIN_DIR="$(swift build -c "$CONFIG" ${SCRATCH[@]+"${SCRATCH[@]}"} --show-bin-path)"
 
 OUT="${TIRI_BUILD_DIR:-build}"
 APP="$OUT/Tiri.app"

@@ -575,7 +575,10 @@ public enum ChangeTools {
                            "TIRI_SIGN_KEYCHAIN": YourTiri.identity.appendingPathComponent("personal.keychain-db").path,
                            "TIRI_COPY": "personal", "TIRI_BUNDLE_ID": YourTiri.personalBundleID(plain: plainID),
                            "TIRI_RELEASE_COMMIT": try repo.releaseCommit()]
-        let build = Tool.run(repo.folder.appendingPathComponent("build.sh").path, ["release"], in: repo.folder, environment: environment)
+        // Always a release build, except in the update suites, where `TIRI_DEV_COPY_CONFIG=debug` makes a copy in a
+        // fraction of the time: what they test is carrying changes over, not the compiler's optimizer.
+        let config = ProcessInfo.processInfo.environment["TIRI_DEV_COPY_CONFIG"] == "debug" ? "debug" : "release"
+        let build = Tool.run(repo.folder.appendingPathComponent("build.sh").path, [config], in: repo.folder, environment: environment)
         guard build.ok else { throw ChangeFailure(trimmedBuildOutput(build.output)) }
         // Nothing half-made is ever in `ready`.
         try CopyFiles.move(building.appendingPathComponent("Tiri.app"), to: YourTiri.ready)

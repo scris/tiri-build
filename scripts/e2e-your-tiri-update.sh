@@ -5,6 +5,15 @@
 #   TIRI_DEV_ROOT=<somewhere> TIRI_E2E_MERGE_TOOL=<mergiraf> scripts/e2e-your-tiri-update.sh
 set -u
 cd "$(dirname "$0")/.."
+# Builds of Tiri are most of this suite's time, and in release mode each is minutes of the optimizer, which isn't what's
+# tested here. So copies and the test's release build in debug mode, a fraction of that. TIRI_DEV_COPY_CONFIG=release
+# makes them as a real update does, for when that matters.
+export TIRI_DEV_COPY_CONFIG="${TIRI_DEV_COPY_CONFIG:-debug}"
+# And all in one build folder, kept between runs, so the packages Tiri uses compile once, not in every fresh source folder.
+export TIRI_SCRATCH_PATH="${TIRI_SCRATCH_PATH:-${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}/swift-build-cache}"
+# The version the source is, and a next release above it. Written in, they stopped matching once Tiri passed them.
+NOW="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+NEXT="$(echo "$NOW" | awk -F. '{ printf "%d.%d.0", $1, $2 + 1 }')"
 REPO="$PWD"
 NAME="${TIRI_E2E_NAME:-ytupdate}"
 ROOT="${TIRI_DEV_ROOT:-${TMPDIR:-/tmp}/tiri-dev}"
@@ -73,11 +82,11 @@ tar -xzf "$PLAIN/Contents/Resources/source.tar.gz" -C "$RELEASE/source"
  perl -pi -e 's/return \.printText\("tiri \\\(TiriCoreVersion\.string\)/return .printText("tiri \\(TiriCoreVersion.string) new/' Sources/TiriCore/CLI.swift
  # Word for word what a change did.
  printf '\nSomething the next release says too.\n' >> CHANGING.md
- /usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString 0.2.0' Resources/Info.plist
- git add -A; git commit -qm "0.2.0")
+ /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $NEXT" Resources/Info.plist
+ git add -A; git commit -qm "$NEXT")
 printf 'The version line was rewritten.\n' > "$RELEASE/notes.txt"
-(cd "$RELEASE/source" && TIRI_RELEASE_NOTES="$RELEASE/notes.txt" TIRI_BUILD_DIR="$RELEASE/out" TIRI_SIGN_IDENTITY=- TIRI_BUNDLE_ID="dev.tiri.test.$NAME" ./build.sh release >"$RELEASE/build.log" 2>&1) || no "couldn't build the release: $(tail -3 "$RELEASE/build.log")"
-expect "the release says what it is" "0.2.0" /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$RELEASE/out/Tiri.app/Contents/Info.plist"
+(cd "$RELEASE/source" && TIRI_RELEASE_NOTES="$RELEASE/notes.txt" TIRI_BUILD_DIR="$RELEASE/out" TIRI_SIGN_IDENTITY=- TIRI_BUNDLE_ID="dev.tiri.test.$NAME" ./build.sh "$TIRI_DEV_COPY_CONFIG" >"$RELEASE/build.log" 2>&1) || no "couldn't build the release: $(tail -3 "$RELEASE/build.log")"
+expect "the release says what it is" "$NEXT" /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$RELEASE/out/Tiri.app/Contents/Info.plist"
 
 echo "--- replay"
 OTHER="$RELEASE/other/Tiri.app"; mkdir -p "$RELEASE/other"; ditto "$RELEASE/out/Tiri.app" "$OTHER"
@@ -135,26 +144,40 @@ open(p,'w').write(s)
 PY
 )
 OUTPUT="$(tiri update repaired 2>&1)"; echo "$OUTPUT" | tail -1
-if [ -z "${TIRI_E2E_MERGE_TOOL:-}" ]; then echo "note: without the merge tool, the second needs repair too"; fi
+# Without the merge tool, plain Git can't put two fields side by side, so the second change needs a repair too,
+# done as an agent would: both fields kept.
+if [ -z "${TIRI_E2E_MERGE_TOOL:-}" ]; then
+  tiri update repair "$FIELD" > "$WORK/repair-field.txt" 2>&1
+  expect "without the merge tool, the second needs a repair too" "<<<<<<<" cat "$Y/source/Sources/TiriCore/YourTiriUpdates.swift"
+  (cd "$Y/source" && /usr/bin/python3 - <<'PY'
+import re
+p='Sources/TiriCore/YourTiriUpdates.swift'; s=open(p).read()
+s=re.sub(r'<<<<<<<[^\n]*\n(.*?)(?:\|\|\|\|\|\|\|.*?)?=======\n(.*?)>>>>>>>[^\n]*\n',
+         lambda m: m.group(1) + ''.join(l + '\n' for l in m.group(2).splitlines() if l not in m.group(1).splitlines()), s, flags=re.S)
+open(p,'w').write(s)
+PY
+  )
+  OUTPUT="$(tiri update repaired 2>&1)"; echo "$OUTPUT" | tail -1
+fi
 waits "it's ready" "ready, with your 3 changes" 50 where
-expect "the running app hasn't changed" "0.1.0" where
+expect "the running app hasn't changed" "$NOW" where
 if kill -0 "$PROGRAM" 2>/dev/null; then ok "the program is untouched so far"; else no "the program ended during the update"; fi
 
 echo "--- pressing Update"
 tiri dev-your-tiri update >/dev/null
 sleep 1
-waits "the personal copy came back" '"version" : "0.2.0"' 200 where
+waits "the personal copy came back" "\"version\" : \"$NEXT\"" 200 where
 expect "it's the personal copy" '"personal" : true' where
-expect "the installed app is the new release" "0.2.0" /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLAIN/Contents/Info.plist"
-expect "which is what's kept for going back" "0.1.0" /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$Y/updates/previous/Tiri.app/Contents/Info.plist"
+expect "the installed app is the new release" "$NEXT" /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLAIN/Contents/Info.plist"
+expect "which is what's kept for going back" "$NOW" /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$Y/updates/previous/Tiri.app/Contents/Info.plist"
 expect "the version line has both" "new mended" "$Y/copies/current/Tiri.app/Contents/Resources/bin/tiri" --version
 expect "the field and the other field" "var theirs" grep -n "var theirs" "$Y/source/Sources/TiriCore/YourTiriUpdates.swift"
 expect "are both there" "var mine" grep -n "var mine" "$Y/source/Sources/TiriCore/YourTiriUpdates.swift"
 expect "three changes on" "$MEND  on" tiri change list
 lacks "the retired one's gone" "$SAME" tiri change list
-expect "the repair is marked" "Tiri-Repaired: 0.2.0" git -C "$Y/source" log -1 --format=%B "$(tiri change list --json | python3 -c "import json,sys;print([c['commit'] for c in json.load(sys.stdin) if c['id']=='$MEND'][0])")"
+expect "the repair is marked" "Tiri-Repaired: $NEXT" git -C "$Y/source" log -1 --format=%B "$(tiri change list --json | python3 -c "import json,sys;print([c['commit'] for c in json.load(sys.stdin) if c['id']=='$MEND'][0])")"
 expect "the list says it was repaired" "$MEND  on" tiri change list
-expect "and for which version" "repaired for 0.2.0" tiri change list
+expect "and for which version" "repaired for $NEXT" tiri change list
 MENDED="$(tiri change list --json | /usr/bin/python3 -c "import json,sys;print(' '.join([c['repairTouched'] for c in json.load(sys.stdin) if c['id']=='$MEND'][0]))")"
 if [[ "$MENDED" == *"Sources/TiriCore/CLI.swift"* ]]; then ok "and what the repair touched"; else no "what the repair touched: $MENDED"; fi
 lacks "a change that was only carried isn't called repaired" "$CLEAN  on   Add a word of my own  (1 file, 1 line, check, repaired" tiri change list
@@ -164,9 +187,9 @@ tiri change start "After an update, changes go on as before" >/dev/null && ok "c
 tiri change drop >/dev/null
 
 echo "--- a rebuild: the same version, a newer build"
-(cd "$RELEASE/source" && TIRI_BUILD_DIR="$RELEASE/rebuilt" TIRI_SIGN_IDENTITY=- TIRI_BUNDLE_ID="dev.tiri.test.$NAME" ./build.sh release >"$RELEASE/rebuild.log" 2>&1) || no "couldn't rebuild: $(tail -3 "$RELEASE/rebuild.log")"
+(cd "$RELEASE/source" && TIRI_BUILD_DIR="$RELEASE/rebuilt" TIRI_SIGN_IDENTITY=- TIRI_BUNDLE_ID="dev.tiri.test.$NAME" ./build.sh "$TIRI_DEV_COPY_CONFIG" >"$RELEASE/rebuild.log" 2>&1) || no "couldn't rebuild: $(tail -3 "$RELEASE/rebuild.log")"
 REBUILT="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$RELEASE/rebuilt/Tiri.app/Contents/Info.plist")"
-expect "it's still the same version" "0.2.0" /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$RELEASE/rebuilt/Tiri.app/Contents/Info.plist"
+expect "it's still the same version" "$NEXT" /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$RELEASE/rebuilt/Tiri.app/Contents/Info.plist"
 tiri update prepare "$RELEASE/rebuilt/Tiri.app" >/dev/null 2>&1
 waits "the rebuild is ready with the changes" "ready, with your" 50 where
 tiri dev-your-tiri update >/dev/null
@@ -184,10 +207,10 @@ TIRI_BUNDLE_ID_CHECK="dev.tiri.test.$NAME-plain"
 codesign --force --sign - --timestamp=none --entitlements "$REPO/Resources/Tiri.entitlements" "$RELEASE/out/Tiri.app" 2>/dev/null
 expect "it's ready at once" "is ready." tiri update prepare "$RELEASE/out/Tiri.app"
 lacks "with nothing built" "copies" ls "$TIRI_HOME/your-tiri"
-waits "the button's there" "Tiri 0.2.0 is ready." 30 where
+waits "the button's there" "Tiri $NEXT is ready." 30 where
 tiri dev-your-tiri update >/dev/null
 sleep 1
-waits "the new version is running" '"version" : "0.2.0"' 200 where
+waits "the new version is running" "\"version\" : \"$NEXT\"" 200 where
 expect "plain, as they had it" '"personal" : false' where
 
 echo
