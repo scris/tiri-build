@@ -113,6 +113,20 @@ extension AppModel {
             AppCommand(id: "newTerminal", title: "New Terminal", category: "Terminal") { $0.startTerminal() },
             AppCommand(id: "runFile", title: "Run File", category: "Terminal",
                        keywords: ["code runner", "execute", "运行", "執行"]) { $0.runner.runFront() },
+            AppCommand(id: "startFolder", title: "Start: Start or Open Page", category: "Start",
+                       keywords: ["dev server", "serve", "launch", "启动", "啟動"]) { $0.starter.pressInFront() },
+            AppCommand(id: "startRestart", title: "Start: Restart", category: "Start") { model in
+                if let folder = model.starter.folderInFront() { model.starter.restart(folder, in: model.activeID) }
+            },
+            AppCommand(id: "startStop", title: "Start: Stop", category: "Start") { model in
+                if let folder = model.starter.folderInFront() { model.starter.stop(folder, in: model.activeID) }
+            },
+            AppCommand(id: "startShowOutput", title: "Start: Show Output", category: "Start") { model in
+                if let folder = model.starter.folderInFront() { model.starter.showOutput(folder, in: model.activeID) }
+            },
+            AppCommand(id: "startChange", title: "Start: Change Command…", category: "Start") { model in
+                if let folder = model.starter.folderInFront() { model.starter.openChooser(folder, in: model.activeID) }
+            },
             AppCommand(id: "restartTerminal", title: "Restart Exited Terminal", category: "Terminal") { model in
                 if let id = model.active.focused.active {
                     (model.existingController(for: id) as? TerminalController)?.restart()
@@ -369,6 +383,7 @@ enum ControlHandler {
             return .success(id: request.id, .object(["ran": .string(id), "output": .string(done.output)]))
         }
         if request.cmd == "work" { return await work(request) }
+        if request.cmd == "start" { return await AppModel.shared.starter.control(request) }
         if request.cmd == "wait" { return await waitUntilClosed(request) }
         if request.cmd.hasPrefix("web.") { return await AppModel.shared.webCommand(request) }
         if request.cmd == "conversations" { return await conversations(request) }

@@ -1582,6 +1582,9 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// Something other than the shell has the terminal: what Run started, still going.
     var isRunningProgram: Bool { isShellBusy }
     var hasExited: Bool { exited }
+    var isOnServer: Bool { isRemote }
+    /// The shell on this Mac, for finding what its programs listen on. Nil on a server.
+    var localShell: pid_t? { isRemote || shellPID <= 0 ? nil : shellPID }
     /// How long it's been quiet, or nil before anything's come out: a new shell has drawn its prompt when it's had a moment of quiet.
     var quietFor: Double? {
         let last = activity.lastOutput

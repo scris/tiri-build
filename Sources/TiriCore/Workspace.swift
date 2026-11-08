@@ -34,6 +34,8 @@ public struct TerminalSpec: Codable, Hashable, Sendable {
     public var typedAgent: String?
     /// The terminal ▶ and ⌃⌥N type into. One per workspace, found again after a relaunch.
     public var runsFiles: Bool?
+    /// The folder whose Start runs here: its dev server, say. One per folder, found again after a relaunch.
+    public var startsFolder: String?
 
     /// Whether a hook from this agent is about this terminal. One agent running another, as in a
     /// Claude session calling `codex exec`, reports through the same terminal, and a Codex

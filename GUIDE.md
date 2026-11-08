@@ -9,6 +9,7 @@ Everything Tiri does, grouped by what you're trying to do. For a quick overview,
 - [Reading and editing files](#reading-and-editing-files)
 - [Code intelligence](#code-intelligence)
 - [Running a file](#running-a-file)
+- [Starting a project](#starting-a-project)
 - [Notebooks](#notebooks)
 - [Web pages](#web-pages)
 - [Servers](#servers)
@@ -299,6 +300,21 @@ Press **▶ Run** above a file, or ⌃⌥N. Tiri saves it, then types its comman
 - **On a server**, it runs there, with that server's programs.
 
 Python, JavaScript and TypeScript (Node 23.6 or later), C, C++, Java, Kotlin, Go, Rust, Swift, C# (.NET 10), Ruby, PHP, Lua, Perl, R, Haskell, Dart, Shell and Zsh come ready. Run is for single files: a project with its own build is your agent's job, or a terminal's.
+
+---
+
+## Starting a project
+
+For a project's dev server, or whatever else keeps running while you work: one per folder, in the bar along the bottom.
+
+- **▶ Start** sits next to the folder's branch, for any folder Tiri can guess a command for. The first press shows its guesses: `package.json`'s `dev` or `start` with your package manager, what Claude Code's preview saved in `.claude/launch.json`, a `Procfile`, `manage.py`, `make dev`, `cargo run`, `docker compose up`. Pick one, type your own, or have your agent find it. It's kept for the folder from then on.
+- **It runs in a terminal of its own**, a tab behind what you're looking at, named after the command. When the server listens, Tiri sees the port, whatever it chose, and opens the page beside your code without taking the keyboard.
+- **The bar shows its address while it runs.** Click it to open the page, ↻ restarts and ■ stops. Right-click for its output or a new command. ⌃⌥S starts the folder you're in, or opens its page.
+- **If it stops by itself**, a notice shows the last thing it printed, with **Ask Claude Code**.
+- **It keeps running when Tiri quits**, like any terminal, unless you turn that off in Settings → Agents. It's there when Tiri comes back.
+- **Your agent uses the same one.** `tiri start` starts it or finds it running, and waits to print its address, so agents never start a second copy or leave one running where nobody sees it. `tiri start logs`, `restart` and `stop` do the rest, and `tiri start set "<command>"` saves one. The agent guide tells agents to use it.
+- **Settings → Run** lists each folder's command, to change or forget.
+- **On a server**, it runs there, and the page comes through a forwarded port.
 
 ---
 

@@ -169,6 +169,7 @@ struct TiriMenus: Commands {
         CommandGroup(replacing: .newItem) {
             item("newTerminal")
             item("runFile")
+            item("startFolder")
             Menu("New Terminal Preset") {
                 ForEach(model.settings.activePresets) { preset in
                     Button(preset.name) { model.startTerminal(command: preset.command) }

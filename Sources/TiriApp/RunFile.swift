@@ -160,11 +160,11 @@ final class FileRunner {
                 controller.send(text: "\u{03}")
                 try? await Task.sleep(for: .milliseconds(150))
             }
-            if started { controller.send(text: typed) } else { await typeAtPrompt(typed, into: controller) }
+            if started { controller.send(text: typed) } else { await controller.typeWhenReady(typed) }
         } else {
             terminal = makeRunTerminal(in: plan.directory)
             guard let controller = model.controller(for: terminal) as? TerminalController else { return }
-            await typeAtPrompt(line, into: controller)
+            await controller.typeWhenReady(line)
         }
         watch(path: path, terminal: terminal, file: file, workspace: workspace)
     }
@@ -181,19 +181,8 @@ final class FileRunner {
     }
 
     /// /tmp and /private/tmp are one folder, and a shell reports the second.
-    private static func sameFolder(_ one: String, _ other: String) -> Bool {
+    static func sameFolder(_ one: String, _ other: String) -> Bool {
         one == other || URL(fileURLWithPath: one).resolvingSymlinksInPath().path == URL(fileURLWithPath: other).resolvingSymlinksInPath().path
-    }
-
-    /// Typed ahead of a shell's first prompt, the command shows twice: the terminal echoes it, then the shell draws it again.
-    /// So it waits for the prompt, a moment of quiet after the shell's first output, for up to a few seconds.
-    private func typeAtPrompt(_ text: String, into controller: TerminalController) async {
-        let began = Date()
-        while Date().timeIntervalSince(began) < 4 {
-            if let quiet = controller.quietFor, quiet > 200, !controller.isRunningProgram { break }
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-        controller.send(text: text)
     }
 
     private func makeRunTerminal(in directory: String) -> ItemID {

@@ -128,7 +128,7 @@ let response: ControlResponse
 do {
     // A person is answering, a connection can take a while to come up, and the first look at years
     // of conversations takes a while too.
-    let patient = request.cmd == "languages.add" || ["askpass", "remote", "conversations", "work"].contains(arguments.first ?? "")
+    let patient = request.cmd == "languages.add" || ["askpass", "remote", "conversations", "work", "start"].contains(arguments.first ?? "")
     let client = try ControlClient(path: TiriPaths.socket, timeout: patient ? 300 : 10)
     response = try client.send(request)
 } catch {

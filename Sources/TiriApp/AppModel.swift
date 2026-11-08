@@ -198,6 +198,7 @@ final class AppModel {
     var languageRevision = 0
     @ObservationIgnored lazy var languageServers = LanguageServerHub(model: self)
     @ObservationIgnored lazy var runner = FileRunner(model: self)
+    @ObservationIgnored lazy var starter = FolderStarter(model: self)
     @ObservationIgnored lazy var plugins = PluginHost(model: self)
     @ObservationIgnored lazy var yourTiri = YourTiriModel(model: self)
     /// The app is about to come straight back, so no terminal ends, whatever the setting says.

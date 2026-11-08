@@ -43,6 +43,17 @@ public enum CLIOutput {
             if let asking = response.result?["asking"]?.stringValue { parts.append("waiting for: " + asking) }
             if let python = response.result?["python"]?.stringValue { parts.append(python) }
             say(parts.joined(separator: "\t"))
+        case "start":
+            if let text = response.result?["text"]?.stringValue {
+                say(text)
+            } else if let guesses = response.result?.arrayValue {
+                for guess in guesses {
+                    say([cell(guess["command"]), cell(guess["source"]), cell(guess["detail"])].filter { !$0.isEmpty }.joined(separator: "\t"))
+                }
+            } else {
+                let result = response.result
+                say([cell(result?["state"]), cell(result?["url"]), cell(result?["command"])].filter { !$0.isEmpty }.joined(separator: "\t"))
+            }
         case "web.console", "web.network":
             for line in response.result?.arrayValue ?? [] { say(line.stringValue ?? "") }
         case "web.shot":

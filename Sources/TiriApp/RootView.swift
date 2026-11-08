@@ -42,6 +42,10 @@ struct RootView: View {
             StatusBar()
         }
         .environment(\.windowScope, scope)
+        // What starts a folder, asked from the bar, the palette or ⌃⌥S alike: so a sheet, not something hanging off the bar.
+        .sheet(isPresented: Binding(get: { model.starter.choosing?.workspace == here.activeID }, set: { if !$0 { model.starter.choosing = nil } })) {
+            if let key = model.starter.choosing { StartChooser(key: key).environment(model) }
+        }
         .onAppear { model.adoptOpenWindow(openWindow) }
     }
 

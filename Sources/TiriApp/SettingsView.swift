@@ -463,6 +463,7 @@ struct SettingsContent: View {
         case .run:
             SchemaGroups(pane: .run)
             RunLanguagesSection()
+            StartCommandsSection()
         case .languages:
             SchemaGroups(pane: .languages)
             LanguageServersSection()

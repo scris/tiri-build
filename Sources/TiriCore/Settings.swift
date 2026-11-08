@@ -111,6 +111,8 @@ public struct TiriSettings: Equatable, Sendable {
     public var runCommands: [String: String] = [:]
     /// Languages and `.ext`s that don't run.
     public var runOff: [String] = []
+    /// What ▶ Start runs for each folder, by its path. See `StartFolders`.
+    public var startCommands: [String: String] = [:]
     /// Steps of ⌘+ and ⌘-. Each is one point of text, in terminals and in files.
     public var zoomLevel = 0
     public var terminalFontSizeZoomed: Double { Self.zoomed(terminalFontSize, level: zoomLevel) }
@@ -193,6 +195,8 @@ public struct TiriSettings: Equatable, Sendable {
       "run.commands": {},
       // Languages or ".ext"s that don't run, like "php".
       "run.off": [],
+      // What Start runs for a folder, usually its dev server, by the folder's path. `tiri start set` changes it.
+      "start.commands": {},
 
       // Steps of ⌘+ and ⌘-.
       "window.zoomLevel": 0,
@@ -405,6 +409,14 @@ public struct TiriSettings: Equatable, Sendable {
             }
         }
         strings("run.off") { settings.runOff = $0 }
+        attempt {
+            if let value = object["start.commands"] {
+                guard let map = value as? [String: String] else {
+                    throw ParseError.wrongType(key: "start.commands", expected: String(localized: "an object of folder → command"))
+                }
+                settings.startCommands = map.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }
+            }
+        }
         number("editor.wordWrapColumn") { settings.editorWordWrapColumn = min(max(Int($0), 20), 1_000) }
         number("window.zoomLevel") { settings.zoomLevel = min(max(Int($0), Self.zoomRange.lowerBound), Self.zoomRange.upperBound) }
         strings("externalEditors") { settings.externalEditors = $0 }
@@ -571,6 +583,7 @@ public enum Keymap {
             ("cmd+shift+e", "focusExplorer"),
             ("ctrl+`", "newTerminal"),
             ("ctrl+alt+n", "runFile"),
+            ("ctrl+alt+s", "startFolder"),
             ("cmd+\\", "splitRight"),
             ("cmd+k cmd+\\", "splitDown"),
             ("cmd+w", "closeItem"),
