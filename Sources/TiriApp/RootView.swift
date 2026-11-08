@@ -925,6 +925,7 @@ struct FileActions: View {
                   : (markdown.showingSource ? String(localized: "Show rendered markdown") : String(localized: "Show markdown source")))
         }
         OpenElsewhereButton(page: model.controller(for: item.id) as? WebController, path: path)
+        if case .file = item.content { RunFileButton(path: path, item: item.id) }
     }
 }
 

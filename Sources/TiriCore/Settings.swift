@@ -104,6 +104,13 @@ public struct TiriSettings: Equatable, Sendable {
     public var editorWordWrap = WordWrap.off
     public var editorWordWrapColumn = 120
     public var editorCompletion = true
+    /// ▶ above files Tiri knows how to run. ⌃⌥N runs them either way.
+    public var runButton = true
+    public var runOpensIn = RunPlacement.below
+    /// Changed commands, by language id or `.ext` for an added kind of file. See `RunCommands`.
+    public var runCommands: [String: String] = [:]
+    /// Languages and `.ext`s that don't run.
+    public var runOff: [String] = []
     /// Steps of ⌘+ and ⌘-. Each is one point of text, in terminals and in files.
     public var zoomLevel = 0
     public var terminalFontSizeZoomed: Double { Self.zoomed(terminalFontSize, level: zoomLevel) }
@@ -176,6 +183,16 @@ public struct TiriSettings: Equatable, Sendable {
       "editor.wordWrap": "off",
       "editor.wordWrapColumn": 120,
       "editor.completion": true,
+
+      // ▶ above files Tiri can run, like a .py or .cpp. ⌃⌥N runs the file in front either way.
+      "run.button": true,
+      // Where the Run terminal opens: "below", "right" or "tab".
+      "run.opensIn": "below",
+      // Your own command for a language, or for a ".ext" Tiri doesn't know. $file is the file, $name it without
+      // its extension, $dir its folder and $out a place in /tmp for a compiled program. `tiri settings explain run.commands`.
+      "run.commands": {},
+      // Languages or ".ext"s that don't run, like "php".
+      "run.off": [],
 
       // Steps of ⌘+ and ⌘-.
       "window.zoomLevel": 0,
@@ -365,6 +382,29 @@ public struct TiriSettings: Equatable, Sendable {
             }
         }
         bool("editor.completion") { settings.editorCompletion = $0 }
+        bool("run.button") { settings.runButton = $0 }
+        attempt {
+            if let raw = object["run.opensIn"] {
+                guard let text = raw as? String, let placement = RunPlacement(rawValue: text) else {
+                    throw ParseError.wrongType(key: "run.opensIn", expected: String(localized: "\"below\", \"right\" or \"tab\""))
+                }
+                settings.runOpensIn = placement
+            }
+        }
+        attempt {
+            if let value = object["run.commands"] {
+                guard let map = value as? [String: String] else {
+                    throw ParseError.wrongType(key: "run.commands", expected: String(localized: "an object of language → command"))
+                }
+                var commands: [String: String] = [:]
+                for (key, command) in map {
+                    // A kind of file someone added is always its tidy `.ext`.
+                    if key.hasPrefix(".") { if let ext = RunCommands.tidyExtension(key) { commands[ext] = command } } else { commands[key] = command }
+                }
+                settings.runCommands = commands
+            }
+        }
+        strings("run.off") { settings.runOff = $0 }
         number("editor.wordWrapColumn") { settings.editorWordWrapColumn = min(max(Int($0), 20), 1_000) }
         number("window.zoomLevel") { settings.zoomLevel = min(max(Int($0), Self.zoomRange.lowerBound), Self.zoomRange.upperBound) }
         strings("externalEditors") { settings.externalEditors = $0 }
@@ -530,6 +570,7 @@ public enum Keymap {
             ("cmd+b", "toggleSidebar"),
             ("cmd+shift+e", "focusExplorer"),
             ("ctrl+`", "newTerminal"),
+            ("ctrl+alt+n", "runFile"),
             ("cmd+\\", "splitRight"),
             ("cmd+k cmd+\\", "splitDown"),
             ("cmd+w", "closeItem"),

@@ -111,6 +111,8 @@ extension AppModel {
                 if let path = item?.filePath { model.openExternally(path: path) }
             },
             AppCommand(id: "newTerminal", title: "New Terminal", category: "Terminal") { $0.startTerminal() },
+            AppCommand(id: "runFile", title: "Run File", category: "Terminal",
+                       keywords: ["code runner", "execute", "运行", "執行"]) { $0.runner.runFront() },
             AppCommand(id: "restartTerminal", title: "Restart Exited Terminal", category: "Terminal") { model in
                 if let id = model.active.focused.active {
                     (model.existingController(for: id) as? TerminalController)?.restart()

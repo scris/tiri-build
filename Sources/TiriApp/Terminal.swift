@@ -1579,6 +1579,15 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         return foreground != shellPID
     }
 
+    /// Something other than the shell has the terminal: what Run started, still going.
+    var isRunningProgram: Bool { isShellBusy }
+    var hasExited: Bool { exited }
+    /// How long it's been quiet, or nil before anything's come out: a new shell has drawn its prompt when it's had a moment of quiet.
+    var quietFor: Double? {
+        let last = activity.lastOutput
+        return last == 0 ? nil : Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000 - last
+    }
+
     // MARK: Status
 
     func noteHookReport(status: TerminalStatus) {

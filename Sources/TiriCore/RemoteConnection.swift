@@ -1554,6 +1554,12 @@ public final class RemoteConnection: @unchecked Sendable {
     /// Stored beside the copy, so a quit while it's offline doesn't lose the edit.
     private var pendingFile: String { map.localRoot + ".pending-saves.json" }
 
+    /// Whether a save of this file is still on its way to the server.
+    public func isSaving(_ local: String) -> Bool {
+        guard let remote = map.remote(local) else { return false }
+        return mirrorQueue.sync { pendingSaves[remote] != nil }
+    }
+
     /// Whether anything is waiting that's only here, even if it's from before this launch.
     public var hasPendingSaves: Bool {
         access(pendingFile, F_OK) == 0

@@ -160,6 +160,7 @@ extension AppModel {
         counts[.plugins, default: 0] += pluginsMatching(query).count
         counts[.agents, default: 0] += agentEntriesMatching(query).count
         counts[.languages, default: 0] += languagesMatching(query).count
+        counts[.run, default: 0] += RunLanguagesSection.matching(query).count
         if CommandLineRow.matches(query) { counts[.general, default: 0] += 1 }
         counts[.keyboard] = shortcutSectionsMatchingQuery.reduce(0) { $0 + $1.commands.count }
         return counts.filter { $0.value > 0 }
@@ -459,6 +460,9 @@ struct SettingsContent: View {
             SchemaGroups(pane: .terminal)
         case .editor:
             SchemaGroups(pane: .editor)
+        case .run:
+            SchemaGroups(pane: .run)
+            RunLanguagesSection()
         case .languages:
             SchemaGroups(pane: .languages)
             LanguageServersSection()
@@ -555,6 +559,10 @@ struct SettingsSearchResults: View {
         case .general:
             if !settings.isEmpty { SettingRows(definitions: settings) }
             if CommandLineRow.matches(query) { SettingsCard { CommandLineRow() } }
+        case .run:
+            if !settings.isEmpty { SettingRows(definitions: settings) }
+            let languages = RunLanguagesSection.matching(query)
+            if !languages.isEmpty { RunLanguagesSection(only: languages) }
         default:
             if !settings.isEmpty { SettingRows(definitions: settings) }
         }

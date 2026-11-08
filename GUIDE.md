@@ -8,6 +8,7 @@ Everything Tiri does, grouped by what you're trying to do. For a quick overview,
 - [Git](#git)
 - [Reading and editing files](#reading-and-editing-files)
 - [Code intelligence](#code-intelligence)
+- [Running a file](#running-a-file)
 - [Notebooks](#notebooks)
 - [Web pages](#web-pages)
 - [Servers](#servers)
@@ -283,6 +284,24 @@ A server starts after you've looked at one of its files for a moment, and stops 
 
 ---
 
+## Running a file
+
+For homework, practice problems and scripts: one file, one press, with nothing to set up.
+
+Press **▶ Run** above a file, or ⌃⌥N. Tiri saves it, then types its command into a terminal called **Run**, in the file's folder: `python3 two_sum.py`, or `clang++ -std=c++20 a.cpp -o /tmp/a && /tmp/a`. Compiled programs go to `/tmp`, so your folder stays clean.
+
+- **It's a real terminal.** A program asking for input gets what you type, ↑ runs it again, and ⌘-clicking a path in an error opens the line. ⌘L sends what you select to your agent.
+- **The keyboard follows the program.** While it runs, what you type goes to it. When it ends, the keyboard goes back to the file, unless you've moved it somewhere else meanwhile.
+- **▶ becomes Stop** while it runs. Pressing Run again stops what's running and starts the file fresh.
+- **One Run terminal per workspace.** It opens below the file the first time, or wherever **Where it runs** says, and stays where you move it.
+- **Settings → Run** lists every language with its switch and its command, which you can change in place. As you type, it shows what would run. Languages whose program isn't on this Mac are folded away, and **Add a File Type** covers anything else. In the command, `$file` is the file, `$name` it without its extension, `$dir` its folder, `$path` all of it and `$out` a place in `/tmp`.
+- **A missing program** gets a notice saying so, with a button that asks your agent to install it.
+- **On a server**, it runs there, with that server's programs.
+
+Python, JavaScript and TypeScript (Node 23.6 or later), C, C++, Java, Kotlin, Go, Rust, Swift, C# (.NET 10), Ruby, PHP, Lua, Perl, R, Haskell, Dart, Shell and Zsh come ready. Run is for single files: a project with its own build is your agent's job, or a terminal's.
+
+---
+
 ## Notebooks
 
 Press **Run All** above a notebook, or hover over a cell and press ▶. Output appears as it comes. Click a cell and press ⇧↩ to run it and move to the next. Double-click a cell, or press Return, to edit it: ⇧↩ runs it, Esc puts it back, and it saves as you type. The menu beside **Run All** restarts the kernel, clears outputs, adds and deletes cells, and chooses the Python.
@@ -434,6 +453,7 @@ Shortcuts follow Cursor. You can change any of them in Settings, or by asking yo
 | Toggle sidebar | ⌘B |
 | Focus explorer | ⌘⇧E |
 | New terminal | ⌃\` |
+| Run the file in front | ⌃⌥N |
 | Split right / down | ⌘\\ / ⌘K ⌘\\ |
 | Close item / reopen last closed | ⌘W / ⌘⇧T |
 | Next / previous tab | ⌃Tab / ⌃⇧Tab, ⌘⇧] / ⌘⇧[ |
@@ -456,7 +476,7 @@ In a terminal, ⌘K clears, ⌘← and ⌘→ go to the ends of the line, and �
 
 You never edit a settings file directly. There are two ways in:
 
-- **The Settings tab.** ⌘, opens Settings as a tab, with panes for General, Agents, Terminal, Editor, Languages, Plugins, Your Tiri, Files and Keyboard. ⌘F searches every pane at once, and you can change what you find in place. Changes apply immediately. A changed setting has an arrow beside it that resets it.
+- **The Settings tab.** ⌘, opens Settings as a tab, with panes for General, Agents, Terminal, Editor, Run, Languages, Plugins, Your Tiri, Files and Keyboard. ⌘F searches every pane at once, and you can change what you find in place. Changes apply immediately. A changed setting has an arrow beside it that resets it.
 - **Your agent.** **Ask Claude Code**, under the list of panes, hands your agent a prompt. The arrow beside it offers your other agents or copies the prompt. Your agent can explain any setting and change it for you.
 
 ```sh

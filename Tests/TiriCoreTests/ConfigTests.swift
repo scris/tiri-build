@@ -369,9 +369,10 @@ import Testing
             let groups = SettingsSchema.groups(in: pane)
             #expect(groups.dropFirst().allSatisfy { !$0.name.isEmpty }, "\(pane)")
         }
-        // Two lists elsewhere on the screen, and three themes the Theme row shows: no rows of their own.
+        // Two lists elsewhere on the screen, three themes the Theme row shows, and Run's languages table: no rows of their own.
         #expect(Set(SettingsSchema.all.filter(\.shownElsewhere).map(\.key))
-                == ["terminal.presets", "terminal.resume", "theme.light", "theme.highContrastDark", "theme.highContrastLight"])
+                == ["terminal.presets", "terminal.resume", "theme.light", "theme.highContrastDark", "theme.highContrastLight",
+                    "run.commands", "run.off"])
     }
 
     /// One line under each title. Anything longer belongs in its note.

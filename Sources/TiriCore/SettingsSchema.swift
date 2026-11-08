@@ -19,7 +19,7 @@ public enum MacModelState: String, CaseIterable, Sendable {
 
 /// The parts of the settings screen, in the order it lists them.
 public enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
-    case general, agents, terminal, editor, languages, plugins, yourTiri, files, keyboard
+    case general, agents, terminal, editor, run, languages, plugins, yourTiri, files, keyboard
 
     public var id: String { rawValue }
 
@@ -29,6 +29,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
         case .agents: "Agents"
         case .terminal: "Terminal"
         case .editor: "Editor"
+        case .run: "Run"
         case .languages: "Languages"
         case .plugins: "Plugins"
         case .yourTiri: "Your Tiri"
@@ -43,6 +44,7 @@ public enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
         case .agents: "sparkles"
         case .terminal: "terminal"
         case .editor: "chevron.left.forwardslash.chevron.right"
+        case .run: "play"
         case .languages: "curlybraces"
         case .plugins: "puzzlepiece.extension"
         case .yourTiri: "wand.and.stars"
@@ -243,6 +245,22 @@ public enum SettingsSchema {
               explanation: "Old on the left and new on the right, rather than in one column.",
               note: "In a narrow pane they stay in one column.",
               kind: .toggle, value: { .bool($0.diffSideBySide) }),
+
+        .init(key: "run.button", pane: .run, group: "", title: "Run button",
+              explanation: "▶ above files Tiri can run. ⌃⌥N runs the file in front either way.",
+              note: "It saves the file, then types the command into a terminal called Run, in the file's folder. While it runs, what you type goes to it.",
+              kind: .toggle, value: { .bool($0.runButton) }),
+        .init(key: "run.opensIn", pane: .run, group: "", title: "Where it runs",
+              explanation: "Where the Run terminal opens the first time. After that it stays where you put it.",
+              kind: .choice([.init("below", "Below"), .init("right", "Beside"), .init("tab", "Tab")]),
+              value: { .string($0.runOpensIn.rawValue) }),
+        .init(key: "run.commands", pane: .run, group: "", title: "Run commands",
+              explanation: "Your own command for a language, by its id, or for a kind of file Tiri doesn't know, by \".ext\". $file is the file, $name it without its extension, $dir its folder, $path all of it, and $out a place in /tmp for a compiled program.",
+              note: "The ids: python, javascript, typescript, c, cpp, java, kotlin, go, rust, swift, csharp, ruby, php, lua, perl, r, haskell, dart, shell and zsh.",
+              kind: .commandMap, value: { .object($0.runCommands.mapValues(JSONValue.string)) }, shownElsewhere: true),
+        .init(key: "run.off", pane: .run, group: "", title: "Not run",
+              explanation: "Languages, by id, or \".ext\"s that get no ▶.",
+              kind: .list(placeholder: "Add a language or .ext"), value: { strings($0.runOff) }, shownElsewhere: true),
 
         .init(key: "code.languageServers", pane: .languages, group: "", title: "Use language servers",
               explanation: "They power Go to Definition, errors and suggestions. Off, Tiri searches the files instead.",

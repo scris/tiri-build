@@ -32,6 +32,8 @@ public struct TerminalSpec: Codable, Hashable, Sendable {
     /// An agent typed at this shell's prompt rather than started by Tiri, while it's running.
     /// After a reboot, when a session can't have survived, the shell types its resume command.
     public var typedAgent: String?
+    /// The terminal ▶ and ⌃⌥N type into. One per workspace, found again after a relaunch.
+    public var runsFiles: Bool?
 
     /// Whether a hook from this agent is about this terminal. One agent running another, as in a
     /// Claude session calling `codex exec`, reports through the same terminal, and a Codex
