@@ -122,8 +122,15 @@ final class DiffController: NSObject, ItemController, SymbolViewing, NSTextViewD
 
     var isTooNarrowForTwoColumns: Bool { container.bounds.width > 0 && container.bounds.width < DiffContainer.narrowestTwoColumns }
 
+    /// Whether the side-by-side button was last drawn as having room, so a resize redraws the rest of Tiri only
+    /// when that flips rather than at every width it passes through.
+    private var lastTooNarrow: Bool?
+
     private func layoutModeMayHaveChanged() {
-        model.controllerRevision += 1
+        if isTooNarrowForTwoColumns != lastTooNarrow {
+            lastTooNarrow = isTooNarrowForTwoColumns
+            model.controllerRevision += 1
+        }
         guard wantsTwoColumns != showsTwoColumns, !firstLoad else { return }
         rebuildPanes(keepingPlace: true)
     }

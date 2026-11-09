@@ -130,9 +130,14 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         watchIfLocal(url)
     }
 
+    /// Views that show the title read it here, so they follow it by themselves. A page that changes its title ten
+    /// times a second (a timer, an unread count) used to redraw every tab and row in Tiri as often: 7% of a core,
+    /// measured 2026-11-08. Only the first title goes round everything, for a tab drawn before this controller was.
     private func titleChanged(_ value: String) {
+        guard value != title else { return }
+        let first = title.isEmpty
         title = value
-        model.controllerRevision += 1
+        if first { model.controllerRevision += 1 }
     }
 
     // MARK: Navigation
