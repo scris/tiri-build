@@ -131,6 +131,24 @@ check "and the one from before" "$CLI" select "$FILE_A" "EDIT-A"
 n1=$(counter_value "$COUNTER"); sleep 1.5; n2=$(counter_value "$COUNTER")
 [ -n "$n1" ] && [ -n "$n2" ] && [ "$n2" -gt "$n1" ] && pass "the counter is still counting after a crash" || fail "the counter is still counting after a crash ($n1 → $n2)"
 
+echo "-- a running program is only ever told its real size when Tiri comes back"
+# Everything it printed replays into the reopened view, at that view's size. One not yet laid out
+# replayed it at a placeholder size and told the program that, and Claude Code's input box then
+# sat at the top of the screen for good.
+SIZES=$("$CLI" term --cwd "$PROJECT")
+sleep 1.5
+"$CLI" send "$SIZES" "trap 'stty size >> $WORK/sizes' WINCH; stty size > $WORK/sizes; while :; do sleep 0.2; done" --enter
+sleep 1
+"$CLI" focus "$SIZES" >/dev/null; sleep 0.5
+first="$(head -1 "$WORK/sizes" 2>/dev/null)"
+kill -9 "$APP_PID"; gone
+launch_app
+"$CLI" focus "$SIZES" >/dev/null; sleep 1.5
+# The same width throughout. A row less for a moment is the nudge that makes a program redraw.
+told="$(awk -v first="$first" 'BEGIN { split(first, f, " ") } { if ($2 != f[2] || $1 < f[1] - 1 || $1 > f[1]) print }' "$WORK/sizes")"
+[ -n "$first" ] && [ -z "$told" ] && pass "only its real size, $first" || fail "only its real size ($first), but told: $(echo $told)"
+"$CLI" close "$SIZES" >/dev/null
+
 echo "-- force quit right after opening a terminal, before anything was saved"
 FRESH=$("$CLI" term --cwd "$PROJECT")
 sleep 1.2

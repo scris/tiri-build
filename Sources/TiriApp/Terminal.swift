@@ -1199,21 +1199,19 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// A window's first layouts pass through sizes it won't keep. A session started at one of those
     /// would be told its real size straight after, and a shell redrawing for that wipes lines above it.
     func didAttach() {
-        FileHandle.standardError.write("DEBUGATTACH \(itemID) t=\(ProcessClock.now()) started=\(started) w=\(terminalView.bounds.width)\n".data(using: .utf8)!)
         guard !started, !waitingToSettle else { return }
         waitingToSettle = true
-        settle(lastWidth: terminalView.bounds.width, tries: 8)
+        settle(last: terminalView.bounds.size, tries: 8)
     }
 
     private var waitingToSettle = false
 
-    private func settle(lastWidth: CGFloat, tries: Int) {
+    private func settle(last: CGSize, tries: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             guard let self else { return }
-            let width = self.terminalView.bounds.width
-            FileHandle.standardError.write("DEBUGSETTLE \(self.itemID) t=\(ProcessClock.now()) w=\(width) h=\(self.terminalView.bounds.height) tries=\(tries)\n".data(using: .utf8)!)
-            if width != lastWidth, tries > 0 {
-                self.settle(lastWidth: width, tries: tries - 1)
+            let size = self.terminalView.bounds.size
+            if size != last, tries > 0 {
+                self.settle(last: size, tries: tries - 1)
                 return
             }
             self.waitingToSettle = false
@@ -1221,25 +1219,41 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         }
     }
 
+    private var sizeWaits = 0
+
     func startIfNeeded(fallbackSize: Bool) {
         guard !started else { return }
         if !fallbackSize, terminalView.bounds.width < 40 { return }
-        if fallbackSize { takeSizeOfItsPane() }
-        FileHandle.standardError.write("DEBUGSTART \(itemID) t=\(ProcessClock.now()) fallback=\(fallbackSize) w=\(terminalView.bounds.width) h=\(terminalView.bounds.height) window=\(terminalView.window != nil) super=\(container.superview != nil) frames=\(model.layoutRegistry.contentFrames.count) settling=\(waitingToSettle)\n".data(using: .utf8)!)
+        if fallbackSize, !takeSizeOfItsPane(), TerminalSessions.isAlive(itemID), sizeWaits < 30 {
+            // Still running from before, so everything it printed is about to replay into this view at
+            // whatever size it has, and an agent that draws by moving the cursor can't be put right after
+            // that: its input box ends up at the top. A view not yet laid out waits for its real size.
+            sizeWaits += 1
+            if terminalView.window != nil, container.superview != nil { didAttach() }
+            // Settling starts it on screen; this is for when it can't, and for a tab that isn't showing.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in self?.startIfNeeded(fallbackSize: true) }
+            return
+        }
         started = true
         spawn()
     }
 
     /// In a tab that isn't showing it has no size yet, and what a running program printed replays
     /// at whatever it has. Replayed narrower than it was printed, a shell's prompts leave marks.
-    private func takeSizeOfItsPane() {
+    /// Whether it has its real size now: on screen and settled, or given its pane's.
+    @discardableResult
+    private func takeSizeOfItsPane() -> Bool {
+        if terminalView.window != nil, container.superview != nil {
+            // On screen, its size is real once it has stopped changing. See didAttach.
+            return !waitingToSettle && sizeWaits > 0 && terminalView.bounds.width >= 40
+        }
         let frames = model.layoutRegistry.contentFrames
         let group = model.workspaces.first { $0.id == workspaceID }?.group(containing: itemID)?.id
-        guard terminalView.window == nil || container.superview == nil,
-              let frame = group.flatMap({ frames[$0] }) ?? frames.values.max(by: { $0.width < $1.width }) else { return }
+        guard let frame = group.flatMap({ frames[$0] }) ?? frames.values.max(by: { $0.width < $1.width }) else { return false }
         let inset = TerminalContainer.padding
         terminalView.setFrameSize(NSSize(width: max(frame.width - inset.left - inset.right, 40),
                                          height: max(frame.height - inset.top - inset.bottom, 40)))
+        return true
     }
 
     /// Coming back to a running session replays what it printed. A bell or a notification in there
