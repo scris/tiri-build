@@ -452,6 +452,12 @@ public enum CLIParser {
             }
             return request("dev-hover", ["item": .string(args[0]), "row": .int(row), "col": .int(col)])
 
+        case "dev-click":
+            // A real click through the event queue, on the middle of an item or of the Peek: what the window's
+            // monitors and hit-testing make of it. `responder` says who has the keyboard now.
+            guard args.count == 1 else { throw UsageError("usage: tiri dev-click <item-id> | peek | responder   (test copies only)") }
+            return request("dev-click", ["target": .string(args[0])])
+
         case "agents":
             let usage = "usage: tiri agents [on <agent> | off <agent> | add <name> <command> | remove <agent>]"
             switch args.first {

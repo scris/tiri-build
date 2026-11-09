@@ -1629,6 +1629,50 @@ enum ControlHandler {
             let found = terminal.terminalView.hoverForTest(row: row, column: col)
             return .object(["link": found.map(JSONValue.string) ?? .null, "ms": .double(Date().timeIntervalSince(started) * 1000)])
 
+        case "dev-click":
+            guard AppModel.isTestCopy else { throw ControlFailure("Only in a test copy.") }
+            guard let window = model.window, let target = request.args["target"]?.stringValue else { throw ControlFailure("No window.") }
+            let responder = window.firstResponder
+            let holder = (responder as? TiriTerminalView)?.owner?.itemID
+            if target == "responder" {
+                return .object(["responder": .string(responder.map { String(describing: type(of: $0)) } ?? "none"),
+                                "item": holder.map { .string($0) } ?? .null,
+                                "peek": model.active.peek.map { .string($0.id) } ?? .null,
+                                "peekHasKeyboard": .bool(model.peekHasKeyboard)])
+            }
+            // A test copy's window takes no real clicks, so this does what NSWindow does with one in a key
+            // window: Tiri's own mouse-down handling, then the hit view gets the keyboard only if it'll take it.
+            let height = window.contentView?.bounds.height ?? 0
+            let peek = model.layoutRegistry.peekFrame.map { CGRect(x: $0.minX, y: height - $0.maxY, width: $0.width, height: $0.height) }
+            let point: CGPoint
+            if target == "peek" {
+                guard let peek else { throw ControlFailure("No Peek.") }
+                point = CGPoint(x: peek.midX, y: peek.midY)
+            } else {
+                guard let view = model.controller(for: target)?.view, view.window === window else {
+                    throw ControlFailure("\(target) isn't showing.")
+                }
+                // Somewhere on it the Peek isn't floating over.
+                let rect = view.convert(view.bounds, to: nil).insetBy(dx: 12, dy: 12)
+                let spots = [CGPoint(x: rect.midX, y: rect.midY), CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.minX, y: rect.maxY),
+                             CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)]
+                guard let spot = spots.first(where: { peek?.contains($0) != true }) else { throw ControlFailure("The Peek covers \(target).") }
+                point = spot
+            }
+            func event(_ type: NSEvent.EventType) -> NSEvent? {
+                NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                   windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+            }
+            guard let down = event(.leftMouseDown), let up = event(.leftMouseUp),
+                  let content = window.contentView, let hit = content.hitTest(content.convert(point, from: nil)) else {
+                throw ControlFailure("Nothing there.")
+            }
+            model.handleLeftMouseDown(down)
+            if hit.acceptsFirstResponder { window.makeFirstResponder(hit) }
+            hit.mouseDown(with: down)
+            hit.mouseUp(with: up)
+            return .object(["hit": .string(String(describing: type(of: hit)))])
+
         case "dev-compose":
             guard Bundle.main.bundleIdentifier?.contains(".test.") == true else { throw ControlFailure("Only in a test copy.") }
             guard let view = model.frontEditor?.codeView, let text = request.args["text"]?.stringValue else { throw ControlFailure("No file in front.") }

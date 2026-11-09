@@ -900,7 +900,19 @@ final class AppModel {
             }
             // One a program is waiting on stays: a click to scroll or copy from the terminal isn't being done with it.
             if !event.modifierFlags.contains(.command), active.peek?.id != active.heldPeek {
+                let peekView = active.peek.flatMap { existingController(for: $0.id)?.view }
                 dismissPeek(restoreFocus: false)
+                DispatchQueue.main.async { [weak self] in
+                    // The click was meant to give the keyboard to what's under it. If it landed on
+                    // something that won't take it, the keyboard is still in the Peek that's going
+                    // (SwiftUI takes its view out later), and then nobody would be left holding it.
+                    guard let self, let window = self.window else { return }
+                    let holder = window.firstResponder as? NSView
+                    if window.firstResponder === window || holder?.window == nil
+                        || (peekView.map { holder?.isDescendant(of: $0) == true } ?? false) {
+                        self.requestFocus()
+                    }
+                }
             }
         }
         // Clicking a pane makes its group the focused one.

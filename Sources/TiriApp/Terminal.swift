@@ -340,6 +340,14 @@ final class TiriTerminalView: LocalProcessTerminalView {
 
     override func mouseDown(with event: NSEvent) {
         dissolvePeekTip()
+        // A click on the terminal is a click to type here. AppKit only moves the keyboard to the
+        // view that was hit, and under the Metal renderer that's SwiftTerm's drawing layer, which
+        // won't take it: after a Peek closed, the keyboard sat with the bare window and every click
+        // here left it there. A Peek still showing keeps it (one a program is waiting on stays).
+        if let window, window.firstResponder !== self,
+           !(owner?.model.peekHasKeyboard == true && owner?.model.active.peek != nil) {
+            window.makeFirstResponder(self)
+        }
         // Every ⌘-click is Tiri's: a hyperlink goes where it points, and anything that looks like a
         // path is found. SwiftTerm only sees one that's neither, so it never puts up "Link blocked";
         // should it still, `BlockedLinks` takes the alert over.
