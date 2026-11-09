@@ -447,16 +447,26 @@ public enum CLIParser {
 
         case "dev-hover":
             // What holding ⌘ over a terminal's cell works out, timed, without a mouse.
-            guard args.count == 3, let row = Int(args[1]), let col = Int(args[2]) else {
-                throw UsageError("usage: tiri dev-hover <item-id> <row> <col>   (test copies only)")
+            // `--show` also underlines it as holding ⌘ does and says where the cell is; `--clear` lets go.
+            let show = args.contains("--show"), clear = args.contains("--clear")
+            let rest = args.filter { $0 != "--show" && $0 != "--clear" }
+            guard rest.count == 3, let row = Int(rest[1]), let col = Int(rest[2]) else {
+                throw UsageError("usage: tiri dev-hover <item-id> <row> <col> [--show | --clear]   (test copies only)")
             }
-            return request("dev-hover", ["item": .string(args[0]), "row": .int(row), "col": .int(col)])
+            return request("dev-hover", ["item": .string(rest[0]), "row": .int(row), "col": .int(col), "show": .bool(show), "clear": .bool(clear)])
 
         case "dev-click":
             // A real click through the event queue, on the middle of an item or of the Peek: what the window's
-            // monitors and hit-testing make of it. `responder` says who has the keyboard now.
-            guard args.count == 1 else { throw UsageError("usage: tiri dev-click <item-id> | peek | responder   (test copies only)") }
-            return request("dev-click", ["target": .string(args[0])])
+            // monitors and hit-testing make of it. `responder` says who has the keyboard now. `--cell <row> <col>`
+            // clicks one cell of a terminal, and `--cmd` holds ⌘, as on a path an agent printed.
+            let usage = UsageError("usage: tiri dev-click <item-id> [--cell <row> <col>] [--cmd] | peek | responder   (test copies only)")
+            guard let target = args.first, !target.hasPrefix("-") else { throw usage }
+            var payload: [String: JSONValue] = ["target": .string(target), "command": .bool(args.contains("--cmd"))]
+            if let at = args.firstIndex(of: "--cell") {
+                guard args.count > at + 2, let row = Int(args[at + 1]), let col = Int(args[at + 2]) else { throw usage }
+                payload["row"] = .int(row); payload["col"] = .int(col)
+            }
+            return request("dev-click", payload)
 
         case "agents":
             let usage = "usage: tiri agents [on <agent> | off <agent> | add <name> <command> | remove <agent>]"

@@ -8,7 +8,7 @@
 # A copy hides itself as an app, because Stage Manager brings any window back on screen. Only with
 # TIRI_DEV_MAY_TAKE_FOCUS=yes at the start is it visible and clickable. If one reaches the screen, it's stopped.
 # TIRI_DEV_SCREEN=<display name> shows its window on that display, taking no clicks, to measure drawing; if any of it
-# reaches the main display it's stopped.
+# reaches the main display it's stopped. TIRI_DEV_WINDOW_SIZE=1600x900 sizes its window there, as for a recording.
 # TIRI_DEV_MAC_ACCENT=blue makes it act as if this Mac's accent were blue, to see "Your Mac" against Tiri Pink.
 # TIRI_DEV_A11Y=transparency,contrast,motion makes it act as if Reduce Transparency, Increase Contrast or Reduce
 # Motion were on, without touching this Mac's settings. `cli <name> dev-a11y <list|none>` changes it live.
@@ -66,6 +66,7 @@ launch_in_background() {
     --env TIRI_HOME="$TIRI_HOME" --env TIRI_CONFIG_HOME="$TIRI_CONFIG_HOME" --env TIRI_SOCKET="$TIRI_SOCKET" --env TIRI_DEV_OFFSCREEN=1 \
     ${TIRI_DEV_MAY_TAKE_FOCUS:+--env TIRI_DEV_VISIBLE=1} \
     ${TIRI_DEV_SCREEN:+--env TIRI_DEV_SCREEN="$TIRI_DEV_SCREEN"} \
+    ${TIRI_DEV_WINDOW_SIZE:+--env TIRI_DEV_WINDOW_SIZE="$TIRI_DEV_WINDOW_SIZE"} \
     ${TIRI_DEV_OPTION:+--env TIRI_DEV_OPTION=1} \
     ${TIRI_DEV_MAC_ACCENT:+--env TIRI_DEV_MAC_ACCENT="$TIRI_DEV_MAC_ACCENT"} \
     ${TIRI_DEV_A11Y:+--env TIRI_DEV_A11Y="$TIRI_DEV_A11Y"} \

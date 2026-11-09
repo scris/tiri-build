@@ -1625,9 +1625,17 @@ enum ControlHandler {
             let id = try requireItem(request, model: model)
             guard let terminal = model.controller(for: id) as? TerminalController,
                   let row = request.args["row"]?.intValue, let col = request.args["col"]?.intValue else { throw ControlFailure("\(id) isn't a terminal") }
+            if request.args["clear"]?.boolValue == true {
+                terminal.terminalView.clearHoverForTest()
+                return .object([:])
+            }
             let started = Date()
             let found = terminal.terminalView.hoverForTest(row: row, column: col)
-            return .object(["link": found.map(JSONValue.string) ?? .null, "ms": .double(Date().timeIntervalSince(started) * 1000)])
+            var result: [String: JSONValue] = ["link": found.map(JSONValue.string) ?? .null, "ms": .double(Date().timeIntervalSince(started) * 1000)]
+            if request.args["show"]?.boolValue == true, let cell = terminal.terminalView.showHoverForTest(row: row, column: col) {
+                result["cell"] = .object(["x": .double(cell.minX), "y": .double(cell.minY), "width": .double(cell.width), "height": .double(cell.height)])
+            }
+            return .object(result)
 
         case "dev-click":
             guard AppModel.isTestCopy else { throw ControlFailure("Only in a test copy.") }
@@ -1645,7 +1653,14 @@ enum ControlHandler {
             let height = window.contentView?.bounds.height ?? 0
             let peek = model.layoutRegistry.peekFrame.map { CGRect(x: $0.minX, y: height - $0.maxY, width: $0.width, height: $0.height) }
             let point: CGPoint
-            if target == "peek" {
+            var flags: NSEvent.ModifierFlags = []
+            if request.args["command"]?.boolValue == true { flags.insert(.command) }
+            if let row = request.args["row"]?.intValue, let col = request.args["col"]?.intValue {
+                // A ⌘-click on one cell of a terminal, as on a path an agent printed.
+                guard let terminal = model.controller(for: target) as? TerminalController,
+                      let cell = terminal.terminalView.cellFrameInWindow(row: row, column: col) else { throw ControlFailure("\(target) isn't a terminal on screen.") }
+                point = CGPoint(x: cell.midX, y: height - cell.midY)
+            } else if target == "peek" {
                 guard let peek else { throw ControlFailure("No Peek.") }
                 point = CGPoint(x: peek.midX, y: peek.midY)
             } else {
@@ -1660,7 +1675,7 @@ enum ControlHandler {
                 point = spot
             }
             func event(_ type: NSEvent.EventType) -> NSEvent? {
-                NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                NSEvent.mouseEvent(with: type, location: point, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
             }
             guard let down = event(.leftMouseDown), let up = event(.leftMouseUp),

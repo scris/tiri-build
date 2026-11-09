@@ -522,7 +522,10 @@ final class AppModel {
             window.ignoresMouseEvents = true
             if let screen = NSScreen.screens.first(where: { $0.localizedName.localizedCaseInsensitiveContains(name) }) {
                 let area = screen.visibleFrame
-                let size = NSSize(width: min(window.frame.width, area.width - 40), height: min(window.frame.height, area.height - 40))
+                // TIRI_DEV_WINDOW_SIZE=1600x900 sizes it, as for a recording.
+                let asked = environment["TIRI_DEV_WINDOW_SIZE"]?.split(separator: "x").compactMap { Double($0) }
+                let wanted = asked?.count == 2 ? NSSize(width: asked![0], height: asked![1]) : window.frame.size
+                let size = NSSize(width: min(wanted.width, area.width - 40), height: min(wanted.height, area.height - 40))
                 window.setFrame(NSRect(x: area.midX - size.width / 2, y: area.midY - size.height / 2, width: size.width, height: size.height), display: true)
                 window.orderFrontRegardless()
                 return

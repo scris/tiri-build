@@ -581,6 +581,28 @@ final class TiriTerminalView: LocalProcessTerminalView {
         }
     }
 
+    /// What `tiri dev-hover --show` does: hold ⌘ over a cell, underline and all, as a mouse would. The cell's
+    /// frame comes back in window points from the top left, so a recording knows where the pointer was.
+    func showHoverForTest(row: Int, column: Int) -> CGRect? {
+        clearHover()
+        guard let (target, logical, range) = resolveAt(row: row, column: column) else { return nil }
+        hoverTarget = target
+        drawUnderline(logical: logical, range: range)
+        return cellFrameInWindow(row: row, column: column)
+    }
+
+    func clearHoverForTest() { clearHover() }
+
+    /// A cell's frame in window points, from the top left.
+    func cellFrameInWindow(row: Int, column: Int) -> CGRect? {
+        let size = cellSize
+        guard size.width > 0, size.height > 0, let height = window?.contentView?.bounds.height else { return nil }
+        let local = CGRect(x: CGFloat(column) * size.width, y: bounds.height - CGFloat(row + 1) * size.height,
+                           width: size.width, height: size.height)
+        let inWindow = convert(local, to: nil)
+        return CGRect(x: inWindow.minX, y: height - inWindow.maxY, width: inWindow.width, height: inWindow.height)
+    }
+
     private func resolveAt(row: Int, column: Int) -> (LinkTarget, LogicalLine, Range<Int>)? {
         let variants = logicalLines(row: row, column: column)
         let key = ([String(row), String(column), owner?.currentDirectory ?? ""] + variants.map(\.line.text)).joined(separator: "\n")
