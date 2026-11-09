@@ -38,9 +38,7 @@ struct TerminalStatusIcon: View {
         case .idle:
             Image(systemName: "terminal").foregroundStyle(.secondary)
         case .working:
-            Image(systemName: "circle.dotted.circle")
-                .foregroundStyle(Color.accentColor)
-                .symbolEffect(.rotate, options: .repeat(.continuous), isActive: !AccessibilityDisplay.shared.reduceMotion)
+            WorkingSymbol(turning: !AccessibilityDisplay.shared.reduceMotion)
                 .help("Working")
         case .needsInput:
             Image(systemName: "exclamationmark.circle.fill")
