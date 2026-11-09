@@ -20,6 +20,8 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var appearanceObserver: NSObjectProtocol?
     @ObservationIgnored private var requested: URL
+    /// The last page this was headed to that wasn't a sign-in: what someone wanted when a site sends them to one.
+    @ObservationIgnored private var wanted: URL?
     @ObservationIgnored private var showingError = false
     @ObservationIgnored private var lastPopupAt: Double = 0
     /// Set for a plugin's page: what it may reach, and the only way it reaches it.
@@ -275,6 +277,7 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
             decisionHandler(.allow)
             return
         }
+        if navigationAction.targetFrame?.isMainFrame == true, !SignInWall.isSignIn(url) { wanted = url }
         // A click to a site kept in the browser goes there. Not one within it: a page someone chose to have here stays here.
         if navigationAction.navigationType == .linkActivated, navigationAction.targetFrame?.isMainFrame ?? true,
            let rule = BrowserRules.matching(url, in: model.settings.webOpenInBrowser),
@@ -292,6 +295,17 @@ final class WebController: NSObject, ForceDarkCapable, WKNavigationDelegate, WKU
         default:
             decisionHandler(.cancel)
         }
+    }
+
+    /// What came back for the page itself. A site asking for a sign-in is likely one they're signed in to in their browser.
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                 decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
+        decisionHandler(.allow)
+        guard panel == nil, !isFile, navigationResponse.isForMainFrame, let answered = navigationResponse.response.url,
+              let status = (navigationResponse.response as? HTTPURLResponse)?.statusCode,
+              SignInWall.stands(asked: wanted ?? requested, answered: answered, status: status) else { return }
+        // Sent on to a sign-in, the page they wanted is the one to hand over.
+        model.offerBrowser(for: SignInWall.isSignIn(answered) ? (wanted ?? answered) : answered, item: itemID)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

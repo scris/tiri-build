@@ -131,6 +131,8 @@ final class AppModel {
     var toasts: [AppToast] = []
     /// What a test copy would have opened in a browser, instead of opening it.
     @ObservationIgnored var sentToBrowser: [String] = []
+    /// Sites whose sign-in page already brought an offer of the browser, so it's made once. See `offerBrowser`.
+    @ObservationIgnored var offeredBrowserFor: Set<String> = []
     /// Themes someone brought in or made, from the themes folder. The built-in ones are `Theme.builtIns`.
     var userThemes: [Theme] = []
     /// The theme showing now, for the look it's for.
@@ -1005,7 +1007,7 @@ final class AppModel {
 
     @discardableResult
     func open(path rawPath: String, line: Int? = nil, col: Int? = nil, intent: OpenIntent,
-              in workspaceID: WorkspaceID? = nil) -> ItemID? {
+              in workspaceID: WorkspaceID? = nil, here: Bool = false) -> ItemID? {
         let started = ProcessClock.now()
         let target = workspaceID ?? activeID
         let inFront = target == activeID
@@ -1023,6 +1025,14 @@ final class AppModel {
         if isDirectory.boolValue {
             if inFront { revealOrOffer(path: path) }
             return nil
+        }
+        // A kind someone keeps in its own app goes there, unless they asked for it here. An agent showing it
+        // doesn't get to bring that app in front.
+        if !here {
+            var quietly = !inFront
+            if case .peek(takeFocus: false) = intent { quietly = true }
+            let openHere = { [weak self] in _ = self?.open(path: rawPath, line: line, col: col, intent: intent, in: workspaceID, here: true) }
+            if sendsToApp(path, quietly: quietly, openHere: openHere) { return nil }
         }
         if inFront { rememberRecent(path) }
         if RemoteRegistry.shared.isRemote(path), ["html", "htm", "svg"].contains((path as NSString).pathExtension.lowercased()) {

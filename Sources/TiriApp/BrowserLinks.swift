@@ -75,26 +75,45 @@ extension WebController {
 }
 
 /// The one way out of Tiri above a page or a file: a quiet arrow, never another app's colored icon. A click takes a page
-/// to the browser and a file to the editor; holding it (or a right-click) offers the rest, by name.
+/// to the browser, a document to its own app and code to the editor; holding it (or a right-click) offers the rest, by name.
 struct OpenElsewhereButton: View {
     var page: WebController?
     var path: String?
     @Environment(AppModel.self) private var model
 
+    /// Where a file goes when it leaves: its own app for a picture or a document, the editor for anything to type in.
+    private struct FileWays {
+        var editor: String
+        /// The app macOS opens it with, when that's the better place for it.
+        var app: String?
+        var kind: String?
+        var rule: String?
+    }
+
+    private func ways(for path: String) -> FileWays {
+        let editor = ExternalEditor.displayName(of: model.settings.externalEditors, pathEnv: ProcessInfo.processInfo.environment["PATH"])
+        guard !RemoteRegistry.shared.isRemote(path) else { return FileWays(editor: editor) }
+        let rule = AppRules.matching(path: path, in: model.settings.filesOpenInDefaultApp)
+        let place = DefaultApp.place(for: path)
+        // Something to type in belongs to the editor, unless they've said this kind has an app.
+        let app = rule != nil || !place.typed ? place.app : nil
+        return FileWays(editor: editor, app: app, kind: app == nil ? nil : AppRules.kind(of: path), rule: app == nil ? nil : rule)
+    }
+
     var body: some View {
         let url = page?.addressForBrowser
         if url != nil || path != nil {
             let browser = DefaultBrowser.name
-            let editor = ExternalEditor.displayName(of: model.settings.externalEditors, pathEnv: ProcessInfo.processInfo.environment["PATH"])
-            let target = url != nil ? browser : editor
+            let file = path.map(ways)
+            let target = url != nil ? browser : (file?.app ?? file?.editor ?? browser)
             let title = String(localized: "Open in \(target)")
             Menu {
-                choices(url: url, browser: browser, editor: editor)
+                choices(url: url, browser: browser, file: file)
             } label: {
                 Label(title, systemImage: "arrow.up.forward.square")
                     .labelStyle(.iconOnly)
             } primaryAction: {
-                if let page, url != nil { model.movePageToBrowser(page.itemID) } else if let path { model.openExternally(path: path) }
+                leave(url: url, file: file)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -102,24 +121,30 @@ struct OpenElsewhereButton: View {
             .foregroundStyle(.secondary)
             .frame(width: 24, height: 24)
             .contentShape(Rectangle())
-            .contextMenu { choices(url: url, browser: browser, editor: editor) }
+            .contextMenu { choices(url: url, browser: browser, file: file) }
             .help(String(localized: "Open in \(target). Hold for more"))
             // One button to VoiceOver, with the menu's choices as its actions.
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(title)
             .accessibilityAddTraits(.isButton)
-            .accessibilityAction(.default) {
-                if let page, url != nil { model.movePageToBrowser(page.itemID) } else if let path { model.openExternally(path: path) }
-            }
-            .accessibilityActions { choices(url: url, browser: browser, editor: editor) }
+            .accessibilityAction(.default) { leave(url: url, file: file) }
+            .accessibilityActions { choices(url: url, browser: browser, file: file) }
+        }
+    }
+
+    private func leave(url: URL?, file: FileWays?) {
+        if let page, url != nil {
+            model.movePageToBrowser(page.itemID)
+        } else if let path {
+            if file?.app != nil { model.moveFileToApp(path) } else { model.openExternally(path: path) }
         }
     }
 
     @ViewBuilder
-    private func choices(url: URL?, browser: String, editor: String) -> some View {
+    private func choices(url: URL?, browser: String, file: FileWays?) -> some View {
         if let page, let url {
             Button("Open in \(browser)") { model.movePageToBrowser(page.itemID) }
-            if let path { Button("Open in \(editor)") { model.openExternally(path: path) } }
+            if let path, let file { Button("Open in \(file.editor)") { model.openExternally(path: path) } }
             if let path { Button("Show in Finder") { model.showInFinder(path) } }
             Divider()
             if let rule = BrowserRules.matching(url, in: model.settings.webOpenInBrowser) {
@@ -130,9 +155,22 @@ struct OpenElsewhereButton: View {
                     model.movePageToBrowser(page.itemID)
                 }
             }
-        } else if let path {
-            Button("Open in \(editor)") { model.openExternally(path: path) }
+        } else if let path, let file {
+            if let app = file.app { Button("Open in \(app)") { model.moveFileToApp(path) } }
+            Button("Open in \(file.editor)") { model.openExternally(path: path) }
             Button("Show in Finder") { model.showInFinder(path) }
+            if let app = file.app {
+                if let rule = file.rule {
+                    Divider()
+                    Button("Stop Opening \(rule) in \(app)") { model.setOpensInApp(rule, false, app: app) }
+                } else if let kind = file.kind {
+                    Divider()
+                    Button("Always Open \(kind) in \(app)") {
+                        model.setOpensInApp(kind, true, app: app)
+                        model.moveFileToApp(path)
+                    }
+                }
+            }
         }
     }
 }

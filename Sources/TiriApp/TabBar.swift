@@ -102,7 +102,8 @@ struct TabBar: View {
                         MainActor.assumeIsolated {
                             let model = AppModel.shared
                             model.updateActive { $0.focusGroup(id: group.id) }
-                            model.open(path: path, intent: .pinned)
+                            // Dropped onto Tiri: here is where it was asked for.
+                            model.open(path: path, intent: .pinned, here: true)
                             model.requestFocus()
                         }
                     }

@@ -255,7 +255,7 @@
 
 /* SettingsSchema.swift (groups) */
 "Appearance" = "外观";
-"Links" = "链接";
+"Open Elsewhere" = "在别处打开";
 "While They Work" = "工作期间";
 "Updates" = "更新";
 "When Tiri Quits" = "退出 Tiri 时";
@@ -287,10 +287,13 @@
 "Darken documents" = "调暗文稿";
 "In dark mode, show PDF and Office pages dark too." = "在深色模式下，PDF 和 Office 页面也以深色显示。";
 "The moon button above a file shows its true colors." = "文件上方的月亮按钮可显示它原本的颜色。";
-"Open in your browser" = "在你的浏览器中打开";
+"Sites in your browser" = "在浏览器中打开的网站";
 "Sites that open in your own browser instead of in Tiri, like ones you're signed in to there." = "在你自己的浏览器而不是 Tiri 中打开的网站，比如你在那里已登录的网站。";
-"The browser button on any page adds its site, or takes it off." = "任意网页上的浏览器按钮可添加或移除该网站。";
+"The ↗ button above a page adds its site, or takes it off." = "网页上方的 ↗ 按钮可添加或移除该网站。";
 "Add a site, like github.com" = "添加网站，如 github.com";
+"Files in their own app" = "在各自 App 中打开的文件";
+"Kinds of file that open in their own app instead of in Tiri, like .psd or .key." = "在各自的 App 而不是 Tiri 中打开的文件类型，比如 .psd 或 .key。";
+"The ↗ button above a file adds its kind, or takes it off." = "文件上方的 ↗ 按钮可添加或移除该类型。";
 "New terminal menu" = "新建终端菜单";
 "What the + button offers. Each entry is a name and the command it runs. Adding `\"enabled\": false` keeps an entry but hides it. `tiri agents` is the easy way to change this." = "+ 按钮提供的选项。每一项是一个名称和它运行的命令。加上 `\"enabled\": false` 可保留某项但将它隐藏。用 `tiri agents` 修改最方便。";
 "Resume commands" = "恢复命令";
@@ -1737,6 +1740,14 @@
 "Open in %@. Hold for more" = "在 %@ 中打开。按住可查看更多";
 "Stop Opening %@ in %@" = "不再在 %2$@ 中打开 %1$@";
 "Always Open %@ in %@" = "总是在 %2$@ 中打开 %1$@";
+
+/* FileApps.swift */
+"Press Return to add it" = "按 Return 键添加";
+"Add a kind, like .psd" = "添加类型，如 .psd";
+"Open in %@?" = "在 %@ 中打开？";
+"You're not signed in to %@ here" = "你在这里没有登录 %@";
+"Just This Page" = "仅此页面";
+"Always for %@" = "%@ 总是如此";
 
 /* PeekView.swift */
 "Open to the Side (⌥⌘↩)" = "在旁边打开（⌥⌘↩）";

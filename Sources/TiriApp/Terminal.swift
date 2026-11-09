@@ -1199,6 +1199,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
     /// A window's first layouts pass through sizes it won't keep. A session started at one of those
     /// would be told its real size straight after, and a shell redrawing for that wipes lines above it.
     func didAttach() {
+        FileHandle.standardError.write("DEBUGATTACH \(itemID) t=\(ProcessClock.now()) started=\(started) w=\(terminalView.bounds.width)\n".data(using: .utf8)!)
         guard !started, !waitingToSettle else { return }
         waitingToSettle = true
         settle(lastWidth: terminalView.bounds.width, tries: 8)
@@ -1210,6 +1211,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             guard let self else { return }
             let width = self.terminalView.bounds.width
+            FileHandle.standardError.write("DEBUGSETTLE \(self.itemID) t=\(ProcessClock.now()) w=\(width) h=\(self.terminalView.bounds.height) tries=\(tries)\n".data(using: .utf8)!)
             if width != lastWidth, tries > 0 {
                 self.settle(lastWidth: width, tries: tries - 1)
                 return
@@ -1223,6 +1225,7 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
         guard !started else { return }
         if !fallbackSize, terminalView.bounds.width < 40 { return }
         if fallbackSize { takeSizeOfItsPane() }
+        FileHandle.standardError.write("DEBUGSTART \(itemID) t=\(ProcessClock.now()) fallback=\(fallbackSize) w=\(terminalView.bounds.width) h=\(terminalView.bounds.height) window=\(terminalView.window != nil) super=\(container.superview != nil) frames=\(model.layoutRegistry.contentFrames.count) settling=\(waitingToSettle)\n".data(using: .utf8)!)
         started = true
         spawn()
     }

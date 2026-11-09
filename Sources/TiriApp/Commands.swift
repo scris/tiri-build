@@ -724,7 +724,13 @@ enum ControlHandler {
             } else {
                 intent = .pinned
             }
-            guard let id = model.open(path: path, line: line, col: col, intent: intent, in: sourceWorkspace) else {
+            // The person keeps this kind of file in its own app, so that's where it goes, and the agent is told.
+            // Something waiting on the file needs it here.
+            if !waits, let (_, app) = model.appRule(for: model.aliasedPath(path, in: sourceWorkspace)) {
+                _ = model.open(path: path, line: line, col: col, intent: intent, in: sourceWorkspace)
+                return .object(["app": .string(app), "path": .string(path)])
+            }
+            guard let id = model.open(path: path, line: line, col: col, intent: intent, in: sourceWorkspace, here: true) else {
                 throw ControlFailure("Could not open \(path)")
             }
             if waits { model.beginWaiting(on: id, from: source, seen: seen) }
@@ -1394,6 +1400,7 @@ enum ControlHandler {
             // What a test copy would have opened in a browser: it never opens one.
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }
             return .object(["sent": .array(model.sentToBrowser.map(JSONValue.string)), "rules": .array(model.settings.webOpenInBrowser.map(JSONValue.string)),
+                            "kinds": .array(model.settings.filesOpenInDefaultApp.map(JSONValue.string)),
                             "peek": .string(model.active.peek.map { model.englishTitle(for: $0) } ?? "")])
 
         case "dev.toolbar":

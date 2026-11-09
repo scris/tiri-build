@@ -21,7 +21,7 @@ extension AppModel {
     func openFromOutside(_ path: String, line: Int? = nil, col: Int? = nil, asSource: Bool = false) -> ItemID? {
         let target = workspaceForOutsideFile(path)
         if target != activeID { switchWorkspace(target) }
-        guard let id = open(path: path, line: line, col: col, intent: .pinned, in: target) else { return nil }
+        guard let id = open(path: path, line: line, col: col, intent: .pinned, in: target, here: true) else { return nil }
         if asSource { showAsText(id) }
         requestFocus()
         return id

@@ -200,6 +200,9 @@ public enum CLIOutput {
             say(key.isEmpty ? "no shortcut" : key)
         case "open", "preview", "term":
             if let item = response.result?["item"]?.stringValue { say(item) }
+            if let app = response.result?["app"]?.stringValue {
+                say("Opened in \(app), as the person asked for this kind of file. There's no item to drive.")
+            }
             if let address = response.result?["browser"]?.stringValue {
                 say("Opened in the person's own browser, as they asked for this site: \(address). There's no item to drive.")
             }

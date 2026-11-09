@@ -1047,6 +1047,13 @@ struct TokenList: View {
                 .frame(width: 150)
                 .onSubmit(add)
                 .accessibilityLabel("Add to \(title)")
+                .accessibilityHint("Press Return to add it")
+            // Nothing else says how a typed entry gets in: no button does it.
+            Text("Press Return to add it")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .frame(height: 22)
+                .accessibilityHidden(true)
         }
     }
 
