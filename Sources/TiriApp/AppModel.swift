@@ -32,6 +32,8 @@ struct TerminalRuntime: Equatable {
     var prompt: String?
     var activity: String?
     var touched: [String] = []
+    /// When it last started working; nil whenever it isn't.
+    var workingSince: Date?
 }
 
 struct AppBanner: Identifiable, Equatable {
@@ -272,6 +274,8 @@ final class AppModel {
     @ObservationIgnored var groupHosts: [GroupID: WeakView] = [:]
     @ObservationIgnored private var controllers: [ItemID: ItemController] = [:]
     @ObservationIgnored private var restoredItems: Set<ItemID> = []
+    /// Terminals whose agent's status came back from disk, until their controller is made.
+    @ObservationIgnored var restoredAgentStatus: Set<ItemID> = []
     @ObservationIgnored private var saveWork: DispatchWorkItem?
     @ObservationIgnored private var server: ControlServer?
     @ObservationIgnored let router = EventRouter()
@@ -325,6 +329,8 @@ final class AppModel {
         settings = settingsStore.settings
         rebuildKeybindings()
         banner = settingsStore.currentError.map { AppBanner(message: $0, isError: true) }
+        // Before the first frame, so an agent still working never shows as idle.
+        restoreAgentStatus(finished: false)
     }
 
     func finishLaunching() {
@@ -357,6 +363,7 @@ final class AppModel {
         // A program still running with no tab lost it in a crash, or in damaged state. It comes back as one:
         // closing a tab is what ends its program, and that never happened.
         adoptOrphanedSessions()
+        restoreAgentStatus(finished: true)
         bringBackUnsavedEdits()
         router.install(model: self)
         applyTheme()
@@ -715,8 +722,10 @@ final class AppModel {
                 }
             }
             let workspaceID = workspace(containing: id)?.id ?? activeID
-            controller = TerminalController(itemID: id, spec: spec, launchCommand: launch, attachedTo: attachedTo, prefill: prefill,
-                                            workspaceID: workspaceID, model: self)
+            let terminal = TerminalController(itemID: id, spec: spec, launchCommand: launch, attachedTo: attachedTo, prefill: prefill,
+                                              workspaceID: workspaceID, model: self)
+            adoptRestoredStatus(terminal, id: id)
+            controller = terminal
         case .file(let spec):
             // On a server and not here yet. The viewer depends on what's in it, so it waits.
             if remote.needsFetch(spec.path) {
@@ -880,7 +889,9 @@ final class AppModel {
         guard NSApp?.isActive == true, let id = active.focused.active, var runtime = runtimes[id], runtime.unseen else { return }
         runtime.unseen = false
         if runtime.status == .done { runtime.status = .idle }
+        let before = runtimes[id]
         runtimes[id] = runtime
+        keepStatusRecord(id, was: before)
         updateDockBadge()
     }
 
@@ -1517,9 +1528,14 @@ final class AppModel {
     }
 
     func updateRuntime(_ id: ItemID, _ change: (inout TerminalRuntime) -> Void) {
-        var runtime = runtimes[id] ?? TerminalRuntime()
+        let before = runtimes[id]
+        var runtime = before ?? TerminalRuntime()
         change(&runtime)
-        if runtimes[id] != runtime { runtimes[id] = runtime }
+        runtime.keepWorkingSince(from: before)
+        if runtimes[id] != runtime {
+            runtimes[id] = runtime
+            keepStatusRecord(id, was: before)
+        }
     }
 
     func isLookingAt(_ id: ItemID) -> Bool {
@@ -1608,7 +1624,7 @@ final class AppModel {
         return (needs, done)
     }
 
-    private func updateDockBadge() {
+    func updateDockBadge() {
         let count = runtimes.values.filter(\.unseen).count
         NSApp?.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
     }
@@ -1753,6 +1769,7 @@ final class AppModel {
     func closeNow(_ id: ItemID) {
         if let path = notebookPath(of: id), otherTab(showing: path, than: id) == nil { notebookKernels.stopIfUnused(path: path) }
         updateWorkspace(containing: id) { $0.close(id) }
+        AgentStatusRecords.remove(id)
         if find?.targetItem == id { find = nil }
         requestFocus()
     }

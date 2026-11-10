@@ -132,7 +132,11 @@ do {
     let client = try ControlClient(path: TiriPaths.socket, timeout: patient ? 300 : 10)
     response = try client.send(request)
 } catch {
-    if isHookCommand { exit(0) }
+    if isHookCommand {
+        // Kept for the Tiri that comes back, so an agent that finished meanwhile isn't still called working.
+        AgentStatusRecords.keepMissed(request)
+        exit(0)
+    }
     if case ControlSocketError.timedOut = error {
         fail("Tiri didn't answer in time. If macOS is asking for permission to read a folder, answer that first.")
     }

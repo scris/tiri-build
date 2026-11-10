@@ -526,6 +526,7 @@ enum ControlHandler {
             if let command = spec.command { object["command"] = .string(command) }
             if let session = spec.sessionID { object["session"] = .string(session) }
             if let message = runtime.message { object["message"] = .string(message) }
+            if let since = runtime.workingSince { object["workingSince"] = .string(ISO8601DateFormatter().string(from: since)) }
         case .file(let spec):
             object["path"] = .string(spec.path)
             if model.existingController(for: item.id)?.isDirty == true { object["status"] = .string("unsaved") }

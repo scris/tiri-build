@@ -1640,6 +1640,9 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
 
     // MARK: Status
 
+    /// Its agent's hooks have spoken, so its status is theirs, not a guess.
+    var reportsByHooks: Bool { hookActive }
+
     func noteHookReport(status: TerminalStatus) {
         hookActive = true
         if status == .working { lastHookWorkingAt = ProcessClock.now() }

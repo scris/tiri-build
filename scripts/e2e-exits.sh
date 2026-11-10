@@ -234,6 +234,52 @@ count=$(pgrep -P 1 -f "$APP_REAL/Contents/MacOS/Tiri" | wc -l | tr -d ' ')
 kill -0 "$first" 2>/dev/null && pass "the first one stays" || fail "the first one stays"
 alive_sessions "$COUNTER" && pass "the counter is untouched" || fail "the counter is untouched"
 
+echo "-- an agent working through a restart is still working when Tiri comes back"
+# Status comes from the agent's hooks, and a Tiri that comes back used to call it idle until the next one.
+# This stands in for Claude Code: it runs `tiri hook claude` from inside its terminal, as Claude Code's hooks do,
+# with whatever's dropped in its folder, and draws a spinner while it works. A login shell can put another
+# `tiri` first on the PATH, so it's given this copy's.
+SAY="$WORK/say"; mkdir -p "$SAY"
+cat > "$WORK/claude" <<'AGENT'
+#!/bin/bash
+PATH="$2:$PATH"
+while :; do
+  for f in "$1"/*.json; do [ -e "$f" ] || continue; tiri hook claude "$(cat "$f")"; rm -f "$f"; done
+  [ -e "$1/working" ] && printf '\r* Working... %s ' "$(date +%s)"
+  sleep 0.2
+done
+AGENT
+chmod +x "$WORK/claude"
+say() { printf '%s' "$2" > "$SAY/$1.json"; for _ in $(seq 1 25); do [ -e "$SAY/$1.json" ] || return 0; sleep 0.2; done; }
+since_of() { "$CLI" --json items | python3 -c "import json,sys; print([i.get('workingSince') for i in json.load(sys.stdin)['result'] if i['id']=='$1'])"; }
+AGENT=$("$CLI" term --cwd "$PROJECT" --cmd "$WORK/claude $SAY $APP/Contents/Resources/bin")
+sleep 1.5
+say start '{"hook_event_name":"SessionStart","session_id":"e2e"}'
+touch "$SAY/working"
+say prompt '{"hook_event_name":"UserPromptSubmit","session_id":"e2e","prompt":"build the storefront"}'
+expect "the agent is working" "working" status_of "$AGENT"
+since="$(since_of "$AGENT")"
+kill -9 "$APP_PID"; gone
+launch_app
+expect "after a crash, it's working from the start" "working" status_of "$AGENT"
+expect "  since the same moment" "$since" since_of "$AGENT"
+check "quit" "$CLI" quit; gone
+launch_app
+expect "after a quit, it's working from the start" "working" status_of "$AGENT"
+kill -9 "$APP_PID"; gone
+rm -f "$SAY/working"
+say stop '{"hook_event_name":"Stop","session_id":"e2e","last_assistant_message":"Storefront built"}'
+launch_app
+expect "finished while Tiri was gone, it isn't called working" "done" status_of "$AGENT"
+touch "$SAY/working"
+say again '{"hook_event_name":"UserPromptSubmit","session_id":"e2e","prompt":"deploy it"}'
+check "quit" "$CLI" quit; gone
+rm -f "$SAY/working"
+say ask '{"hook_event_name":"PermissionRequest","session_id":"e2e","tool_name":"Bash"}'
+launch_app
+expect "waiting for you since Tiri went, it isn't called working" "needs-input" status_of "$AGENT"
+check "close the agent" "$CLI" close "$AGENT"
+
 echo "-- closing a terminal still ends its program"
 check "close the counter" "$CLI" close "$COUNTER"
 sleep 1.5
