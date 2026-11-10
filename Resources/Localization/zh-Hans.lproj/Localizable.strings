@@ -38,6 +38,8 @@
 "Bring Back from Its Window" = "从单独的窗口移回";
 "Peek: Open as Tab" = "速览：作为标签页打开";
 "Peek: Open to the Side" = "速览：在旁边打开";
+"Peek: Open Below" = "速览：在下方打开";
+"Peek: Move to New Window" = "速览：移到新窗口";
 "Peek: Close" = "速览：关闭";
 "Toggle Sidebar" = "显示或隐藏边栏";
 "Focus on Explorer" = "聚焦到“文件”";
@@ -1752,6 +1754,9 @@
 /* PeekView.swift */
 "Open to the Side (⌥⌘↩)" = "在旁边打开（⌥⌘↩）";
 "Open to the Side" = "在旁边打开";
+"Open Below" = "在下方打开";
+"Copy Address" = "复制地址";
+"Open, copy its path, reveal it" = "打开、复制路径、显示位置";
 "Open as Tab" = "作为标签页打开";
 "Open as Tab (⌘↩)" = "作为标签页打开（⌘↩）";
 "Done (⌘↩)" = "完成（⌘↩）";

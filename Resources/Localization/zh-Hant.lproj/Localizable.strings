@@ -38,6 +38,8 @@
 "Bring Back from Its Window" = "從獨立的視窗移回";
 "Peek: Open as Tab" = "速覽：以分頁打開";
 "Peek: Open to the Side" = "速覽：在旁邊打開";
+"Peek: Open Below" = "速覽：在下方打開";
+"Peek: Move to New Window" = "速覽：移到新視窗";
 "Peek: Close" = "速覽：關閉";
 "Toggle Sidebar" = "顯示或隱藏側邊欄";
 "Focus on Explorer" = "聚焦到「檔案」";
@@ -1752,6 +1754,9 @@
 /* PeekView.swift */
 "Open to the Side (⌥⌘↩)" = "在旁邊打開（⌥⌘↩）";
 "Open to the Side" = "在旁邊打開";
+"Open Below" = "在下方打開";
+"Copy Address" = "拷貝位址";
+"Open, copy its path, reveal it" = "打開、拷貝路徑、顯示位置";
 "Open as Tab" = "以分頁打開";
 "Open as Tab (⌘↩)" = "以分頁打開（⌘↩）";
 "Done (⌘↩)" = "完成（⌘↩）";

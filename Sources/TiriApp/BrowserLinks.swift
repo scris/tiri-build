@@ -112,6 +112,7 @@ struct OpenElsewhereButton: View {
             } label: {
                 Label(title, systemImage: "arrow.up.forward.square")
                     .labelStyle(.iconOnly)
+                    .foregroundStyle(.secondary)
             } primaryAction: {
                 leave(url: url, file: file)
             }

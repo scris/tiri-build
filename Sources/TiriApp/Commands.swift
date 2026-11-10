@@ -82,6 +82,12 @@ extension AppModel {
             },
             AppCommand(id: "promotePeek", title: "Peek: Open as Tab", category: "Tabs and Splits") { $0.promotePeek() },
             AppCommand(id: "promotePeekToSide", title: "Peek: Open to the Side", category: "Tabs and Splits") { $0.promotePeek(split: .right) },
+            AppCommand(id: "promotePeekBelow", title: "Peek: Open Below", category: "Tabs and Splits") { $0.promotePeek(split: .down) },
+            AppCommand(id: "promotePeekToWindow", title: "Peek: Move to New Window", category: "Tabs and Splits") { model in
+                guard let peek = model.active.peek, !model.waitingFor.contains(peek.id) else { return }
+                model.promotePeek()
+                model.moveToNewWindow(peek.id)
+            },
             AppCommand(id: "dismissPeek", title: "Peek: Close", category: "Tabs and Splits") { $0.dismissPeek() },
             AppCommand(id: "toggleSidebar", title: "Toggle Sidebar", category: "Window") { model in
                 model.setSidebar(visible: model.sidebarVisibility == .detailOnly)

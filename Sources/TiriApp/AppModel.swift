@@ -994,7 +994,7 @@ final class AppModel {
             return (NSApp.keyWindow ?? window)?.firstResponder is TiriTerminalView
         // A Peek floating over a file you're typing in doesn't take that file's ⌘↩.
         case "promotePeek": return active.peek != nil && (peekHasKeyboard || focusedEditor == nil)
-        case "promotePeekToSide": return active.peek != nil
+        case "promotePeekToSide", "promotePeekBelow", "promotePeekToWindow": return active.peek != nil
         case "webReload": return frontWebController != nil
         case "goBack": return canGoBack
         case "goToDefinition", "findReferences", "showHover": return canAskAboutSymbols()

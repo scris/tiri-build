@@ -856,7 +856,7 @@ struct FileActions: View {
             Button {
                 model.toggleChangesForFront()
             } label: {
-                Label("Open File", systemImage: "doc.text").labelStyle(.titleAndIcon)
+                Label("Open File", systemImage: "doc.text").labelStyle(FileActionLabel())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -879,7 +879,7 @@ struct FileActions: View {
             Button {
                 model.toggleChangesForFront()
             } label: {
-                Label("Changes", systemImage: "plus.forwardslash.minus").labelStyle(.titleAndIcon)
+                Label("Changes", systemImage: "plus.forwardslash.minus").labelStyle(FileActionLabel())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -901,7 +901,7 @@ struct FileActions: View {
             Button {
                 model.open(path: pdf, intent: .split(.right))
             } label: {
-                Label("PDF", systemImage: "doc.richtext").labelStyle(.titleAndIcon)
+                Label("PDF", systemImage: "doc.richtext").labelStyle(FileActionLabel())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -921,7 +921,7 @@ struct FileActions: View {
             } label: {
                 Label(markdown.showingSource ? String(localized: "Rendered") : String(localized: "Source"),
                       systemImage: markdown.showingSource ? "eye" : "chevron.left.forwardslash.chevron.right")
-                    .labelStyle(.titleAndIcon)
+                    .labelStyle(FileActionLabel())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)

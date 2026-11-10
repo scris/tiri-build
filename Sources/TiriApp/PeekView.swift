@@ -59,21 +59,40 @@ struct PeekView: View {
     private var header: some View {
         GlassEffectContainer(spacing: 6) {
             HStack(spacing: 8) {
-                ItemIcon(item: item)
-                    .font(.system(size: 12))
-                    .frame(width: 16)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(model.title(for: item))
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                    if let detail {
-                        Text(detail)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                // The name is the menu, as a document's is in its window's title: everything a tab's menu does.
+                Menu {
+                    PeekMenu(item: item)
+                } label: {
+                    HStack(spacing: 8) {
+                        ItemIcon(item: item)
+                            .font(.system(size: 12))
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack(spacing: 5) {
+                                Text(model.title(for: item))
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(.tertiary)
+                                    .accessibilityHidden(true)
+                            }
+                            if let detail {
+                                Text(detail)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
                     }
+                    .contentShape(Rectangle())
                 }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .help("Open, copy its path, reveal it")
+                .accessibilityLabel(model.title(for: item))
                 Spacer(minLength: 8)
                 // What the content can do: quiet glyphs, so the way to keep it is the one thing that stands out.
                 HStack(spacing: 10) {
@@ -91,6 +110,8 @@ struct PeekView: View {
                 .foregroundStyle(.secondary)
                 .font(.system(size: 13))
                 .controlSize(.regular)
+                .environment(\.fileActionsAreGlyphs, true)
+                .fixedSize()
                 .padding(.trailing, 6)
                 if model.waitingFor.contains(item.id) {
                     // Something is waiting for this file back, like git or Claude Code's Ctrl-G. Keeping it isn't the point.
@@ -145,6 +166,8 @@ struct PeekView: View {
         .padding(.leading, 14)
         .padding(.trailing, 10)
         .frame(height: 44)
+        .contentShape(Rectangle())
+        .contextMenu { PeekMenu(item: item) }
     }
 
     private var detail: String? {

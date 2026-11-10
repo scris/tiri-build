@@ -294,7 +294,7 @@ struct RunFileButton: View {
             } label: {
                 Label(isRunning ? String(localized: "Stop") : String(localized: "Run"),
                       systemImage: isRunning ? "stop.fill" : "play.fill")
-                    .labelStyle(.titleAndIcon)
+                    .labelStyle(FileActionLabel())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)

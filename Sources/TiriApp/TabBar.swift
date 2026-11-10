@@ -280,19 +280,7 @@ struct TabContextMenu: View {
         }
         if let path = item.filePath {
             Divider()
-            Button("Copy Path") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(RemoteRegistry.shared.displayPath(path), forType: .string)
-            }
-            Button("Copy Relative Path") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(here.active.relativePath(path), forType: .string)
-            }
-            Button("Reveal in Explorer") { model.revealOrOffer(path: path) }
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-            }
-            Button("Open in External Editor") { model.openExternally(path: path) }
+            FilePathMenu(path: path)
         }
         if case .web = item.content, (model.existingController(for: item.id) as? WebController)?.addressForBrowser != nil {
             Divider()
