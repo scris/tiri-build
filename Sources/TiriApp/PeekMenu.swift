@@ -68,8 +68,15 @@ struct FilePathMenu: View {
 }
 
 /// A Peek's header has no room for words beside its glyphs: "Changes" broke over two lines there.
+private struct FileActionsAreGlyphsKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
-    @Entry var fileActionsAreGlyphs = false
+    var fileActionsAreGlyphs: Bool {
+        get { self[FileActionsAreGlyphsKey.self] }
+        set { self[FileActionsAreGlyphsKey.self] = newValue }
+    }
 }
 
 /// A file action's label: its word and glyph above a tab's file, the glyph alone in a Peek's header.
