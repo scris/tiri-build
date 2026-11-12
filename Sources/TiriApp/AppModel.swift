@@ -1462,9 +1462,10 @@ final class AppModel {
             case .terminal(let spec):
                 return (existingController(for: item.id) as? TerminalController)?.currentDirectory ?? spec.cwd
             case .file(let spec):
-                return active.folder(containing: spec.path) ?? (spec.path as NSString).deletingLastPathComponent
+                // A file outside the workspace, such as an open history, starts new agents in the workspace's folder.
+                return active.folder(containing: spec.path) ?? active.folders.first ?? (spec.path as NSString).deletingLastPathComponent
             case .diff(let spec):
-                return active.folder(containing: spec.path) ?? (spec.path as NSString).deletingLastPathComponent
+                return active.folder(containing: spec.path) ?? active.folders.first ?? (spec.path as NSString).deletingLastPathComponent
             case .web, .settings, .plugin, .unknown:
                 break
             }
