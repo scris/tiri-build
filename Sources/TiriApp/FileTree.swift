@@ -164,8 +164,20 @@ final class TreeOutlineView: NSOutlineView {
         return tree?.contextMenu(forRow: row)
     }
 
+    /// The whole tree sits this far in, so a folder's chevron lines up with the Explorer header's above it.
+    static let leadingInset: CGFloat = 7
+
     override func frameOfOutlineCell(atRow row: Int) -> NSRect {
-        super.frameOfOutlineCell(atRow: row)
+        var frame = super.frameOfOutlineCell(atRow: row)
+        if !frame.isEmpty { frame.origin.x += Self.leadingInset }
+        return frame
+    }
+
+    override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
+        var frame = super.frameOfCell(atColumn: column, row: row)
+        frame.origin.x += Self.leadingInset
+        frame.size.width = max(frame.size.width - Self.leadingInset, 0)
+        return frame
     }
 }
 
@@ -1093,7 +1105,8 @@ final class FileTreeController: NSObject, NSOutlineViewDataSource, NSOutlineView
         cell.addSubview(badge)
         if isRoot {
             NSLayoutConstraint.activate([
-                field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+                // Starts where the Explorer header's title does.
+                field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: -1),
                 field.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -4),
                 field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
