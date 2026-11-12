@@ -240,6 +240,14 @@ public enum PathLinkDetector {
                 var variants: [(Int, Int)] = []
                 var starts = [start]
                 for index in start..<column where line[index] == " " { starts.append(index + 1) }
+                // A path that begins `/`, `~/` or `./` has nothing before it: the words there are the sentence's.
+                // Without this, on a long line the longest stretches all start back in the sentence and crowd it out.
+                func beginsAPath(_ index: Int) -> Bool {
+                    guard index < line.count else { return false }
+                    if line[index] == "/" { return true }
+                    return (line[index] == "~" || line[index] == ".") && index + 1 < line.count && line[index + 1] == "/"
+                }
+                if let anchor = starts.last(where: beginsAPath) { starts = [anchor] }
                 var ends = [end]
                 var index = end - 1
                 while index > column {

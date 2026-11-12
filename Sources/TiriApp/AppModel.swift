@@ -1157,6 +1157,22 @@ final class AppModel {
 
     /// A ⌘-click in terminal output. Files float as a Peek; folders reveal in the tree.
     func openFromTerminal(_ resolved: ResolvedPath, forceTab: Bool) {
+        // Somewhere on this Mac outside the workspace: a folder is for Finder, and so is a file nothing here can show.
+        let path = aliasedPath(resolved.path)
+        if !RemoteRegistry.shared.isRemote(path), active.folder(containing: path) == nil {
+            var isFolder: ObjCBool = false
+            if resolved.isDirectory || (FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue) {
+                openInFinder(path)
+                return
+            }
+            if appRule(for: path) == nil, FileClassifier.classify(path: path, head: { FileHandle(forReadingAtPath: path).flatMap { handle in
+                defer { try? handle.close() }
+                return try? handle.read(upToCount: 8192)
+            } }) == .quickLook {
+                showInFinder(path)
+                return
+            }
+        }
         if resolved.isDirectory {
             revealOrOffer(path: resolved.path)
             return
@@ -1321,6 +1337,19 @@ final class AppModel {
                 self?.revealInTree(path)
             }
         }
+    }
+
+    /// A folder's own window in Finder. A package, like an app, is shown selected rather than opened.
+    func openInFinder(_ folder: String) {
+        guard !NSWorkspace.shared.isFilePackage(atPath: folder) else {
+            showInFinder(folder)
+            return
+        }
+        if Self.isTestCopy {
+            sentToBrowser.append("finder-open:" + folder)
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: folder, isDirectory: true))
     }
 
     /// Finder, with the thing selected. A test copy only writes it down: Finder would come to the front.

@@ -239,6 +239,17 @@ struct LinkCase: Sendable, CustomTestStringConvertible {
         #expect(resolver.resolveAll(atColumn: 9, in: "Wrote My Notes.md").map(\.path) == ["/w/My Notes.md"])
     }
 
+    @Test func aHomePathWithSpacesInALongSentenceOpens() {
+        // Words before `~/` can't be part of the path, so a long sentence doesn't crowd it out.
+        let file = "/h/Desktop/QTube Music 0.4.2 (135) test.zip"
+        let resolver = PathResolver(cwd: "/p", workspaceFolders: [], home: "/h", probe: { $0 == file ? false : nil })
+        let line = "The notarized build passed and it is now ready to upload: ~/Desktop/QTube Music 0.4.2 (135) test.zip (20 MB)."
+        for word in ["Desktop", "QTube", "Music", "135", "test.zip"] {
+            let column = line.distance(from: line.startIndex, to: line.range(of: word)!.lowerBound) + 1
+            #expect(resolver.resolve(atColumn: column, in: line)?.path == file, "clicked \(word)")
+        }
+    }
+
     @Test func aFileWithBracketsInItsNameStillOpens() {
         let resolver = PathResolver(cwd: "/p", workspaceFolders: [], probe: { $0 == "/p/report(final).pdf" ? false : nil })
         #expect(resolver.resolve(atColumn: 9, in: "report(final).pdf")?.path == "/p/report(final).pdf")

@@ -196,7 +196,7 @@ When an agent runs `tiri open report.md`, the file floats the same way and your 
 
 ### Paths in terminal output
 
-Holding ⌘ underlines every path in terminal output that exists or can be found. ⌘-clicking a file opens it, including `path:line:col` and the other formats compilers and test runners print. ⌘-clicking a folder reveals it in the explorer.
+Holding ⌘ underlines every path in terminal output that exists or can be found. ⌘-clicking a file opens it, including `path:line:col` and the other formats compilers and test runners print. ⌘-clicking a folder reveals it in the explorer. Outside the workspace, a folder opens in Finder, and so does a file Tiri can't show, like a `.zip`, selected there. Paths with spaces work without quotes.
 
 Agents often print paths that don't exist as written, like `/resume/index.html` from a web root. Tiri searches the workspace's folders, its terminals' folders and its open files. One match opens right away. Several let you pick, with the likeliest first.
 
