@@ -236,6 +236,8 @@ struct NoFoldersView: View {
                 .buttonStyle(.plain)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            RecentPlacesList()
+                .padding(.top, 14)
         }
         .padding()
     }
@@ -260,6 +262,8 @@ struct WorkspaceSwitcher: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Menu {
+                    OpenRecentMenu(model: model)
+                    Divider()
                     Button("New Workspace…") { model.newWorkspaceInteractive() }
                     Button("Connect to Server…") { model.connectToServerInteractive() }
                     Button("Import .code-workspace…") { model.importWorkspaceInteractive() }
@@ -383,6 +387,7 @@ struct WorkspaceRow: View {
             Divider()
             Button("Rename…") { model.promptRenameWorkspace(workspace.id) }
             Divider()
+            Button("Close Workspace") { model.confirmCloseWorkspace(workspace.id) }
             Button("Delete…", role: .destructive) { model.confirmDeleteWorkspace(workspace.id) }
         }
         .help(workspace.folders.map { model.prettyPath($0) }.joined(separator: "\n"))

@@ -180,6 +180,7 @@ struct TiriMenus: Commands {
             Divider()
             item("newWindow")
             item("newWorkspace")
+            OpenRecentMenu(model: model)
             item("addFolder")
             item("connectToServer")
             item("importWorkspace")
@@ -187,6 +188,7 @@ struct TiriMenus: Commands {
         CommandGroup(replacing: .saveItem) {
             item("closeItem")
             item("reopenClosed")
+            item("closeWorkspace")
         }
         CommandGroup(after: .textEditing) {
             item("find")
@@ -239,7 +241,7 @@ struct TiriMenus: Commands {
     }
 }
 
-private struct MenuShortcut: ViewModifier {
+struct MenuShortcut: ViewModifier {
     let binding: KeyStroke?
 
     func body(content: Content) -> some View {

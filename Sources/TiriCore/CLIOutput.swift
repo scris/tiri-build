@@ -111,6 +111,14 @@ public enum CLIOutput {
                 let folders = workspace["folders"]?.arrayValue?.compactMap(\.stringValue).joined(separator: ", ") ?? ""
                 say("\(marker) \(cell(workspace["name"]))\t\(folders)")
             }
+        case "recent.list":
+            for (index, place) in (response.result?.arrayValue ?? []).enumerated() {
+                say("\(index + 1)\t\(cell(place["name"]))\t\(cell(place["path"]))\t\(cell(place["age"]))")
+            }
+        case "recent.remove", "recent.clear":
+            break
+        case "recent.open", "workspace.close":
+            say(cell(response.result?["workspace"]))
         case "window.list":
             for window in response.result?.arrayValue ?? [] {
                 let marker = window["current"]?.boolValue == true ? "*" : " "

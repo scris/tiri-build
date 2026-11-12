@@ -621,8 +621,30 @@ public enum CLIParser {
                 guard let name = options.positional() else { throw UsageError("usage: tiri workspace delete <name>") }
                 try options.finish()
                 return request("workspace.delete", ["name": .string(name)])
+            case "close":
+                // Out of the sidebar, tabs and all, to come back with `tiri recent open`.
+                let name = options.positional()
+                try options.finish()
+                return request("workspace.close", name.map { ["name": .string($0)] } ?? [:])
             default:
                 throw UsageError(workspaceUsage)
+            }
+
+        case "recent":
+            // Closed workspaces and folders used lately in an editor or by an agent, newest first.
+            let usage = UsageError("usage: tiri recent [list] | open <n|name|path> | remove <n|name|path> | clear")
+            switch args.first {
+            case nil, "list":
+                return request("recent.list")
+            case "open", "remove":
+                guard args.count == 2 else { throw usage }
+                // A path is from where it's typed; a number or a name is from the list.
+                let place = args[1].contains("/") || args[1] == "." || args[1] == ".." ? Self.absolute(args[1], environment) : args[1]
+                return request("recent." + args[0], ["place": .string(place)])
+            case "clear":
+                return request("recent.clear")
+            default:
+                throw usage
             }
 
         case "window":
@@ -1022,7 +1044,7 @@ public enum CLIParser {
 
     private static let windowUsage = "usage: tiri window list | new [<workspace>] | focus <window-or-workspace> | close <window-or-workspace>"
 
-    private static let workspaceUsage = "usage: tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR> | remove-folder <DIR> | import <file.code-workspace> | rename <new-name> [<workspace>] | delete <name>"
+    private static let workspaceUsage = "usage: tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR> | remove-folder <DIR> | import <file.code-workspace> | rename <new-name> [<workspace>] | delete <name> | close [<name>]"
 
     public static let usage = """
     tiri — control a running Tiri
@@ -1040,6 +1062,9 @@ public enum CLIParser {
       tiri remote disconnect <host> | ports | forward <port>
       tiri workspace list | switch <name> | new <name> [--folder DIR ...] | add-folder <DIR>
                      remove-folder <DIR> | import <file.code-workspace> | rename <new-name> | delete <name>
+                     close [<name>]   (out of the sidebar with its tabs; `tiri recent open` brings it back)
+      tiri recent [list] | open <n|name|path> | remove <n|name|path> | clear
+                                   (closed workspaces and folders used lately in editors or by agents)
       tiri window list | new [<workspace>] | focus <window-or-workspace> | close <window-or-workspace>
                                    (each window shows a workspace of its own; one in front is what the rest act on)
       tiri items
@@ -1336,6 +1361,9 @@ public enum AgentGuide {
     tiri workspace switch api
     tiri workspace add-folder ~/docs
     tiri workspace import team.code-workspace
+    tiri workspace close api              # out of the sidebar; its agents stop and resume when it's reopened
+    tiri recent                           # closed workspaces, and folders used lately in an editor or by an agent
+    tiri recent open api                  # by number, name or path
     tiri window new api                   # api in a window of its own, beside this one
     tiri window list                      # each window, its workspace, and which is in front
     ```

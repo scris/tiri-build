@@ -29,6 +29,15 @@ Nothing runs until you say where. A new workspace shows the agents your shell ca
 
 In a workspace with several folders, the **+** menu asks which folder a new terminal or agent should use, and ⌃\` uses the folder of whatever you're looking at.
 
+### Open Recent
+
+**File → Open Recent**, the Workspaces **+** menu and ⌥⌘O list where you've been working, newest first: workspaces you closed in Tiri, and folders you used lately in Cursor or VS Code or with Claude Code or Codex. Choosing a folder makes it a workspace. An empty workspace shows the newest few.
+
+- **Close Workspace** (right-click it in the sidebar) takes a workspace out of the sidebar with its tabs. Its programs stop, and when you reopen it, agents pick up their conversations, as after a restart. Delete forgets it instead.
+- The list leaves out what isn't a project: temporary and hidden folders, folders that are gone, `~/Library`, and folders like `~/Documents` that hold projects. A subfolder counts as its project, and what's in the sidebar isn't repeated.
+- **Remove** takes one off (hover it, or press it in ⌥⌘O). A folder comes back once you use it again. **Clear Menu** removes them all.
+- Agents use `tiri recent`, `tiri recent open <n|name|path>`, `remove`, `clear` and `tiri workspace close [<name>]`.
+
 ### Turn on hooks
 
 Hooks tell Tiri exactly when an agent is working, waiting for you or done. They also let Tiri resume the right conversation after a relaunch. Without hooks, Tiri guesses from terminal activity, which is less precise.

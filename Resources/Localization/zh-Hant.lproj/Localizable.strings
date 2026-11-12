@@ -1876,3 +1876,14 @@
 "This file's changes are too large to show." = "這個檔案的變更太大，無法顯示。";
 "The shell on %@ prints text at login" = "%@ 上的 shell 登入時會輸出文字";
 "Tiri skips it, but scp and rsync may not." = "Tiri 會略過這些文字，但 scp 和 rsync 可能不會。";
+"Open Recent" = "打開最近使用";
+"Open Recent…" = "打開最近使用…";
+"Close Workspace" = "關閉工作區";
+"More…" = "更多…";
+"Clear Menu" = "清除選單";
+"Recent" = "最近使用";
+"Remove from Recent" = "從最近使用中移除";
+"now" = "剛剛";
+"Close the workspace “%@”?" = "要關閉工作區「%@」嗎？";
+"An agent in it is working. It stops now, and picks up its conversation when you reopen the workspace." = "其中有一個代理正在工作。它會現在停止，重新打開工作區時再接著之前的對話繼續。";
+"%lld agents in it are working. They stop now, and pick up their conversations when you reopen the workspace." = "其中有 %lld 個代理正在工作。它們會現在停止，重新打開工作區時再接著各自的對話繼續。";

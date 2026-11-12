@@ -273,7 +273,11 @@ final class AppModel {
     @ObservationIgnored private var openInFlight: (item: ItemID, started: Double)?
     @ObservationIgnored var groupHosts: [GroupID: WeakView] = [:]
     @ObservationIgnored private var controllers: [ItemID: ItemController] = [:]
-    @ObservationIgnored private var restoredItems: Set<ItemID> = []
+    @ObservationIgnored var restoredItems: Set<ItemID> = []
+    /// Tabs of a closed workspace: their unsaved edits wait for it to be reopened.
+    @ObservationIgnored var keptEdits: Set<ItemID> = []
+    /// Workspaces closed, and folders used lately elsewhere: File → Open Recent.
+    let recents = RecentWorkspaces()
     /// Terminals whose agent's status came back from disk, until their controller is made.
     @ObservationIgnored var restoredAgentStatus: Set<ItemID> = []
     @ObservationIgnored private var saveWork: DispatchWorkItem?
@@ -363,6 +367,7 @@ final class AppModel {
         // A program still running with no tab lost it in a crash, or in damaged state. It comes back as one:
         // closing a tab is what ends its program, and that never happened.
         adoptOrphanedSessions()
+        refreshRecents()
         restoreAgentStatus(finished: true)
         bringBackUnsavedEdits()
         router.install(model: self)
@@ -482,6 +487,11 @@ final class AppModel {
                 continue
             }
             if anyItem(id) == nil {
+                // A closed workspace's: it waits for that to be reopened.
+                if recents.store.closed.contains(where: { $0.workspace.item(id) != nil }) {
+                    keptEdits.insert(id)
+                    continue
+                }
                 let index = workspaces.firstIndex { $0.remote == nil && $0.folder(containing: edit.path) != nil }
                     ?? workspaces.firstIndex { $0.id == activeID } ?? 0
                 workspaces[index].addItem(Item(id: id, content: .file(FileSpec(path: edit.path))))
@@ -647,8 +657,8 @@ final class AppModel {
             if let peek = workspace.peek { live.insert(peek.id) }
         }
         for (id, controller) in controllers where !live.contains(id) {
-            // Its tab is gone, and with it any edits it was keeping.
-            UnsavedEdits.remove(id)
+            // Its tab is gone, and with it any edits it was keeping, unless its workspace was only closed.
+            if !keptEdits.contains(id) { UnsavedEdits.remove(id) }
             bringBack(id)
             (controller as? TerminalController)?.endSession()
             controller.teardown()
@@ -1948,7 +1958,7 @@ final class AppModel {
         return workspace
     }
 
-    private func uniqueName(_ name: String) -> String {
+    func uniqueName(_ name: String) -> String {
         guard workspaces.contains(where: { $0.name == name }) else { return name }
         var number = 2
         while workspaces.contains(where: { $0.name == "\(name) \(number)" }) { number += 1 }
@@ -2022,8 +2032,18 @@ final class AppModel {
         }
     }
 
-    func deleteWorkspace(_ id: WorkspaceID) {
+    func deleteWorkspace(_ id: WorkspaceID, keepingEdits: Bool = false) {
         guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        // A terminal not shown since launch has no view to end it, and would come back as an orphan.
+        for item in workspaces[index].items where controllers[item.id] == nil {
+            guard case .terminal = item.content else { continue }
+            if let destination = workspaces[index].remote {
+                remote.endSession(item.id, on: destination)
+            } else if TerminalSessions.isAlive(item.id) {
+                TerminalSessions.end(item.id)
+            }
+        }
+        if keepingEdits { keptEdits.formUnion(workspaces[index].items.map(\.id)) }
         if workspaces.count == 1 {
             // There's always a workspace to be in.
             workspaces.append(Workspace(name: Workspace.placeholderName))

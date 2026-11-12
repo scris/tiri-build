@@ -164,6 +164,9 @@ extension AppModel {
                        keywords: ["ssh", "remote", "host", "远程", "遠端", "主机", "主機"]) { $0.connectToServerInteractive() },
             AppCommand(id: "importWorkspace", title: "Import .code-workspace…", category: "Workspaces") { $0.importWorkspaceInteractive() },
             AppCommand(id: "renameWorkspace", title: "Rename Workspace…", category: "Workspaces") { $0.promptRenameWorkspace($0.activeID) },
+            AppCommand(id: "openRecent", title: "Open Recent…", category: "Workspaces",
+                       keywords: ["recent", "reopen", "history", "最近", "最近使用"]) { $0.openRecentPalette() },
+            AppCommand(id: "closeWorkspace", title: "Close Workspace", category: "Workspaces") { $0.confirmCloseWorkspace($0.activeID) },
             AppCommand(id: "deleteWorkspace", title: "Delete Workspace…", category: "Workspaces") { $0.confirmDeleteWorkspace($0.activeID) },
             AppCommand(id: "notebookRunCell", title: "Notebook: Run Cell", category: "Notebook") { $0.notebookCommand("notebookRunCell") },
             AppCommand(id: "notebookRunAll", title: "Notebook: Run All", category: "Notebook") { $0.notebookCommand("notebookRunAll") },
@@ -949,6 +952,42 @@ enum ControlHandler {
             let target = try request.args["workspace"]?.stringValue.map { try findWorkspace($0, model: model) } ?? model.active
             model.renameWorkspace(target.id, to: try string(request, "name"))
             return .object(["name": .string(try string(request, "name"))])
+
+        case "workspace.close":
+            let target = try request.args["name"]?.stringValue.map { try findWorkspace($0, model: model) }
+                ?? model.workspaces.first { $0.id == model.activeID }
+            guard let target else { throw ControlFailure("No workspace.") }
+            model.closeWorkspace(target.id)
+            return .object(["workspace": .string(target.name)])
+
+        case "recent.list":
+            return .array(model.recents.places.map { place in
+                let kind: String
+                switch place.kind {
+                case .closed: kind = "closed"
+                case .folder: kind = "folder"
+                case .codeWorkspace: kind = "code-workspace"
+                }
+                return .object(["name": .string(place.name), "kind": .string(kind),
+                                "path": .string(RemoteRegistry.shared.displayPath(place.path)),
+                                "folders": .array(place.folders.map { .string(RemoteRegistry.shared.displayPath($0)) }),
+                                "age": .string(RecentPlaces.age(of: place.lastUsed)),
+                                "lastUsed": place.lastUsed == .distantPast ? .null : .double(place.lastUsed.timeIntervalSince1970)])
+            })
+
+        case "recent.open", "recent.remove":
+            let text = try string(request, "place")
+            guard let place = model.recentPlace(matching: text) else { throw ControlFailure("Nothing recent called \(text). See `tiri recent`.") }
+            if request.cmd == "recent.remove" {
+                model.removeRecent(place)
+                return .object(["removed": .string(place.name)])
+            }
+            model.openRecent(place)
+            return .object(["workspace": .string(model.workspaces.first { $0.id == model.activeID }?.name ?? place.name)])
+
+        case "recent.clear":
+            model.clearRecents()
+            return .object([:])
 
         case "workspace.delete":
             let target = try findWorkspace(try string(request, "name"), model: model)

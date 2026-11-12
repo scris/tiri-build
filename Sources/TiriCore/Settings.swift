@@ -644,6 +644,7 @@ public enum Keymap {
             ("cmd+alt+enter", "promotePeekToSide"),
             ("cmd+shift+u", "nextAttention"),
             ("cmd+shift+n", "newWindow"),
+            ("cmd+alt+o", "openRecent"),
         ]
         for number in 1...9 {
             table.append(("cmd+\(number)", "focusGroup\(number)"))
