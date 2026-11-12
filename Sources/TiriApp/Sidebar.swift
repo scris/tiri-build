@@ -243,6 +243,14 @@ struct NoFoldersView: View {
 
 struct WorkspaceSwitcher: View {
     @Environment(AppModel.self) private var model
+    /// The list's height as last dragged, or 0 when it's never been: then it fits up to six rows.
+    @AppStorage("sidebar.workspacesHeight") private var chosenHeight: Double = 0
+    @State private var dragStart: Double?
+
+    private var listHeight: Double {
+        let all = Double(model.workspaces.count) * WorkspaceDrag.rowPitch
+        return chosenHeight > 0 ? min(chosenHeight, all) : min(all, 6 * WorkspaceDrag.rowPitch)
+    }
 
     var body: some View {
         VStack(spacing: 2) {
@@ -277,10 +285,31 @@ struct WorkspaceSwitcher: View {
                 }
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(maxHeight: min(CGFloat(model.workspaces.count) * 29, 150))
+            .frame(height: listHeight)
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
+        .overlay(alignment: .bottom) { resizeEdge }
+    }
+
+    /// The list's bottom edge drags, from one row to all of them.
+    private var resizeEdge: some View {
+        Color.clear
+            .frame(height: 7)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.rowResize.push() } else { NSCursor.pop() }
+            }
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    let start = dragStart ?? listHeight
+                    if dragStart == nil { dragStart = start }
+                    let all = Double(model.workspaces.count) * WorkspaceDrag.rowPitch
+                    let height = max(start + value.translation.height, WorkspaceDrag.rowPitch)
+                    // Pulled all the way open, it stays that way as workspaces are added.
+                    chosenHeight = height >= all ? .greatestFiniteMagnitude : height
+                }
+                .onEnded { _ in dragStart = nil })
     }
 }
 
