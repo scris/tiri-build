@@ -1887,3 +1887,12 @@
 "Close the workspace “%@”?" = "要關閉工作區「%@」嗎？";
 "An agent in it is working. It stops now, and picks up its conversation when you reopen the workspace." = "其中有一個代理正在工作。它會現在停止，重新打開工作區時再接著之前的對話繼續。";
 "%lld agents in it are working. They stop now, and pick up their conversations when you reopen the workspace." = "其中有 %lld 個代理正在工作。它們會現在停止，重新打開工作區時再接著各自的對話繼續。";
+"Bring In Settings from Cursor or VS Code" = "從 Cursor 或 VS Code 匯入設定";
+"Nothing to bring in" = "沒有可匯入的內容";
+"No Cursor or VS Code settings on this Mac differ from Tiri's." = "這台 Mac 上的 Cursor 或 VS Code 設定與 Tiri 的沒有不同。";
+"Bring in settings from" = "從這裡匯入設定";
+"Brought in your %@ setup" = "已匯入你的 %@ 設定";
+"the theme %@" = "主題 %@";
+"1 shortcut" = "1 個快速鍵";
+"%lld shortcuts" = "%lld 個快速鍵";
+"Bring In My %@ Setup" = "匯入我的 %@ 設定";

@@ -28,13 +28,22 @@ enum Welcome {
             guard let sheet else { return }
             window?.endSheet(sheet)
         }
-        sheet.contentViewController = NSHostingController(rootView: WelcomeView(showsChange: model.yourTiri.entriesAreOn, close: close))
+        // Someone coming from Cursor or VS Code can bring their setup with them, here, once.
+        let editor = model.editorsToImport().first?.editor
+        let bringIn = editor.map { editor in { [weak model] in
+            close()
+            model?.importFromEditor(editor)
+        } }
+        sheet.contentViewController = NSHostingController(rootView: WelcomeView(showsChange: model.yourTiri.entriesAreOn, importFrom: editor?.name,
+                                                                                bringIn: bringIn, close: close))
         window.beginSheet(sheet)
     }
 }
 
 private struct WelcomeView: View {
     let showsChange: Bool
+    let importFrom: String?
+    let bringIn: (() -> Void)?
     let close: () -> Void
 
     var body: some View {
@@ -60,6 +69,10 @@ private struct WelcomeView: View {
                 }
             }
             HStack {
+                if let importFrom, let bringIn {
+                    Button("Bring In My \(importFrom) Setup", action: bringIn)
+                        .controlSize(.large)
+                }
                 Spacer()
                 Button("Start", action: close)
                     .keyboardShortcut(.defaultAction)

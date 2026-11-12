@@ -193,6 +193,8 @@ extension AppModel {
             },
             AppCommand(id: "about", title: "About Tiri", category: "Help") { _ in AboutPanel.show() },
             AppCommand(id: "openSettings", title: "Open Settings…", category: "Settings", keywords: ["preferences", "options", "偏好设置", "偏好設定"]) { $0.openSettings() },
+            AppCommand(id: "importFromEditor", title: "Bring In Settings from Cursor or VS Code", category: "Settings",
+                       keywords: ["import", "migrate", "keybindings", "theme", "导入", "匯入"]) { $0.importFromEditorInteractive() },
             AppCommand(id: "openKeybindings", title: "Open Keyboard Shortcuts", category: "Settings") { $0.openKeyboardShortcuts() },
             AppCommand(id: "themeSystem", title: "Theme: Follow System", category: "Settings") { $0.setTheme(.system) },
             AppCommand(id: "themeLight", title: "Theme: Light", category: "Settings") { $0.setTheme(.light) },
@@ -984,6 +986,25 @@ enum ControlHandler {
             }
             model.openRecent(place)
             return .object(["workspace": .string(model.workspaces.first { $0.id == model.activeID }?.name ?? place.name)])
+
+        case "import.editor":
+            let wanted = request.args["editor"]?.stringValue
+            let editors = EditorImport.editors(home: RecentWorkspaces.home)
+            guard let editor = wanted.map({ name in editors.first { $0.name.localizedCaseInsensitiveContains(name) || (name.lowercased() == "code" && $0.name == "VS Code") } })
+                    ?? model.editorsToImport().first?.editor ?? editors.first
+            else { throw ControlFailure("No Cursor or VS Code settings on this Mac.") }
+            let plan: EditorImport.Plan?
+            if request.args["dryRun"]?.boolValue == true {
+                plan = model.editorsToImport().first { $0.editor == editor }?.plan ?? EditorImport.Plan(editor: editor.name)
+            } else {
+                plan = model.importFromEditor(editor)
+            }
+            guard let plan else { throw ControlFailure("Nothing came over.") }
+            return .object(["editor": .string(editor.name),
+                            "settings": .object(Dictionary(plan.settings.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })),
+                            "theme": plan.theme.map(JSONValue.string) ?? .null,
+                            "shortcuts": .array(plan.shortcuts.map { .string($0.key + " " + $0.command) }),
+                            "shortcutsLeftOut": .int(plan.shortcutsLeftOut)])
 
         case "recent.clear":
             model.clearRecents()

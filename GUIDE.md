@@ -38,6 +38,10 @@ In a workspace with several folders, the **+** menu asks which folder a new term
 - **Remove** takes one off (hover it, or press it in ⌥⌘O). A folder comes back once you use it again. **Clear Menu** removes them all.
 - Agents use `tiri recent`, `tiri recent open <n|name|path>`, `remove`, `clear` and `tiri workspace close [<name>]`.
 
+### Coming from Cursor or VS Code
+
+**Bring In Settings from Cursor or VS Code** (in the command palette, and on the first welcome screen) takes what means the same here: fonts this Mac has, wrapping, scrollback, hidden files, explorer and diff choices, your theme, and your shortcuts for commands Tiri has. A shortcut that only applies in a panel Tiri doesn't have is left out. A toast says what came over, with Undo. Your folders are already in Open Recent. Agents use `tiri import [cursor | code] [--dry-run]`.
+
 ### Turn on hooks
 
 Hooks tell Tiri exactly when an agent is working, waiting for you or done. They also let Tiri resume the right conversation after a relaunch. Without hooks, Tiri guesses from terminal activity, which is less precise.

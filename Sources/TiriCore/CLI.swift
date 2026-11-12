@@ -630,6 +630,15 @@ public enum CLIParser {
                 throw UsageError(workspaceUsage)
             }
 
+        case "import":
+            // Cursor or VS Code's settings, theme and shortcuts, as far as they mean the same here.
+            let dryRun = args.contains("--dry-run")
+            let rest = args.filter { $0 != "--dry-run" }
+            guard rest.count <= 1 else { throw UsageError("usage: tiri import [cursor | code | windsurf] [--dry-run]") }
+            var payload: [String: JSONValue] = ["dryRun": .bool(dryRun)]
+            if let editor = rest.first { payload["editor"] = .string(editor) }
+            return request("import.editor", payload)
+
         case "recent":
             // Closed workspaces and folders used lately in an editor or by an agent, newest first.
             let usage = UsageError("usage: tiri recent [list] | open <n|name|path> | remove <n|name|path> | clear")
@@ -1064,6 +1073,7 @@ public enum CLIParser {
                      remove-folder <DIR> | import <file.code-workspace> | rename <new-name> | delete <name>
                      close [<name>]   (out of the sidebar with its tabs; `tiri recent open` brings it back)
       tiri recent [list] | open <n|name|path> | remove <n|name|path> | clear
+      tiri import [cursor | code] [--dry-run]   (their settings, theme and shortcuts, where they mean the same here)
                                    (closed workspaces and folders used lately in editors or by agents)
       tiri window list | new [<workspace>] | focus <window-or-workspace> | close <window-or-workspace>
                                    (each window shows a workspace of its own; one in front is what the rest act on)
