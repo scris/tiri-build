@@ -357,6 +357,7 @@ struct WorkspaceRow: View {
             Button("Delete…", role: .destructive) { model.confirmDeleteWorkspace(workspace.id) }
         }
         .help(workspace.folders.map { model.prettyPath($0) }.joined(separator: "\n"))
+        .modifier(WorkspaceDragReorder(id: workspace.id, index: index))
     }
 }
 
