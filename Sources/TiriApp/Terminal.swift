@@ -1787,8 +1787,17 @@ final class TerminalController: ItemController, LocalProcessTerminalViewDelegate
             runtime.status = .exited
             runtime.exitCode = code
         }
-        container.showExitBar(code: code, resumeFailed: resumeFailed, onRestart: { [weak self] in self?.restart() },
-                              onResume: { [weak self] in self?.restart(resuming: true) }, onClose: { [weak self] in
+        // Its session was taken from outside, as by a force quit: an agent comes back as after a relaunch.
+        let comeback = !resumeFailed && remoteDestination == nil && code == TerminalSessions.lostExitCode ? model.resumePlan(for: itemID) : nil
+        container.showExitBar(code: code, resumeFailed: resumeFailed, canResume: comeback != nil, onRestart: { [weak self] in self?.restart() },
+                              onResume: { [weak self] in
+            guard let self else { return }
+            if let comeback {
+                self.launchCommand = comeback.launch
+                self.prefill = comeback.prefill
+            }
+            self.restart(resuming: true)
+        }, onClose: { [weak self] in
             guard let self else { return }
             self.model.closeNow(self.itemID)
         })
@@ -2203,9 +2212,10 @@ final class TerminalContainer: NSView {
         needsLayout = true
     }
 
-    func showExitBar(code: Int32?, resumeFailed: Bool, onRestart: @escaping () -> Void, onResume: @escaping () -> Void, onClose: @escaping () -> Void) {
+    func showExitBar(code: Int32?, resumeFailed: Bool, canResume: Bool = false, onRestart: @escaping () -> Void, onResume: @escaping () -> Void,
+                     onClose: @escaping () -> Void) {
         hideExitBar()
-        let bar = TerminalExitBar(code: code, resumeFailed: resumeFailed, onRestart: onRestart, onResume: onResume, onClose: onClose)
+        let bar = TerminalExitBar(code: code, resumeFailed: resumeFailed, canResume: canResume, onRestart: onRestart, onResume: onResume, onClose: onClose)
         bar.setSolid(solidOverlays)
         addSubview(bar)
         exitBar = bar
@@ -2225,7 +2235,9 @@ final class TerminalExitBar: NSVisualEffectView {
     private let onResume: () -> Void
     private let onClose: () -> Void
 
-    init(code: Int32?, resumeFailed: Bool, onRestart: @escaping () -> Void, onResume: @escaping () -> Void, onClose: @escaping () -> Void) {
+    /// `canResume`: the program was stopped from outside Tiri, and its agent can pick up where it was.
+    init(code: Int32?, resumeFailed: Bool, canResume: Bool = false, onRestart: @escaping () -> Void, onResume: @escaping () -> Void,
+         onClose: @escaping () -> Void) {
         self.onRestart = onRestart
         self.onResume = onResume
         self.onClose = onClose
@@ -2233,18 +2245,19 @@ final class TerminalExitBar: NSVisualEffectView {
         material = .headerView
         blendingMode = .withinWindow
         let text = resumeFailed ? String(localized: "Couldn't resume this conversation")
+            : canResume ? String(localized: "Stopped from outside Tiri")
             : code.map { String(localized: "Process exited with code \(Int($0))") } ?? String(localized: "Process exited")
         message = text
         let label = NSTextField(labelWithString: text)
         label.textColor = .secondaryLabelColor
         label.font = .systemFont(ofSize: 12)
-        let restart = NSButton(title: resumeFailed ? String(localized: "Start Fresh") : String(localized: "Restart"), target: self, action: #selector(restartClicked))
+        let restart = NSButton(title: resumeFailed || canResume ? String(localized: "Start Fresh") : String(localized: "Restart"), target: self, action: #selector(restartClicked))
         let close = NSButton(title: String(localized: "Close"), target: self, action: #selector(closeClicked))
         restart.bezelStyle = .accessoryBarAction
         close.bezelStyle = .accessoryBarAction
         var buttons: [NSView] = [restart, close]
-        if resumeFailed {
-            let retry = NSButton(title: String(localized: "Try Again"), target: self, action: #selector(resumeClicked))
+        if resumeFailed || canResume {
+            let retry = NSButton(title: canResume ? String(localized: "Resume") : String(localized: "Try Again"), target: self, action: #selector(resumeClicked))
             retry.bezelStyle = .accessoryBarAction
             buttons.insert(retry, at: 0)
         }

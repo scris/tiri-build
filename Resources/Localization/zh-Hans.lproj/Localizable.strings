@@ -1896,3 +1896,5 @@
 "1 shortcut" = "1 个快捷键";
 "%lld shortcuts" = "%lld 个快捷键";
 "Bring In My %@ Setup" = "导入我的 %@ 设置";
+"Resume" = "继续";
+"Stopped from outside Tiri" = "已被 Tiri 之外的操作停止";

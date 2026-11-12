@@ -1896,3 +1896,5 @@
 "1 shortcut" = "1 個快速鍵";
 "%lld shortcuts" = "%lld 個快速鍵";
 "Bring In My %@ Setup" = "匯入我的 %@ 設定";
+"Resume" = "繼續";
+"Stopped from outside Tiri" = "已被 Tiri 之外的操作停止";

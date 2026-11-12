@@ -695,6 +695,19 @@ final class AppModel {
         controllers.compactMap { id, controller in (controller as? TerminalController).map { (id, $0) } }
     }
 
+    /// How a terminal whose program is gone would come back after a relaunch, if that resumes an agent: its
+    /// command, or for one typed at a prompt, what's typed into a fresh shell. Nil for anything else.
+    func resumePlan(for id: ItemID) -> (launch: String?, prefill: String?)? {
+        guard case .terminal(let spec)? = anyItem(id)?.content else { return nil }
+        if spec.isShell, let typed = spec.typedAgent {
+            guard case .run(let command) = TerminalRestore.plan(for: typed, sessionID: spec.sessionID, resume: settings.terminalResume, enabled: true) else { return nil }
+            return (nil, command + "\r")
+        }
+        guard case .run(let command) = TerminalRestore.plan(for: spec.command, sessionID: spec.sessionID, resume: settings.terminalResume, enabled: true),
+              command != spec.command else { return nil }
+        return (command, nil)
+    }
+
     func controller(for id: ItemID) -> ItemController? {
         if let existing = controllers[id] { return existing }
         guard let item = anyItem(id) else { return nil }
