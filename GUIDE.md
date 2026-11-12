@@ -440,13 +440,15 @@ Tiri can be changed the way it was made: by asking.
 
 **Updates keep your changes.** Each change is a commit on top of a release. An update replays your changes onto the next release in the background: first with Git, then with a merge that understands Swift, then a build, then each change's own check. Only after all of that does **Update** appear. If a change can't be replayed, it goes to your agent to fix, if you've agreed to that once. A change the agent can't fix is kept, named and left out of that update. If Tiri itself learns to do what your change did, your change retires itself and tells you.
 
+**Sharing a change.** Open a change in Settings → Your Tiri and choose **Share…**, or run `tiri change share <id>`. You get one `.tirichange` file: that change's diff, its check and your sentence, as plain text anyone can read, and nothing else from your Tiri. The other person double-clicks it, drops it on Tiri or runs `tiri change import`. Tiri shows what it changes, that its check runs at every update and who it says it's from, with Cancel as the default. **Add** puts it in their list, switched off. Turning it on is the usual build, then Try It, then Keep or Back. One made on another version that doesn't fit arrives needing to be redone, and **Redo It** has their agent make it again from the sentence and the diff.
+
 **Cost.** The first change needs about 1 GB of build files, in `~/Library/Application Support/Tiri/your-tiri`, and the Command Line Tools, which anyone running an agent already has. If you never use this, nothing runs and nothing extra is on disk beyond the app's own source, about 5 MB. Turning off **Offer to change Tiri** in Settings removes every entry point.
 
 **Limits:**
 
 - An agent can build a copy of Tiri but can't switch to it. Switching takes your click, and there's no command for it. This is a line for agents, not a wall against malware, which could write Tiri's files like any others.
 - Your personal copy is signed on your Mac with its own certificate, in its own keychain file, and has its own bundle ID. macOS asks once about your folders for it, never again after rebuilds, and your answers for the installed app stay as they were.
-- Nothing loads from anywhere else. There's no gallery and no way in from a link.
+- Nothing loads from anywhere else by itself. There's no gallery and no way in from a link. The one way in is a `.tirichange` file you open on purpose. It arrives off, and nothing in it builds or runs until you turn it on. Once on, it's code with your full access, and Tiri says so before you add it. The file shows that it arrived whole, not who made it.
 - An update has to be a newer release of this app, from whoever made yours, according to Apple's signing chain. It's checked before it goes anywhere and again when you press Update. A feed must use https, and its release notes never reach your agent.
 - A change's check is a script that runs at every update with your access, so it counts toward the change's size and is shown with its diff.
 

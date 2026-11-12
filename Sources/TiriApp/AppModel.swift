@@ -2216,6 +2216,10 @@ final class AppModel {
             plugins.importPlugin(at: url)
             return
         }
+        if url.pathExtension.lowercased() == SharedChange.fileExtension {
+            yourTiri.openShared(url)
+            return
+        }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return }
         if isDirectory.boolValue {

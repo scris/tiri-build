@@ -132,6 +132,7 @@ struct YourTiriPane: View {
                         PersonalChangeRow(change: change)
                     }
                 }
+                .modifier(SharedChangeDrop())
             }
             if yours.entriesAreOn {
                 Button("Change Tiri…") { yours.beginChange(surface: nil) }
@@ -189,11 +190,19 @@ private struct PersonalChangeRow: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
+                if change.needsRedo {
+                    Text("needs redoing")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                }
                 Text(change.date, format: Self.dateFormat)
                     .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(.faint)
                 if isBuilding {
                     ProgressView().controlSize(.small).frame(width: 38)
+                } else if change.needsRedo {
+                    Button("Redo It") { yours.redoShared(change) }
+                        .controlSize(.small)
                 } else {
                     Toggle("", isOn: Binding(get: { change.isOn }, set: { yours.setChange(change, on: $0) }))
                         .toggleStyle(.switch)
@@ -208,6 +217,9 @@ private struct PersonalChangeRow: View {
             }
         }
         .padding(.vertical, 13)
+        .contextMenu {
+            if !change.needsRedo { Button("Share…") { yours.chooseWhereToShare(change) } }
+        }
         .onAppear { if isOpen { files = yours.filesIn(change) } }
         .onChange(of: isOpen) { _, open in if open { files = yours.filesIn(change) } }
     }
@@ -231,15 +243,18 @@ private struct ChangeFiles: View {
                 }
                 .buttonStyle(.plain)
             }
-            Text(change.hasCheck ? String(localized: "Has a check, so updates can look after it.") : String(localized: "No check, so updates will ask you to look at it."))
-                .font(.system(size: 12))
-                .foregroundStyle(change.hasCheck ? Color.secondary : Color.orange)
-                .padding(.top, 2)
+            if !change.needsRedo {
+                Text(change.hasCheck ? String(localized: "Has a check, so updates can look after it.") : String(localized: "No check, so updates will ask you to look at it."))
+                    .font(.system(size: 12))
+                    .foregroundStyle(change.hasCheck ? Color.secondary : Color.orange)
+                    .padding(.top, 2)
+            }
             if let version = change.repairedFor {
                 Text(repairLine(version))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
+            SharedChangeFold(change: change)
         }
     }
 

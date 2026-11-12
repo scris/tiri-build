@@ -1,7 +1,8 @@
 #!/bin/bash
 # Your Tiri against a real, invisible test copy: a change made with the real tools, built and signed for real,
-# tried, kept, undone, turned off, and a copy that won't start. Stand-in for the agent: this script.
-#   TIRI_DEV_ROOT=<somewhere> scripts/e2e-your-tiri.sh
+# tried, kept, undone, turned off, a copy that won't start, and a change shared and opened in a friend's Tiri.
+# Stand-in for the agent: this script.
+#   TIRI_DEV_ROOT=<somewhere> scripts/e2e-your-tiri.sh      TIRI_E2E_SHOTS=<folder> also takes pictures of sharing
 # Takes a few minutes the first time, since it builds Tiri from its own source twice.
 set -u
 cd "$(dirname "$0")/.."
@@ -174,6 +175,104 @@ waits "tiri falls back by itself again" '"personal" : false' 300 where
 sleep 0.5
 [ "$(field active)" = "plain" ] && ok "and remembers again" || no "active is $(field active)"
 expect "with nothing left to say next time" "None" field notice
+
+echo "--- sharing a change"
+# TIRI_E2E_SHOTS=<folder> also takes pictures of what sharing shows, for a person to look at.
+SHOTS="${TIRI_E2E_SHOTS:-}"
+copy_pid() { pgrep -f "$NAME/(TiriDev.app|home/your-tiri/copies/[^/]+/Tiri.app)/Contents/MacOS/Tiri" | tail -1; }
+shot() { [ -z "$SHOTS" ] || (cd "$REPO" && scripts/dev-app.sh shot "$NAME" "$SHOTS/$1.png" >/dev/null 2>&1) || true; }
+sheet_shot() { # a sheet is a window of its own, inside the main one
+  [ -n "$SHOTS" ] || return 0
+  sleep 2
+  local id; id="$(swift - "$(copy_pid)" 2>/dev/null <<'SWIFT'
+import CoreGraphics
+let pid = Int32(CommandLine.arguments[1])!
+let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+let windows = list.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
+    .map { w -> (Int, CGRect) in
+        let b = w[kCGWindowBounds as String] as? [String: Double] ?? [:]
+        return (w[kCGWindowNumber as String] as? Int ?? 0, CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0))
+    }
+    .sorted { $0.1.width * $0.1.height > $1.1.width * $1.1.height }
+let sheet = windows.dropFirst().first { windows[0].1.contains($0.1) && $0.1.width > 100 }
+print(sheet?.0 ?? 0)
+SWIFT
+)"
+  [ "${id:-0}" != "0" ] && screencapture -x -o -l"$id" "$SHOTS/$1.png" || no "no sheet to take a picture of for $1"
+}
+FIRST="$(tiri change list | awk '/Say first/ {print $1}')"
+SECOND="$(tiri change list | awk '/Say second/ {print $1}')"
+mkdir -p "$WORK/shared"
+printf '[user]\n\tname = Ann Example\n\temail = ann@example.com\n' > "$WORK/gitconfig"
+export GIT_CONFIG_GLOBAL="$WORK/gitconfig"
+expect "share writes one file" "nothing else" tiri change share "$FIRST" "$WORK/shared"
+FILE="$WORK/shared/say-first-in-the-version.tirichange"
+if [ -f "$FILE" ]; then ok "named by its words"; else no "no $FILE: $(ls "$WORK/shared")"; fi
+expect "it's plain text, saying what it was made on" "X-Tiri-Release: " cat "$FILE"
+expect "with their sentence" "Subject: [PATCH] Say first in the version" cat "$FILE"
+expect "from the name they sign with" "From: Ann Example <>" cat "$FILE"
+lacks "and not their email" "ann@example.com" cat "$FILE"
+expect "and its check" "checks/$FIRST.sh" cat "$FILE"
+lacks "and nothing of another change" "second" cat "$FILE"
+expect "the second one shares too" "nothing else" tiri change share "$SECOND" "$WORK/shared/second.tirichange"
+unset GIT_CONFIG_GLOBAL
+expect "back where it came from, it's already here" "Already here: $FIRST" tiri change import "$FILE"
+sed 's/ first/ worst/' "$FILE" > "$WORK/shared/changed.tirichange"
+refuses "one changed on the way is refused" "changed after it was shared" tiri change import "$WORK/shared/changed.tirichange"
+tiri run showYourTiri >/dev/null
+tiri dev-your-tiri unfold "$FIRST" >/dev/null
+sleep 1; shot share-button
+
+# From here it's a friend's Tiri: the same release, with neither change.
+tiri change off "$FIRST" --no-build >/dev/null || no "turning the first off"
+git -C "$Y/source" update-ref -d "refs/tiri/off/$FIRST"
+git -C "$Y/source" update-ref -d "refs/tiri/off/$SECOND"
+lacks "neither is in their list" "Say" tiri change list
+tiri dev-your-tiri open-shared "$FILE" >/dev/null
+waits "opening it asks first" 'Add “Say first in the version” to your Tiri?' 100 where
+expect "saying what it changes" "in 2 files" where
+expect "that its check runs at every update" "check runs at every update" where
+expect "who it says it's from" "Says it's from Ann Example." where
+expect "and that it's code with full access" "full access" where
+lacks "nothing is in the list before Add" "Say first" tiri change list
+sheet_shot share-import-sheet
+tiri dev-your-tiri shared-answer see >/dev/null
+waits "See What Changed leaves Add in the bar" '"waiting" : "Add “Say first' 50 where
+sleep 1; shot share-see-what-changed
+tiri dev-your-tiri shared-answer add >/dev/null
+waits "Add puts it in the list" '"lastShare" : "added' 100 where
+expect "switched off" "off  Say first in the version" tiri change list
+expect "under its own id, which was free" "$FIRST  off" tiri change list
+expect "with its check" "check" tiri change list
+expect "as from who it says" "Ann Example" git -C "$Y/source" log -1 --format=%an "refs/tiri/off/$FIRST"
+if [ -e "$Y/copies/ready/ready.json" ]; then no "something was built"; else ok "nothing was built"; fi
+tiri dev-your-tiri unfold "$FIRST" >/dev/null
+sleep 1; shot share-arrived-off
+tiri change on "$FIRST" >/dev/null 2>&1 || no "turning it on"
+waits "turning it on builds a copy to try, like any change" '"ready" : "Turn on: Say first in the version"' 50 where
+tiri dev-your-tiri try >/dev/null
+waits "which is tried the same way" '"personal" : true' 150 where
+expect "and has their change" "first" "$Y/copies/current/Tiri.app/Contents/Resources/bin/tiri" --version
+tiri dev-your-tiri keep >/dev/null
+
+echo "--- a shared change that doesn't go on"
+tiri dev-your-tiri open-shared "$WORK/shared/second.tirichange" >/dev/null
+waits "it still asks" 'Add “Say second in the version” to your Tiri?' 100 where
+expect "saying it has to be redone" "needing to be redone" where
+sheet_shot share-not-fitting-sheet
+tiri dev-your-tiri shared-answer add >/dev/null
+waits "and is added" '"lastShare" : "added' 100 where
+REDO="$(tiri change list | awk '/Say second/ {print $1}')"
+expect "off, in the list" "off  Say second in the version" tiri change list
+refuses "it can't simply go on" "redone first" tiri change on "$REDO"
+refuses "nor be shared on" "redone" tiri change share "$REDO" "$WORK/shared"
+tiri run showYourTiri >/dev/null
+tiri dev-your-tiri unfold "$REDO" >/dev/null
+sleep 1; shot share-needs-redoing
+expect "redoing starts from their diff" "Their diff is" tiri change revise "$REDO"
+expect "which is beside the source" "Say second in the version" cat "$Y/source/.tiri-shared-$REDO.patch"
+tiri change drop >/dev/null
+expect "giving that up keeps it, to redo another time" "off  Say second in the version" tiri change list
 
 echo "--- the off switch for all of it"
 tiri settings set change.offer false >/dev/null

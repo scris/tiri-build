@@ -43,6 +43,11 @@ struct ChangeMark {
     /// What someone said Later to in the bar, and when. Back after a while, at the next launch, or when there's news.
     private var putOff: [String: Date] = [:]
     static let putOffFor: TimeInterval = 3 * 3600
+    /// Someone else's change, after See What Changed and before Add or Cancel. See `YourTiriSharing.swift`.
+    var arriving: ArrivingChange?
+    @ObservationIgnored var shareAlert: NSAlert?
+    /// What sharing did last, for test copies.
+    @ObservationIgnored var lastShare = ""
     /// Being dragged around right now, with the window dimmed.
     private(set) var isMarking = false
     /// The box being dragged, in the window's content coordinates from the top left.
@@ -54,7 +59,7 @@ struct ChangeMark {
     private var cameFrom: WorkspaceID?
     private var hidMaking: String?
 
-    @ObservationIgnored private weak var model: AppModel?
+    @ObservationIgnored weak var model: AppModel?
     @ObservationIgnored private var trialTimer: Timer?
     @ObservationIgnored private var repairing: String?
     @ObservationIgnored private var isResumingUpdate = false
@@ -221,6 +226,7 @@ struct ChangeMark {
     }
 
     private var waitingNow: YourTiriWaiting? {
+        if let arriving = arrivingWaiting { return arriving }
         if let trial = state?.trial {
             return YourTiriWaiting(text: String(localized: "Trying: \(ReadyCopy.shown(trial.sentence))"), symbol: "checkmark.circle", actions: [
                 .init(title: String(localized: "Go Back")) { [weak self] in self?.back() },
@@ -354,9 +360,9 @@ struct ChangeMark {
             PaletteModel.Row(id: change.id, title: change.sentence,
                              detail: ready?.change == change.id ? String(localized: "ready to try") : change.isOn ? String(localized: "on") : String(localized: "off"),
                              symbol: ready?.change == change.id ? "sparkles" : change.isOn ? "checkmark.circle.fill" : "circle",
-                             button: .init(title: change.isOn ? String(localized: "Turn Off") : String(localized: "Turn On")) { [weak self, weak model] in
+                             button: .init(title: change.needsRedo ? String(localized: "Redo It") : change.isOn ? String(localized: "Turn Off") : String(localized: "Turn On")) { [weak self, weak model] in
                                  model?.closePalette()
-                                 self?.setChange(change, on: !change.isOn)
+                                 if change.needsRedo { self?.redoShared(change) } else { self?.setChange(change, on: !change.isOn) }
                              }) { [weak self, weak model] _ in
                 model?.closePalette()
                 self?.showDiff(of: change)
@@ -494,12 +500,12 @@ struct ChangeMark {
 
     /// In a tab of its own, in Your Tiri. It never types into an agent that's working on something else.
     @discardableResult
-    func startChange(sentence: String, surface: String?, preset: TerminalPreset) -> Task<Void, Never> {
+    func startChange(sentence: String, surface: String?, preset: TerminalPreset, brief given: String? = nil, prompt: String? = nil) -> Task<Void, Never> {
         recordFacts()
         let archive = URL(fileURLWithPath: state?.plainPath ?? Bundle.main.bundlePath).appendingPathComponent("Contents/Resources").appendingPathComponent(YourTiri.sourceArchive)
         let version = Self.version
-        let brief = Self.brief(sentence: sentence, surface: surface, hasMark: mark != nil)
-        let markFile = mark?.file
+        let brief = given ?? Self.brief(sentence: sentence, surface: surface, hasMark: mark != nil)
+        let markFile = given == nil ? mark?.file : nil
         return Task { [weak self] in
             let failure: String? = await Task.detached {
                 do {
@@ -519,7 +525,7 @@ struct ChangeMark {
             self.cameFrom = model.activeID
             let workspace = model.yourTiriWorkspace()
             if self.cameFrom == workspace { self.cameFrom = nil }
-            let command = preset.command + " " + ShellQuote.quote(Self.prompt(sentence: sentence))
+            let command = preset.command + " " + ShellQuote.quote(prompt ?? Self.prompt(sentence: sentence))
             // Its name is what was asked. It stays through the switch, where it's looked at hardest.
             let item = model.newTerminal(command: command, cwd: YourTiri.source.path, in: workspace, title: sentence)
             model.agentAsked[item] = sentence

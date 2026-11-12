@@ -88,6 +88,23 @@
                 </array>
             </dict>
         </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.tiri.change</string>
+            <key>UTTypeDescription</key>
+            <string>Tiri Change</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>tirichange</string>
+                </array>
+            </dict>
+        </dict>
     </array>
     <key>CFBundleURLTypes</key>
     <array>
@@ -114,6 +131,18 @@
             <key>LSItemContentTypes</key>
             <array>
                 <string>dev.tiri.plugin</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Tiri Change</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>dev.tiri.change</string>
             </array>
         </dict>
         <dict>

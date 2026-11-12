@@ -913,6 +913,8 @@ public enum CLIParser {
                    tiri change drop                   (gives up the one being made)
                    tiri change list | status | show <id>
                    tiri change off <id> | on <id>     (builds a copy without it, or with it)
+                   tiri change share <id> [<file>]    (one .tirichange file, to hand to someone)
+                   tiri change import <file>          (someone's .tirichange: it arrives off)
             Only the person can switch to a copy, with a click in the app. See `tiri --skill`.
             """
             if args.isEmpty || args.contains("--help") || args.contains("-h") { return .printText(usage) }
@@ -940,6 +942,15 @@ public enum CLIParser {
             case "off": return .change(.off(try name(), build: !noBuild))
             case "on": return .change(.on(try name()))
             case "drop": try none(); return .change(.drop)
+            case "share":
+                guard let id = options.positional() else { throw UsageError(usage) }
+                let path = options.positional()
+                try options.finish()
+                return .change(.share(id, to: absolute(path ?? ".", environment)))
+            case "import":
+                guard let path = options.positional() else { throw UsageError(usage) }
+                try options.finish()
+                return .change(.importShared(absolute(path, environment)))
             case "revise":
                 let id = options.positional()
                 try options.finish()
@@ -1518,11 +1529,15 @@ public enum AgentGuide {
     tiri change revise                    # reopen the newest, after they ask for something different
     tiri change off <id>                  # builds a copy without it. `on` brings it back
     tiri change drop                      # give up the one being made
+    tiri change share <id>                # one .tirichange file of it, to hand to someone
+    tiri change import a.tirichange       # someone's change: it arrives off, like a plugin
     ```
 
     Updates carry changes by themselves. When one can't be carried, you may be asked to mend it, in a tab of its
     own: `tiri update repair <id>` shows you the old change, and `tiri update repaired` carries on from there.
     `tiri update retire <id>` if the new version already does it, and `tiri update leave-out <id>` if it can't be done.
+    A shared change made on another version may arrive needing to be redone: `tiri change revise <id>` puts what fits
+    of its diff into the source, conflicts marked, and shows the whole of it.
 
     Keep their words as the sentence: it's what they see in Settings, and what an update repairs from.
     `CHANGING.md` in the source says how the code is laid out and what's off limits. Write a check for

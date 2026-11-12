@@ -1166,6 +1166,12 @@ enum ControlHandler {
                 guard numbers.count == 4 else { throw ControlFailure("x,y,width,height") }
                 yours.finishMarking(CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3]))
             case "unfold": UserDefaults.standard.set(true, forKey: "YourTiri.open.\(value ?? "")")
+            case "open-shared": yours.openShared(URL(fileURLWithPath: value ?? ""))
+            case "shared-answer": guard yours.answerShareForTest(value ?? "cancel") else { throw ControlFailure("Nothing is being asked.") }
+            case "share":
+                let parts = (value ?? "").split(separator: " ", maxSplits: 1).map(String.init)
+                guard parts.count == 2, let change = yours.changes.first(where: { $0.id == parts[0] }) else { throw ControlFailure("<id> <file>") }
+                yours.share(change, to: URL(fileURLWithPath: parts[1]))
             case "where": break
             case "notice", "press-notice":
                 guard let item = value ?? yours.draft?.item, let terminal = model.existingController(for: item) as? TerminalController else { throw ControlFailure("No change is being made.") }
@@ -1179,7 +1185,8 @@ enum ControlHandler {
                             "swiftTools": .bool(SwiftTools.areHere()), "marking": .bool(yours.isMarking),
                             "ready": .string(yours.ready?.sentence ?? ""), "trial": .string(yours.state?.trial?.sentence ?? ""),
                             "plainForNow": .bool(PlainForNow.isOn), "panes": .array(model.settingsPanes.map { .string($0.rawValue) }),
-                            "offers": .bool(yours.entriesAreOn), "update": .string(yours.update?.line ?? ""), "version": .string(YourTiriModel.version)])
+                            "offers": .bool(yours.entriesAreOn), "update": .string(yours.update?.line ?? ""), "version": .string(YourTiriModel.version),
+                            "shareQuestion": .string(yours.shareQuestion), "lastShare": .string(yours.lastShare), "waiting": .string(yours.waiting?.text ?? "")])
 
         case "dev.a11y":
             guard AppModel.isTestCopy else { throw ControlFailure("Only for a test copy.") }

@@ -17,6 +17,12 @@ public struct PersonalChange: Codable, Equatable, Sendable, Identifiable {
     /// The version an update's repair made this fit, and the files where the repair made it differ from before.
     public var repairedFor: String?
     public var repairTouched: [String]
+    /// Came from someone else's Tiri and doesn't go on this one: it's its words, waiting to be made again.
+    public var needsRedo = false
+    /// Who a shared change says it's from. Nil for their own.
+    public var from: String?
+    /// The version of Tiri a change that has to be redone was made on, when it said.
+    public var madeOn: String?
 
     public var lines: Int { added + removed }
     public var size: String { Self.size(files: files, lines: lines) }
@@ -196,8 +202,8 @@ public struct SourceRepo: Sendable {
         return try on.map { try change(commit: $0, isOn: true, checks: tree) } + off.map { try change(commit: $0, isOn: false, checks: tree) }
     }
 
-    private func change(commit: String, isOn: Bool, checks: Set<String>) throws -> PersonalChange {
-        let fields = try text(["log", "-1", "--format=%s%x00%aI%x00%(trailers:key=\(Self.trailerID),valueonly)%x00%(trailers:key=\(Self.trailerSurface),valueonly)%x00%(trailers:key=\(Self.trailerRepaired),valueonly)%x00%(trailers:key=\(Self.trailerRepairTouched),valueonly)", commit]).components(separatedBy: "\0")
+    func change(commit: String, isOn: Bool, checks: Set<String>) throws -> PersonalChange {
+        let fields = try text(["log", "-1", "--format=%s%x00%aI%x00%(trailers:key=\(Self.trailerID),valueonly)%x00%(trailers:key=\(Self.trailerSurface),valueonly)%x00%(trailers:key=\(Self.trailerRepaired),valueonly)%x00%(trailers:key=\(Self.trailerRepairTouched),valueonly)%x00%(trailers:key=\(Self.trailerRedo),valueonly)%x00%an", commit]).components(separatedBy: "\0")
         let sentence = fields[0]
         let date = ISO8601DateFormatter().date(from: fields.count > 1 ? fields[1] : "") ?? Date()
         let id = fields.count > 2 ? fields[2].trimmingCharacters(in: .whitespacesAndNewlines) : ""
@@ -214,9 +220,15 @@ public struct SourceRepo: Sendable {
         }
         let realID = id.isEmpty ? String(commit.prefix(8)) : id
         let hasCheck = isOn ? checks.contains("checks/\(realID).sh") : ((try? text(["ls-tree", "--name-only", commit, "checks/\(realID).sh"]))?.isEmpty == false)
-        return PersonalChange(id: realID, sentence: sentence, commit: commit, date: date, surface: surface.isEmpty ? nil : surface,
-                              files: files, added: added, removed: removed, isOn: isOn, hasCheck: hasCheck,
-                              repairedFor: repaired.isEmpty ? nil : repaired, repairTouched: repairTouched)
+        var change = PersonalChange(id: realID, sentence: sentence, commit: commit, date: date, surface: surface.isEmpty ? nil : surface,
+                                    files: files, added: added, removed: removed, isOn: isOn, hasCheck: hasCheck,
+                                    repairedFor: repaired.isEmpty ? nil : repaired, repairTouched: repairTouched)
+        let redo = fields.count > 6 ? fields[6].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        let author = fields.count > 7 ? fields[7].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        change.needsRedo = !redo.isEmpty
+        change.madeOn = redo.isEmpty || redo == "another version" ? nil : redo
+        change.from = author.isEmpty || author == Self.ownName ? nil : author
+        return change
     }
 
     public func change(named id: String) throws -> PersonalChange {
@@ -243,6 +255,7 @@ public struct SourceRepo: Sendable {
 
     public func turnOn(_ change: PersonalChange) throws {
         guard !change.isOn else { return }
+        guard !change.needsRedo else { throw ChangeFailure("“\(change.sentence)” doesn't go on this Tiri as it came, so it has to be redone first: tiri change revise \(change.id).") }
         let pick = try git(["cherry-pick", change.commit])
         guard pick.ok else {
             try git(["cherry-pick", "--abort"])
@@ -272,6 +285,10 @@ public enum ChangeTools {
         case on(String)
         case revise(String?)
         case drop
+        /// One kept change, as a file for someone else's Tiri.
+        case share(String, to: String)
+        /// Someone else's, arriving off.
+        case importShared(String)
     }
 
     public struct Context: Sendable {
@@ -395,7 +412,10 @@ public enum ChangeTools {
             let all = try repo.changes()
             guard let change = try id.map({ try repo.change(named: $0) }) ?? all.last(where: \.isOn) else { throw ChangeFailure("There's no change to reopen.") }
             guard repo.isClean else { throw ChangeFailure("The source has edits that aren't part of any change.") }
-            if change.isOn {
+            var redo = ""
+            if change.needsRedo {
+                redo = try repo.beginRedo(change)
+            } else if change.isOn {
                 guard try repo.head() == change.commit else {
                     throw ChangeFailure("Only the newest change can be reopened. Make this a new change on top of it.")
                 }
@@ -409,7 +429,7 @@ public enum ChangeTools {
             }
             let draft = ChangeDraft(id: change.id, sentence: change.sentence, surface: change.surface, item: context.item ?? nil, startedAt: Date(), replacing: change.isOn ? change.commit : nil)
             try save(draft)
-            return "Reopened “\(change.sentence)”. Edit, then tiri change build, check and ready.\n"
+            return "Reopened “\(change.sentence)”. Edit, then tiri change build, check and ready.\n" + (redo.isEmpty ? "" : "\n" + redo)
 
         case .drop:
             guard let draft = loadDraft() else { return "Nothing is being made.\n" }
@@ -418,6 +438,12 @@ public enum ChangeTools {
             try repo.git(["clean", "-fdq"], check: true)
             try? FileManager.default.removeItem(at: YourTiri.draftFile)
             return "Gave up “\(draft.sentence)”.\n"
+
+        case .share(let id, let path):
+            return try share(id, to: path)
+
+        case .importShared(let path):
+            return try importShared(path)
         }
     }
 
@@ -433,7 +459,7 @@ public enum ChangeTools {
         """
     }
 
-    private static func newID() -> String {
+    static func newID() -> String {
         "c" + String(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "").prefix(7))
     }
 
@@ -546,6 +572,7 @@ public enum ChangeTools {
         }
         // Reopened from being off, and now it's on again.
         _ = try? repo.git(["update-ref", "-d", "refs/tiri/off/\(draft.id)"])
+        repo.finishRedo(id: draft.id)
         try? FileManager.default.removeItem(at: YourTiri.draftFile)
         tellTheApp()
         var text = "Ready. There's a card on your tab for the person to press Try It. You can't switch to it yourself.\n"

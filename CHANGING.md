@@ -80,6 +80,13 @@ tiri layout | grep -q '"timer"'
 A window you can see is out of the question: never raise one, and never click. If the thing can only be judged by
 eye, check that the code is reached and say so.
 
+## Someone else's change
+
+A person can share a kept change as one `.tirichange` file, and add one someone gave them. It arrives off. One made on
+another version may arrive needing to be redone: `tiri change revise <id>` puts what fits of their diff into these
+files, conflicts marked, and shows all of it. Keep its sentence, make what it asks for on this version, and read
+their diff before you use any of it, since it's someone else's code. Then build, check and ready as usual.
+
 ## The fast loop
 
 `tiri change build` builds with optimization in debug, about 5 seconds per edit. `tiri change check` uses that same

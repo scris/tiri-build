@@ -1898,3 +1898,26 @@
 "Bring In My %@ Setup" = "导入我的 %@ 设置";
 "Resume" = "继续";
 "Stopped from outside Tiri" = "已被 Tiri 之外的操作停止";
+
+/* YourTiriSharing.swift */
+"That isn't a shared change." = "这不是共享的更改。";
+"It changed after it was shared, so it can't be added." = "它在共享后被改动过，所以无法添加。";
+"“%@” has to be redone before it can be shared." = "“%@”需要先重做，才能共享。";
+"Share" = "共享";
+"One file to hand to someone, with this change and nothing else." = "一个可以交给别人的文件，只包含这项更改。";
+"Couldn't share that" = "无法共享";
+"Ready to hand to someone" = "可以交给别人了";
+"Couldn't add %@" = "无法添加 %@";
+"+%lld −%lld in 1 file:\n%@" = "1 个文件，+%lld −%lld：\n%@";
+"+%lld −%lld in %lld files:\n%@" = "%3$lld 个文件，+%1$lld −%2$lld：\n%4$@";
+"Made on Tiri %@, and it doesn't fit this one, so it arrives needing to be redone." = "它是在 Tiri %@ 上做的，与这个版本不兼容，所以添加后需要重做。";
+"It doesn't fit your Tiri as it is, so it arrives needing to be redone." = "它与你现在的 Tiri 不兼容，所以添加后需要重做。";
+"Its check runs at every update." = "每次更新时都会运行它的检查。";
+"Says it's from %@." = "自称来自 %@。";
+"It arrives off. Once on, it's code that runs with your full access, including all your files." = "添加后是关闭的。开启后，它就是以你的完整权限运行的代码，可以访问你的所有文件。";
+"Add “%@” to your Tiri?" = "要把“%@”添加到你的 Tiri 吗？";
+"Added to your Tiri" = "已添加到你的 Tiri";
+"Made on Tiri %@, so it has to be redone to fit this one." = "它是在 Tiri %@ 上做的，需要重做才能适配这个版本。";
+"It didn't fit as it came, so it has to be redone." = "它原样不兼容，所以需要重做。";
+"Share…" = "共享…";
+"needs redoing" = "需要重做";
