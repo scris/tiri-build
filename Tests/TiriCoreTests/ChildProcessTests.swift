@@ -93,8 +93,10 @@ import Testing
 
         // An app's pipe, at a number of its own, and a socket listening, neither close-on-exec.
         let leaked = Pipe()
-        let pipeEnd = dup2(leaked.fileHandleForWriting.fileDescriptor, 47)
-        defer { close(pipeEnd) }
+        // The first free number from 47 up: taking 47 itself would close whatever another test has open there.
+        var pipeEnd = fcntl(leaked.fileHandleForWriting.fileDescriptor, F_DUPFD, 47)
+        try #require(pipeEnd >= 47)
+        defer { if pipeEnd >= 0 { close(pipeEnd) } }
         let listener = socket(AF_UNIX, SOCK_STREAM, 0)
         defer { close(listener) }
         let listing = folder.appendingPathComponent("fds").path
@@ -108,12 +110,14 @@ import Testing
             if text == nil { usleep(50_000) }
         }
         let fds = Set(try #require(text).split(whereSeparator: \.isNewline).compactMap { Int32($0) })
-        #expect(!fds.contains(47))
+        #expect(!fds.contains(pipeEnd))
         #expect(!fds.contains(listener))
         // Only its terminal: 0, 1 and 2, and the listing it's writing to.
         #expect(fds == [0, 1, 2], "\(fds.sorted())")
         // And with everything else gone, the pipe sees its end: nobody else is holding it.
+        // Closed once only: a second close could shut a file another test has just opened at this number.
         close(pipeEnd)
+        pipeEnd = -1
         try leaked.fileHandleForWriting.close()
         var wait = pollfd(fd: leaked.fileHandleForReading.fileDescriptor, events: Int16(POLLIN), revents: 0)
         #expect(poll(&wait, 1, 3000) == 1)
