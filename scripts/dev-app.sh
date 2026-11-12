@@ -137,11 +137,17 @@ case "$ACTION" in
 start)
   source scripts/swift-setup.sh
   # TIRI_DEV_SWIFT_FLAGS: the fast build of a change, so a check doesn't build everything again.
+  # Built in a folder of the copies' own, never the repository's .build: a release build or a test run there
+  # can't rewrite what a copy is being made from, nor wait on it.
+  DEV_SCRATCH="${TIRI_DEV_SCRATCH:-$ROOT/build}"
   # shellcheck disable=SC2086
-  swift build -c "${TIRI_DEV_CONFIG:-debug}" ${TIRI_DEV_SWIFT_FLAGS:-} --product TiriApp 2>&1 | tail -1
-  swift build -c "${TIRI_DEV_CONFIG:-debug}" ${TIRI_DEV_SWIFT_FLAGS:-} --product tiri 2>&1 | tail -1
-  swift build -c "${TIRI_DEV_CONFIG:-debug}" ${TIRI_DEV_SWIFT_FLAGS:-} --product tiri-session 2>&1 | tail -1
-  BIN="$(swift build -c "${TIRI_DEV_CONFIG:-debug}" ${TIRI_DEV_SWIFT_FLAGS:-} --show-bin-path)"
+  swift build -c "${TIRI_DEV_CONFIG:-debug}" --scratch-path "$DEV_SCRATCH" ${TIRI_DEV_SWIFT_FLAGS:-} --product TiriApp 2>&1 | tail -1
+  # shellcheck disable=SC2086
+  swift build -c "${TIRI_DEV_CONFIG:-debug}" --scratch-path "$DEV_SCRATCH" ${TIRI_DEV_SWIFT_FLAGS:-} --product tiri 2>&1 | tail -1
+  # shellcheck disable=SC2086
+  swift build -c "${TIRI_DEV_CONFIG:-debug}" --scratch-path "$DEV_SCRATCH" ${TIRI_DEV_SWIFT_FLAGS:-} --product tiri-session 2>&1 | tail -1
+  # shellcheck disable=SC2086
+  BIN="$(swift build -c "${TIRI_DEV_CONFIG:-debug}" --scratch-path "$DEV_SCRATCH" ${TIRI_DEV_SWIFT_FLAGS:-} --show-bin-path)"
   "$CLI" quit >/dev/null 2>&1 || true; sleep 0.5
   # A dialog can hold up a quit, and two copies can't share a socket.
   kill_recorded -9
