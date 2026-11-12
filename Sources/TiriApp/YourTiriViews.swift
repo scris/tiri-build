@@ -117,30 +117,49 @@ struct YourTiriPane: View {
     private var yours: YourTiriModel { model.yourTiri }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 26) {
+        VStack(alignment: .leading, spacing: 28) {
             if let trial = yours.state?.trial { TrialRow(trial: trial) }
             // An update's copy goes in with its own one button, with the app it belongs to.
             if let ready = yours.ready, ready.kind != .update { ReadyRow(copy: ready) }
             if let draft = yours.draft { BeingMadeRow(draft: draft) }
             if yours.changes.isEmpty {
                 EmptyYourTiri()
-            } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    // One waiting to be tried is the row above, and isn't on yet.
-                    ForEach(Array(yours.changes.reversed().filter { $0.id != yours.ready?.change }.enumerated()), id: \.element.id) { index, change in
-                        if index > 0 { Divider().opacity(0.6) }
-                        PersonalChangeRow(change: change)
+                HStack(spacing: 10) {
+                    if yours.entriesAreOn {
+                        Button("Change Tiri…") { yours.beginChange(surface: nil) }
+                            .controlSize(.large)
                     }
+                    Button("Import…") { yours.chooseSharedChangeToOpen() }
+                        .controlSize(.large)
+                        .help("A .tirichange file someone shared with you")
                 }
-                .modifier(SharedChangeDrop())
+            } else {
+                SettingsGroup(String(localized: "Changes")) {
+                    HStack(spacing: 8) {
+                        Button("Import…") { yours.chooseSharedChangeToOpen() }
+                            .help("A .tirichange file someone shared with you")
+                        if yours.entriesAreOn {
+                            Button("Change Tiri…") { yours.beginChange(surface: nil) }
+                        }
+                    }
+                    .controlSize(.small)
+                } content: {
+                    SettingsCard {
+                        // One waiting to be tried is the row above, and isn't on yet.
+                        ForEach(Array(yours.changes.reversed().filter { $0.id != yours.ready?.change }.enumerated()), id: \.element.id) { index, change in
+                            if index > 0 { SettingsRowDivider() }
+                            PersonalChangeRow(change: change)
+                        }
+                    }
+                    .modifier(SharedChangeDrop())
+                }
             }
-            if yours.entriesAreOn {
-                Button("Change Tiri…") { yours.beginChange(surface: nil) }
-                    .controlSize(.large)
-            }
-            Divider()
             UpdateLine()
-            RunningLine()
+            SettingsCard {
+                RunningLine()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+            }
         }
         .onAppear { yours.refresh() }
     }
@@ -155,6 +174,8 @@ private struct EmptyYourTiri: View {
     }
 }
 
+/// One change, laid out like a plugin: what it is, then what it touched behind ⓘ, what you can do with it
+/// behind ⋯, and its switch.
 private struct PersonalChangeRow: View {
     let change: PersonalChange
     @Environment(AppModel.self) private var model
@@ -168,36 +189,60 @@ private struct PersonalChangeRow: View {
 
     private static let dateFormat: Date.FormatStyle = .dateTime.day().month(.abbreviated)
 
+    /// Their words, as said, with a capital to start like every other row.
+    private var title: String {
+        let shown = ReadyCopy.shown(change.sentence)
+        return shown.prefix(1).uppercased() + shown.dropFirst()
+    }
+
     var body: some View {
         let yours = model.yourTiri
         let isBuilding = yours.toggling.contains(change.id)
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 14) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 13))
+                    .foregroundStyle(change.isOn ? Color.accentColor : Color.secondary)
+                    .frame(width: 26, height: 26)
+                    .background((change.isOn ? Color.accentColor : Color.primary).opacity(change.isOn ? 0.16 : 0.06), in: .rect(cornerRadius: 7))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        Text(change.date, format: Self.dateFormat)
+                        Text(change.size)
+                        if change.repairedFor != nil { Text("repaired") }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    if change.needsRedo {
+                        Text("needs redoing")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
                     withAnimation(AccessibilityDisplay.shared.motion(.smooth(duration: 0.2))) { isOpen.toggle() }
                 } label: {
-                    Text(change.sentence)
-                        .font(.system(size: 17, weight: .regular))
-                        .foregroundStyle(change.isOn ? Color.primary : Color.secondary)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                    Image(systemName: isOpen ? "chevron.up" : "info.circle")
                 }
                 .buttonStyle(.plain)
-                .help("\(change.size). Click for what it touched.")
-                if change.repairedFor != nil {
-                    Text("repaired")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                .foregroundStyle(.secondary)
+                .help(isOpen ? String(localized: "Hide") : String(localized: "What it touched"))
+                .accessibilityLabel(isOpen ? String(localized: "Hide details of \(title)") : String(localized: "What \(title) touched"))
+                Menu {
+                    actions
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
-                if change.needsRedo {
-                    Text("needs redoing")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.orange)
-                }
-                Text(change.date, format: Self.dateFormat)
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(.faint)
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .foregroundStyle(.secondary)
+                .help(change.needsRedo ? String(localized: "See What Changed") : String(localized: "Share, See What Changed"))
+                .accessibilityLabel("More for \(title)")
                 if isBuilding {
                     ProgressView().controlSize(.small).frame(width: 38)
                 } else if change.needsRedo {
@@ -208,20 +253,31 @@ private struct PersonalChangeRow: View {
                         .toggleStyle(.switch)
                         .labelsHidden()
                         .controlSize(.small)
-                        .accessibilityLabel(change.sentence)
+                        .accessibilityLabel(title)
                 }
             }
             if isOpen {
                 ChangeFiles(change: change, files: files)
+                    .padding(.leading, 36)
                     .transition(.opacity)
             }
         }
-        .padding(.vertical, 13)
-        .contextMenu {
-            if !change.needsRedo { Button("Share…") { yours.chooseWhereToShare(change) } }
-        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+        .contextMenu { actions }
         .onAppear { if isOpen { files = yours.filesIn(change) } }
         .onChange(of: isOpen) { _, open in if open { files = yours.filesIn(change) } }
+    }
+
+    @ViewBuilder private var actions: some View {
+        let yours = model.yourTiri
+        if change.needsRedo {
+            Button("See What Changed") { yours.showSharedText(of: change) }
+        } else {
+            Button("Share…") { yours.chooseWhereToShare(change) }
+            Button("See What Changed") { yours.showChanges(of: change) }
+        }
     }
 }
 
@@ -237,7 +293,7 @@ private struct ChangeFiles: View {
                     model.openDiff(DiffSpec(path: YourTiri.source.appendingPathComponent(file).path, commit: change.commit), preview: false)
                 } label: {
                     Text(file)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                         .underline(false)
                 }
@@ -245,13 +301,13 @@ private struct ChangeFiles: View {
             }
             if !change.needsRedo {
                 Text(change.hasCheck ? String(localized: "Has a check, so updates can look after it.") : String(localized: "No check, so updates will ask you to look at it."))
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(change.hasCheck ? Color.secondary : Color.orange)
                     .padding(.top, 2)
             }
             if let version = change.repairedFor {
                 Text(repairLine(version))
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
             SharedChangeFold(change: change)

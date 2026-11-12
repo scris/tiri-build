@@ -30,6 +30,28 @@ extension YourTiriModel {
         }
     }
 
+    /// Import… beside the list: the same way in as a double-click.
+    func chooseSharedChangeToOpen() {
+        guard let window = model?.window, window.attachedSheet == nil else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [Self.sharedType]
+        panel.allowsMultipleSelection = false
+        panel.prompt = String(localized: "Open")
+        panel.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                if response == .OK, let url = panel.url { self?.openShared(url) }
+            }
+        }
+    }
+
+    /// Each file it touched, as a diff against what was there before it.
+    func showChanges(of change: PersonalChange) {
+        guard let model else { return }
+        for file in filesIn(change) {
+            model.openDiff(DiffSpec(path: YourTiri.source.appendingPathComponent(file).path, commit: change.commit), preview: false)
+        }
+    }
+
     func share(_ change: PersonalChange, to file: URL) {
         Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) { () -> Result<SharedChange, Error> in
@@ -253,33 +275,22 @@ struct SharedChangeDrop: ViewModifier {
     }
 }
 
-/// At the end of a change's fold in Settings: who a shared one says it's from, and Share, or Redo It's reason.
+/// At the end of a change's details in Settings: who a shared one says it's from, or why it has to be redone.
 struct SharedChangeFold: View {
     let change: PersonalChange
-    @Environment(AppModel.self) private var model
 
     var body: some View {
-        let yours = model.yourTiri
         VStack(alignment: .leading, spacing: 5) {
             if change.needsRedo {
                 Text(change.madeOn.flatMap { $0 == YourTiriModel.version ? nil : String(localized: "Made on Tiri \($0), so it has to be redone to fit this one.") }
                      ?? String(localized: "It didn't fit as it came, so it has to be redone."))
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(.orange)
             }
             if let from = change.from {
                 Text("Says it's from \(from).")
-                    .font(.system(size: 12))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            if change.needsRedo {
-                Button("See What Changed") { yours.showSharedText(of: change) }
-                    .controlSize(.small)
-                    .padding(.top, 4)
-            } else {
-                Button("Share…") { yours.chooseWhereToShare(change) }
-                    .controlSize(.small)
-                    .padding(.top, 4)
             }
         }
     }

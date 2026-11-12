@@ -1921,3 +1921,7 @@
 "It didn't fit as it came, so it has to be redone." = "它原样不兼容，所以需要重做。";
 "Share…" = "共享…";
 "needs redoing" = "需要重做";
+"What it touched" = "它改动了什么";
+"What %@ touched" = "%@ 改动了什么";
+"Share, See What Changed" = "分享、查看改动";
+"A .tirichange file someone shared with you" = "别人分享给你的 .tirichange 文件";
